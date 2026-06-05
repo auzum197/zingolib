@@ -121,9 +121,25 @@ impl LightClient {
         })
     }
 
-    /// Create a `LightClient` from an existing wallet file.
+    /// Create a `LightClient` from an existing (unencrypted) wallet file.
+    ///
+    /// To open an encrypted wallet file, use
+    /// [`Self::create_from_wallet_path_with_passphrase`].
     #[allow(clippy::result_large_err)]
     pub fn create_from_wallet_path(config: ZingoConfig) -> Result<Self, LightClientError> {
+        Self::create_from_wallet_path_with_passphrase(config, None)
+    }
+
+    /// Create a `LightClient` from an existing wallet file, decrypting it with `passphrase` if
+    /// the file is encrypted at rest.
+    ///
+    /// Pass `None` for a plaintext wallet. If the file is encrypted and `passphrase` is `None`
+    /// (or wrong), this returns an error.
+    #[allow(clippy::result_large_err)]
+    pub fn create_from_wallet_path_with_passphrase(
+        config: ZingoConfig,
+        passphrase: Option<&secrecy::SecretString>,
+    ) -> Result<Self, LightClientError> {
         let wallet_path = if config.wallet_path_exists() {
             config.get_wallet_path()
         } else {
@@ -139,7 +155,8 @@ impl LightClient {
         let buffer = BufReader::new(File::open(wallet_path).map_err(LightClientError::FileError)?);
 
         Self::create_from_wallet(
-            LightWallet::read(buffer, config.chain).map_err(LightClientError::FileError)?,
+            LightWallet::read_encrypted(buffer, config.chain, passphrase)
+                .map_err(LightClientError::FileError)?,
             config,
             true,
         )

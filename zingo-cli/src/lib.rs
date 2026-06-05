@@ -13,6 +13,7 @@ use std::sync::mpsc::{Receiver, Sender, channel};
 use bip0039::Mnemonic;
 use clap::{self, Arg};
 use log::{error, info};
+use secrecy::SecretString;
 
 use zcash_protocol::consensus::BlockHeight;
 
@@ -73,6 +74,10 @@ pub fn build_clap_app() -> clap::ArgMatches {
                 .long("data-dir")
                 .value_name("data-dir")
                 .help("Absolute path to use as data directory"))
+            .arg(Arg::new("passphrase")
+                .long("passphrase")
+                .value_name("PASSPHRASE")
+                .help("Encrypt the wallet file at rest with this passphrase (used to open an encrypted wallet, or to encrypt a newly created one). If a wallet file is encrypted and this is omitted, you will be prompted. Can also be supplied via the ZINGO_PASSPHRASE environment variable. Avoid the flag form on shared machines, as it can leak via the process list and shell history."))
             .arg(Arg::new("tor")
                 .long("tor")
                 .help("Enable tor for price fetching")
@@ -327,6 +332,9 @@ pub struct ConfigTemplate {
     command: Option<String>,
     chaintype: ChainType,
     tor_enabled: bool,
+    /// Passphrase for at-rest wallet encryption, from `--passphrase` or `$ZINGO_PASSPHRASE`.
+    /// `None` means none was supplied up front; an encrypted wallet will trigger a prompt.
+    passphrase: Option<SecretString>,
 }
 
 impl ConfigTemplate {
@@ -399,6 +407,14 @@ If you don't remember the block height, you can pass '--birthday 0' to scan from
 
         let sync = !matches.get_flag("nosync");
         let waitsync = matches.get_flag("waitsync");
+        // Prefer the explicit flag, falling back to the environment variable. The env var is
+        // the safer channel since the flag can leak via the process list and shell history.
+        let passphrase = matches
+            .get_one::<String>("passphrase")
+            .cloned()
+            .or_else(|| std::env::var("ZINGO_PASSPHRASE").ok())
+            .filter(|p| !p.is_empty())
+            .map(SecretString::new);
         Ok(Self {
             params,
             server,
@@ -411,6 +427,7 @@ If you don't remember the block height, you can pass '--birthday 0' to scan from
             command,
             chaintype,
             tor_enabled,
+            passphrase,
         })
     }
 }
@@ -420,6 +437,56 @@ pub type CommandRequest = (String, Vec<String>);
 
 /// Command responses are strings
 pub type CommandResponse = String;
+
+/// Enable at-rest encryption on a freshly created wallet if a passphrase was supplied.
+fn apply_passphrase(
+    wallet: &mut LightWallet,
+    passphrase: Option<&SecretString>,
+) -> std::io::Result<()> {
+    if let Some(passphrase) = passphrase {
+        wallet.set_passphrase(passphrase).map_err(|e| {
+            std::io::Error::other(format!("Failed to encrypt wallet: {e}"))
+        })?;
+        println!("Wallet file will be encrypted at rest.");
+    }
+    Ok(())
+}
+
+/// Determine the passphrase to use when opening an existing wallet file. If the file on disk
+/// is encrypted and no passphrase was provided up front, prompt for one (no echo).
+fn resolve_open_passphrase(
+    config: &zingolib::config::ZingoConfig,
+    provided: Option<SecretString>,
+) -> std::io::Result<Option<SecretString>> {
+    if provided.is_some() {
+        return Ok(provided);
+    }
+    let encrypted = wallet_file_is_encrypted(&config.get_wallet_path())?;
+    if encrypted {
+        let entered = rpassword::prompt_password("Wallet is encrypted. Enter passphrase: ")
+            .map_err(|e| std::io::Error::other(format!("Failed to read passphrase: {e}")))?;
+        Ok(Some(SecretString::new(entered)))
+    } else {
+        Ok(None)
+    }
+}
+
+/// Cheaply check whether a wallet file begins with the encryption magic, without loading it.
+fn wallet_file_is_encrypted(path: &std::path::Path) -> std::io::Result<bool> {
+    use std::io::Read as _;
+    let mut file = match std::fs::File::open(path) {
+        Ok(f) => f,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(false),
+        Err(e) => return Err(e),
+    };
+    let mut head = [0u8; 8];
+    match file.read_exact(&mut head) {
+        Ok(()) => Ok(zingolib::wallet::encryption::is_encrypted(&head)),
+        // A file shorter than 8 bytes can't be an encrypted envelope.
+        Err(e) if e.kind() == std::io::ErrorKind::UnexpectedEof => Ok(false),
+        Err(e) => Err(e),
+    }
+}
 
 /// Used by the zingocli crate, and the zingo-mobile application:
 /// <https://github.com/zingolabs/zingolib/tree/dev/cli>
@@ -444,43 +511,41 @@ pub fn startup(
     .unwrap();
 
     let mut lightclient = if let Some(seed_phrase) = filled_template.seed.clone() {
-        LightClient::create_from_wallet(
-            LightWallet::new(
-                config.chain,
-                WalletBase::Mnemonic {
-                    mnemonic: Mnemonic::from_phrase(seed_phrase).map_err(|e| {
-                        std::io::Error::new(
-                            std::io::ErrorKind::InvalidInput,
-                            format!("Invalid seed phrase. {e}"),
-                        )
-                    })?,
-                    no_of_accounts: NonZeroU32::try_from(1).expect("hard-coded integer"),
-                },
-                (filled_template.birthday as u32).into(),
-                config.wallet_settings.clone(),
-            )
-            .map_err(|e| std::io::Error::other(format!("Failed to create wallet. {e}")))?,
-            config.clone(),
-            false,
+        let mut wallet = LightWallet::new(
+            config.chain,
+            WalletBase::Mnemonic {
+                mnemonic: Mnemonic::from_phrase(seed_phrase).map_err(|e| {
+                    std::io::Error::new(
+                        std::io::ErrorKind::InvalidInput,
+                        format!("Invalid seed phrase. {e}"),
+                    )
+                })?,
+                no_of_accounts: NonZeroU32::try_from(1).expect("hard-coded integer"),
+            },
+            (filled_template.birthday as u32).into(),
+            config.wallet_settings.clone(),
         )
-        .map_err(|e| std::io::Error::other(format!("Failed to create lightclient. {e}")))?
+        .map_err(|e| std::io::Error::other(format!("Failed to create wallet. {e}")))?;
+        apply_passphrase(&mut wallet, filled_template.passphrase.as_ref())?;
+        LightClient::create_from_wallet(wallet, config.clone(), false)
+            .map_err(|e| std::io::Error::other(format!("Failed to create lightclient. {e}")))?
     } else if let Some(ufvk) = filled_template.ufvk.clone() {
         // Create client from UFVK
-        LightClient::create_from_wallet(
-            LightWallet::new(
-                config.chain,
-                WalletBase::Ufvk(ufvk),
-                (filled_template.birthday as u32).into(),
-                config.wallet_settings.clone(),
-            )
-            .map_err(|e| std::io::Error::other(format!("Failed to create wallet. {e}")))?,
-            config.clone(),
-            false,
+        let mut wallet = LightWallet::new(
+            config.chain,
+            WalletBase::Ufvk(ufvk),
+            (filled_template.birthday as u32).into(),
+            config.wallet_settings.clone(),
         )
-        .map_err(|e| std::io::Error::other(format!("Failed to create lightclient. {e}")))?
+        .map_err(|e| std::io::Error::other(format!("Failed to create wallet. {e}")))?;
+        apply_passphrase(&mut wallet, filled_template.passphrase.as_ref())?;
+        LightClient::create_from_wallet(wallet, config.clone(), false)
+            .map_err(|e| std::io::Error::other(format!("Failed to create lightclient. {e}")))?
     } else if config.wallet_path_exists() {
-        // Open existing wallet from path
-        LightClient::create_from_wallet_path(config.clone())
+        // Open existing wallet from path, prompting for a passphrase if the file is encrypted
+        // and none was supplied.
+        let passphrase = resolve_open_passphrase(&config, filled_template.passphrase.clone())?;
+        LightClient::create_from_wallet_path_with_passphrase(config.clone(), passphrase.as_ref())
             .map_err(|e| std::io::Error::other(format!("Failed to create lightclient. {e}")))?
     } else {
         // Fresh wallet: query chain tip and initialize at tip-100 to guard against reorgs
@@ -497,8 +562,14 @@ pub fn startup(
             })
             .map_err(|e| std::io::Error::other(format!("Failed to create lightclient. {e}")))?;
 
-        LightClient::new(config.clone(), chain_height, false)
-            .map_err(|e| std::io::Error::other(format!("Failed to create lightclient. {e}")))?
+        let lc = LightClient::new(config.clone(), chain_height, false)
+            .map_err(|e| std::io::Error::other(format!("Failed to create lightclient. {e}")))?;
+        if let Some(passphrase) = filled_template.passphrase.as_ref() {
+            RT.block_on(async {
+                apply_passphrase(&mut *lc.wallet.write().await, Some(passphrase))
+            })?;
+        }
+        lc
     };
 
     if filled_template.command.is_none() {

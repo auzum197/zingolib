@@ -308,3 +308,59 @@ async fn reload_wallet_from_buffer() {
 
     // NOTE: removed balance check as need to sync to restore transaction data.
 }
+
+/// Returns true if `haystack` contains `needle` as a contiguous subsequence.
+fn contains_subsequence(haystack: &[u8], needle: &[u8]) -> bool {
+    !needle.is_empty() && haystack.windows(needle.len()).any(|w| w == needle)
+}
+
+/// End-to-end exercise of the at-rest encryption feature using a real example wallet:
+/// - a plaintext wallet still loads via `read_encrypted` with no passphrase (backward compat);
+/// - encrypting then saving produces an envelope whose bytes never contain the raw seed;
+/// - the encrypted file round-trips with the correct passphrase and carries the session
+///   forward so subsequent saves stay encrypted;
+/// - a wrong/absent passphrase fails cleanly.
+#[test]
+fn encrypted_wallet_round_trip_and_backward_compat() {
+    use crate::config::ChainType;
+    use crate::wallet::encryption::is_encrypted;
+    use secrecy::SecretString;
+
+    let network = ChainType::Testnet;
+    let mut wallet = NetworkSeedVersion::Testnet(TestnetSeedVersion::ChimneyBetter(
+        ChimneyBetterVersion::Latest,
+    ))
+    .load_example_wallet(network);
+
+    let expected_phrase = wallet.mnemonic_phrase().unwrap();
+    let seed_entropy = wallet.mnemonic().unwrap().clone().into_entropy();
+
+    // Backward compat: a plaintext save still loads with no passphrase.
+    wallet.save_required = true;
+    let plaintext = wallet.save().unwrap().expect("save produced bytes");
+    assert!(!is_encrypted(&plaintext));
+    assert!(contains_subsequence(&plaintext, &seed_entropy)); // sanity: plaintext leaks the seed
+    let reloaded_plain = LightWallet::read_encrypted(plaintext.as_slice(), network, None).unwrap();
+    assert_eq!(reloaded_plain.mnemonic_phrase().unwrap(), expected_phrase);
+    assert!(!reloaded_plain.is_encrypted());
+
+    // Encrypt and save.
+    let passphrase = SecretString::new("correct horse battery staple".to_string());
+    wallet.set_passphrase(&passphrase).unwrap();
+    assert!(wallet.is_encrypted());
+    let encrypted = wallet.save().unwrap().expect("encrypted save produced bytes");
+    assert!(is_encrypted(&encrypted));
+    // The raw seed entropy must not appear anywhere in the ciphertext.
+    assert!(!contains_subsequence(&encrypted, &seed_entropy));
+
+    // Round-trip with the correct passphrase; the session is carried forward.
+    let reloaded = LightWallet::read_encrypted(encrypted.as_slice(), network, Some(&passphrase))
+        .expect("decrypt with correct passphrase");
+    assert_eq!(reloaded.mnemonic_phrase().unwrap(), expected_phrase);
+    assert!(reloaded.is_encrypted());
+
+    // Wrong passphrase and missing passphrase both fail.
+    let wrong = SecretString::new("not the passphrase".to_string());
+    assert!(LightWallet::read_encrypted(encrypted.as_slice(), network, Some(&wrong)).is_err());
+    assert!(LightWallet::read_encrypted(encrypted.as_slice(), network, None).is_err());
+}

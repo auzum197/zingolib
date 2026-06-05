@@ -88,10 +88,13 @@ futures = { workspace = true }
 tokio = { workspace = true, features = ["full"] }
 
 # Crypto
+argon2 = { workspace = true }
+chacha20poly1305 = { workspace = true }
 jubjub = { workspace = true }
 ring = { workspace = true }
 secp256k1 = { workspace = true }
 secrecy = { workspace = true }
+zeroize = { workspace = true }
 
 # Logging
 log = { workspace = true }

@@ -32,6 +32,7 @@ pub mod utils;
 // these mods contain pieces of the impl LightWallet
 pub mod balance;
 pub mod disk;
+pub mod encryption;
 pub mod keys;
 pub mod output;
 pub mod propose;
@@ -146,6 +147,11 @@ pub struct LightWallet {
     send_proposal: Option<ZingoProposal>,
     /// Boolean for tracking whether the wallet state has changed since last save.
     pub save_required: bool,
+    /// At-rest encryption session. When `Some`, the serialized wallet is wrapped in a
+    /// passphrase-derived AEAD envelope on every save (see [`crate::wallet::encryption`]).
+    /// `None` means the wallet is persisted in the clear (legacy / opt-out). The expensive
+    /// key derivation is performed once when this is set; saves only run the cheap AEAD step.
+    encryption: Option<encryption::EncryptionSession>,
 }
 
 impl LightWallet {
@@ -269,6 +275,7 @@ impl LightWallet {
             price_list: PriceList::new(),
             save_required: true,
             send_proposal: None,
+            encryption: None,
         })
     }
 
@@ -390,12 +397,62 @@ impl LightWallet {
     pub fn save(&mut self) -> std::io::Result<Option<Vec<u8>>> {
         if self.save_required {
             let network = self.network;
-            let mut wallet_bytes: Vec<u8> = vec![];
-            self.write(&mut wallet_bytes, &network)?;
+            // Serialize into a buffer that is zeroized on drop, since while a passphrase is
+            // set this plaintext (containing the seed and spending keys) must never touch
+            // disk and should not linger in freed memory longer than necessary.
+            let mut wallet_bytes: zeroize::Zeroizing<Vec<u8>> =
+                zeroize::Zeroizing::new(vec![]);
+            self.write(&mut *wallet_bytes, &network)?;
             self.save_required = false;
-            Ok(Some(wallet_bytes))
+            let out = match &self.encryption {
+                Some(session) => session
+                    .encrypt(&wallet_bytes)
+                    .map_err(|e| std::io::Error::other(e.to_string()))?,
+                None => wallet_bytes.to_vec(),
+            };
+            Ok(Some(out))
         } else {
             Ok(None)
+        }
+    }
+
+    /// Returns `true` if this wallet is configured to encrypt its file at rest.
+    #[must_use]
+    pub fn is_encrypted(&self) -> bool {
+        self.encryption.is_some()
+    }
+
+    /// Enable at-rest encryption on a previously unencrypted wallet, or replace the current
+    /// passphrase with a new one.
+    ///
+    /// Runs the (intentionally slow) Argon2id key derivation once and caches the resulting
+    /// key; subsequent saves only run the fast AEAD step. A fresh random salt is generated, so
+    /// calling this to rotate a passphrase fully rekeys the file. Flips `save_required` so the
+    /// change is persisted on the next save.
+    pub fn set_passphrase(
+        &mut self,
+        passphrase: &secrecy::SecretString,
+    ) -> Result<(), encryption::WalletEncryptionError> {
+        let params = encryption::Argon2Params::default();
+        self.encryption = Some(encryption::EncryptionSession::new(passphrase, params)?);
+        self.save_required = true;
+        Ok(())
+    }
+
+    /// Rotate the passphrase. Alias for [`Self::set_passphrase`], named for intent at the
+    /// call site; both fully rekey the file with a new salt.
+    pub fn change_passphrase(
+        &mut self,
+        passphrase: &secrecy::SecretString,
+    ) -> Result<(), encryption::WalletEncryptionError> {
+        self.set_passphrase(passphrase)
+    }
+
+    /// Disable at-rest encryption: the next save (and all subsequent saves) will write the
+    /// wallet in the clear. This is an explicit opt-out — use with care.
+    pub fn remove_passphrase(&mut self) {
+        if self.encryption.take().is_some() {
+            self.save_required = true;
         }
     }
 

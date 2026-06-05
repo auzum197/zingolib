@@ -11,6 +11,7 @@ use std::str::FromStr;
 
 use indoc::indoc;
 use json::object;
+use secrecy::SecretString;
 use pepper_sync::config::PerformanceLevel;
 use pepper_sync::keys::transparent;
 use std::sync::LazyLock;
@@ -1882,6 +1883,86 @@ impl Command for SaveCommand {
     }
 }
 
+struct EncryptCommand {}
+impl Command for EncryptCommand {
+    fn help(&self) -> &'static str {
+        indoc! {r#"
+            Encrypt the wallet file at rest with a passphrase, or rotate an existing passphrase.
+
+            The serialized wallet (seed, spending keys, and all metadata) is wrapped in an
+            Argon2id + XChaCha20-Poly1305 envelope before it is written to disk. Running this
+            on an already-encrypted wallet rotates to a new passphrase (and a new salt).
+
+            The change is persisted on the next save (the save task runs automatically).
+
+            WARNING: there is no passphrase recovery. If you lose the passphrase, the wallet
+            file cannot be opened. Note also that passing the passphrase on this command line
+            may leave it in your shell history.
+
+            usage:
+            encrypt <passphrase>
+        "#}
+    }
+
+    fn short_help(&self) -> &'static str {
+        "Encrypt the wallet file at rest (or rotate the passphrase)"
+    }
+
+    fn exec(&self, args: &[&str], lightclient: &mut LightClient) -> String {
+        if args.len() != 1 || args[0].is_empty() {
+            return "Error: encrypt expects exactly one non-empty <passphrase> argument. \
+                    Type \"help encrypt\" for usage."
+                .to_string();
+        }
+        let passphrase = SecretString::new(args[0].to_string());
+        RT.block_on(async move {
+            let mut wallet = lightclient.wallet.write().await;
+            let rotating = wallet.is_encrypted();
+            match wallet.set_passphrase(&passphrase) {
+                Ok(()) if rotating => {
+                    "Passphrase rotated. The re-encrypted wallet will be saved shortly."
+                        .to_string()
+                }
+                Ok(()) => {
+                    "Wallet encryption enabled. The encrypted wallet will be saved shortly."
+                        .to_string()
+                }
+                Err(e) => format!("Error: failed to encrypt wallet. {e}"),
+            }
+        })
+    }
+}
+
+struct DecryptCommand {}
+impl Command for DecryptCommand {
+    fn help(&self) -> &'static str {
+        indoc! {r"
+            Disable at-rest encryption: the wallet file will be written in the clear from the
+            next save onward. This is an explicit opt-out; only do this if the wallet file is
+            protected by other means (e.g. full-disk encryption).
+
+            usage:
+            decrypt
+        "}
+    }
+
+    fn short_help(&self) -> &'static str {
+        "Disable at-rest wallet encryption (write the wallet in the clear)"
+    }
+
+    fn exec(&self, _args: &[&str], lightclient: &mut LightClient) -> String {
+        RT.block_on(async move {
+            let mut wallet = lightclient.wallet.write().await;
+            if !wallet.is_encrypted() {
+                return "Wallet is not encrypted; nothing to do.".to_string();
+            }
+            wallet.remove_passphrase();
+            "Wallet encryption disabled. The wallet will be saved in the clear shortly."
+                .to_string()
+        })
+    }
+}
+
 struct QuitCommand {}
 impl Command for QuitCommand {
     fn help(&self) -> &'static str {
@@ -1941,6 +2022,8 @@ pub fn get_commands() -> HashMap<&'static str, Box<dyn Command>> {
         ("send", Box::new(SendCommand {})),
         ("shield", Box::new(ShieldCommand {})),
         ("save", Box::new(SaveCommand {})),
+        ("encrypt", Box::new(EncryptCommand {})),
+        ("decrypt", Box::new(DecryptCommand {})),
         ("settings", Box::new(SettingsCommand {})),
         ("quit", Box::new(QuitCommand {})),
         ("notes", Box::new(NotesCommand {})),
