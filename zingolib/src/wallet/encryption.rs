@@ -120,13 +120,8 @@ impl Argon2Params {
     }
 
     fn to_argon2(self) -> Result<Argon2<'static>, WalletEncryptionError> {
-        let params = Params::new(
-            self.m_cost,
-            self.t_cost,
-            self.p_cost as u32,
-            Some(KEY_LEN),
-        )
-        .map_err(|e| WalletEncryptionError::InvalidParams(e.to_string()))?;
+        let params = Params::new(self.m_cost, self.t_cost, self.p_cost as u32, Some(KEY_LEN))
+            .map_err(|e| WalletEncryptionError::InvalidParams(e.to_string()))?;
         Ok(Argon2::new(Algorithm::Argon2id, Version::V0x13, params))
     }
 }

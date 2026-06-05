@@ -348,7 +348,10 @@ fn encrypted_wallet_round_trip_and_backward_compat() {
     let passphrase = SecretString::new("correct horse battery staple".to_string());
     wallet.set_passphrase(&passphrase).unwrap();
     assert!(wallet.is_encrypted());
-    let encrypted = wallet.save().unwrap().expect("encrypted save produced bytes");
+    let encrypted = wallet
+        .save()
+        .unwrap()
+        .expect("encrypted save produced bytes");
     assert!(is_encrypted(&encrypted));
     // The raw seed entropy must not appear anywhere in the ciphertext.
     assert!(!contains_subsequence(&encrypted, &seed_entropy));

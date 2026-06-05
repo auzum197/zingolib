@@ -11,9 +11,9 @@ use std::str::FromStr;
 
 use indoc::indoc;
 use json::object;
-use secrecy::SecretString;
 use pepper_sync::config::PerformanceLevel;
 use pepper_sync::keys::transparent;
+use secrecy::SecretString;
 use std::sync::LazyLock;
 use tokio::runtime::Runtime;
 
@@ -1920,13 +1920,10 @@ impl Command for EncryptCommand {
             let rotating = wallet.is_encrypted();
             match wallet.set_passphrase(&passphrase) {
                 Ok(()) if rotating => {
-                    "Passphrase rotated. The re-encrypted wallet will be saved shortly."
-                        .to_string()
+                    "Passphrase rotated. The re-encrypted wallet will be saved shortly.".to_string()
                 }
-                Ok(()) => {
-                    "Wallet encryption enabled. The encrypted wallet will be saved shortly."
-                        .to_string()
-                }
+                Ok(()) => "Wallet encryption enabled. The encrypted wallet will be saved shortly."
+                    .to_string(),
                 Err(e) => format!("Error: failed to encrypt wallet. {e}"),
             }
         })
@@ -1957,8 +1954,7 @@ impl Command for DecryptCommand {
                 return "Wallet is not encrypted; nothing to do.".to_string();
             }
             wallet.remove_passphrase();
-            "Wallet encryption disabled. The wallet will be saved in the clear shortly."
-                .to_string()
+            "Wallet encryption disabled. The wallet will be saved in the clear shortly.".to_string()
         })
     }
 }

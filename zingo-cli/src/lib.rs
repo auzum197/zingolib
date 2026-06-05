@@ -444,9 +444,9 @@ fn apply_passphrase(
     passphrase: Option<&SecretString>,
 ) -> std::io::Result<()> {
     if let Some(passphrase) = passphrase {
-        wallet.set_passphrase(passphrase).map_err(|e| {
-            std::io::Error::other(format!("Failed to encrypt wallet: {e}"))
-        })?;
+        wallet
+            .set_passphrase(passphrase)
+            .map_err(|e| std::io::Error::other(format!("Failed to encrypt wallet: {e}")))?;
         println!("Wallet file will be encrypted at rest.");
     }
     Ok(())

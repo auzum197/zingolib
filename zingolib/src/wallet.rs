@@ -400,8 +400,7 @@ impl LightWallet {
             // Serialize into a buffer that is zeroized on drop, since while a passphrase is
             // set this plaintext (containing the seed and spending keys) must never touch
             // disk and should not linger in freed memory longer than necessary.
-            let mut wallet_bytes: zeroize::Zeroizing<Vec<u8>> =
-                zeroize::Zeroizing::new(vec![]);
+            let mut wallet_bytes: zeroize::Zeroizing<Vec<u8>> = zeroize::Zeroizing::new(vec![]);
             self.write(&mut *wallet_bytes, &network)?;
             self.save_required = false;
             let out = match &self.encryption {
