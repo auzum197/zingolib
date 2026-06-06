@@ -402,13 +402,16 @@ impl LightWallet {
             // disk and should not linger in freed memory longer than necessary.
             let mut wallet_bytes: zeroize::Zeroizing<Vec<u8>> = zeroize::Zeroizing::new(vec![]);
             self.write(&mut *wallet_bytes, &network)?;
-            self.save_required = false;
             let out = match &self.encryption {
                 Some(session) => session
                     .encrypt(&wallet_bytes)
                     .map_err(|e| std::io::Error::other(e.to_string()))?,
                 None => wallet_bytes.to_vec(),
             };
+            // Only clear the flag once the bytes are successfully produced. If serialization
+            // or encryption above fails, `save_required` stays set so the save is retried
+            // rather than silently dropped.
+            self.save_required = false;
             Ok(Some(out))
         } else {
             Ok(None)
@@ -422,17 +425,29 @@ impl LightWallet {
     }
 
     /// Enable at-rest encryption on a previously unencrypted wallet, or replace the current
-    /// passphrase with a new one.
+    /// passphrase with a new one, using the default ([`encryption::Argon2Params::desktop`])
+    /// KDF parameters.
     ///
-    /// Runs the (intentionally slow) Argon2id key derivation once and caches the resulting
-    /// key; subsequent saves only run the fast AEAD step. A fresh random salt is generated, so
-    /// calling this to rotate a passphrase fully rekeys the file. Flips `save_required` so the
-    /// change is persisted on the next save.
+    /// Memory-constrained callers (e.g. mobile) should prefer
+    /// [`Self::set_passphrase_with_params`] with [`encryption::Argon2Params::mobile`].
     pub fn set_passphrase(
         &mut self,
         passphrase: &secrecy::SecretString,
     ) -> Result<(), encryption::WalletEncryptionError> {
-        let params = encryption::Argon2Params::default();
+        self.set_passphrase_with_params(passphrase, encryption::Argon2Params::default())
+    }
+
+    /// Enable at-rest encryption (or rotate the passphrase) with explicit Argon2id parameters.
+    ///
+    /// Runs the (intentionally slow) key derivation once and caches the resulting key;
+    /// subsequent saves only run the fast AEAD step. A fresh random salt is generated, so
+    /// calling this to rotate a passphrase fully rekeys the file. Flips `save_required` so the
+    /// change is persisted on the next save.
+    pub fn set_passphrase_with_params(
+        &mut self,
+        passphrase: &secrecy::SecretString,
+        params: encryption::Argon2Params,
+    ) -> Result<(), encryption::WalletEncryptionError> {
         self.encryption = Some(encryption::EncryptionSession::new(passphrase, params)?);
         self.save_required = true;
         Ok(())

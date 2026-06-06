@@ -193,6 +193,18 @@ ZINGO_PASSPHRASE='your secret passphrase' \
   ./target/release/zingo-cli --seed "word1 word2 ... word24" --birthday 600000
 ```
 
+By default the key-derivation function uses 64 MiB of memory. On a
+memory-constrained device you can lower this when *creating* the wallet with
+`--kdf-memory-mib` (range 1–256; higher is harder to crack but slower to open):
+
+```bash
+ZINGO_PASSPHRASE='your secret passphrase' \
+  ./target/release/zingo-cli --kdf-memory-mib 32
+```
+
+The chosen value is recorded in the wallet file, so opening it later needs no
+flag — `--kdf-memory-mib` only affects newly created wallets.
+
 ### Opening an encrypted wallet
 
 Just start zingo-cli pointing at the encrypted wallet's data directory. If the
@@ -218,23 +230,25 @@ Two interactive commands operate on the currently open wallet. The change is
 written to disk on the next save; the background save task runs automatically
 (roughly once per second), so it is persisted shortly after the command returns:
 
-- `encrypt <passphrase>` — Encrypt a previously unencrypted wallet, **or** rotate
-  to a new passphrase if it is already encrypted (a new random salt is generated,
-  fully re-keying the file).
+- `encrypt` — Encrypt a previously unencrypted wallet, **or** rotate to a new
+  passphrase if it is already encrypted (a new random salt is generated, fully
+  re-keying the file). It always prompts you for the passphrase twice (no echo)
+  and requires the two entries to match, so a typo can't silently lock you out and
+  the passphrase never lands in your session history. An optional
+  `--kdf-memory-mib <MIB>` flag sets the key-derivation memory (default 64).
 - `decrypt` — Disable encryption and write the wallet in the clear from the next
   save onward. Only do this if the file is protected by other means.
 
 ```text
-(main) Block:... >> encrypt "my new passphrase"
+(main) Block:... >> encrypt
+New passphrase: ▒▒▒▒▒▒
+Confirm passphrase: ▒▒▒▒▒▒
 Wallet encryption enabled. The encrypted wallet will be saved shortly.
 
+(main) Block:... >> encrypt --kdf-memory-mib 32   # prompts, then uses 32 MiB
 (main) Block:... >> decrypt
 Wallet encryption disabled. The wallet will be saved in the clear shortly.
 ```
-
-> Note: a passphrase typed as a command argument inside the interactive prompt is
-> kept in the in-session command history. Prefer creating the wallet encrypted up
-> front, or rotating in a fresh session, if that matters for your threat model.
 
 ### How it works (technical)
 
@@ -244,11 +258,17 @@ envelope before being written to disk:
 - **Key derivation:** Argon2id derives a 256-bit key from your passphrase and a
   random per-wallet salt. This runs **once** when the wallet is opened or
   (re)encrypted; the derived key is then cached in memory, so the routine
-  per-second save loop only pays for the cheap symmetric step.
+  per-second save loop only pays for the cheap symmetric step. The cost
+  parameters (memory — 64 MiB by default, 3 iterations, 1 lane) are stored in the
+  header and reused on open.
 - **Encryption:** XChaCha20-Poly1305 (AEAD) with a fresh random nonce for every
   save. The envelope header (format version, KDF parameters, salt, nonce) is
   stored in the clear and authenticated as associated data, so the file is
   self-describing and tamper-evident.
+- **Tamper hardening:** because the KDF parameters live in the (clear) header and
+  must be read to derive the key *before* the AEAD can authenticate them, they are
+  bounds-checked against sane limits first — so a tampered file can't request an
+  enormous amount of memory and crash the process on open.
 - **Backward compatible:** existing unencrypted wallet files continue to load
   unchanged. An encrypted file is identified by a magic prefix that can never be
   confused with a plaintext wallet.

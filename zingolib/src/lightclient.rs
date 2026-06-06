@@ -162,6 +162,27 @@ impl LightClient {
         )
     }
 
+    /// Create a `LightClient` from serialized wallet bytes held in memory, decrypting them
+    /// with `passphrase` if they are an encrypted envelope.
+    ///
+    /// This is the buffer-based counterpart to
+    /// [`Self::create_from_wallet_path_with_passphrase`], intended for environments without
+    /// direct filesystem access (e.g. mobile via the FFI, which hands zingolib the wallet
+    /// bytes it persisted). Pass `None` for plaintext bytes; an encrypted buffer with a
+    /// missing/wrong passphrase returns an error. Use [`crate::wallet::encryption::is_encrypted`]
+    /// on the bytes first if the caller needs to know whether to prompt for a passphrase.
+    #[allow(clippy::result_large_err)]
+    pub fn create_from_buffer_with_passphrase(
+        buffer: &[u8],
+        config: ZingoConfig,
+        passphrase: Option<&secrecy::SecretString>,
+    ) -> Result<Self, LightClientError> {
+        let wallet =
+            LightWallet::read_encrypted(std::io::Cursor::new(buffer), config.chain, passphrase)
+                .map_err(LightClientError::FileError)?;
+        Self::create_from_wallet(wallet, config, true)
+    }
+
     /// Returns config used to create lightclient.
     pub fn config(&self) -> &ZingoConfig {
         &self.config

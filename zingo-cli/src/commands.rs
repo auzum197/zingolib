@@ -29,6 +29,7 @@ use zingo_common_components::protocol::activation_heights::for_test;
 use zingolib::data::{PollReport, proposal};
 use zingolib::lightclient::LightClient;
 use zingolib::utils::conversion::txid_from_hex_encoded_str;
+use zingolib::wallet::encryption::Argon2Params;
 use zingolib::wallet::keys::WalletAddressRef;
 use zingolib::wallet::keys::unified::{ReceiverSelection, UnifiedKeyStore};
 
@@ -1883,6 +1884,22 @@ impl Command for SaveCommand {
     }
 }
 
+/// Prompt for a new passphrase twice (no echo) and confirm the two entries match. Returns an
+/// error string suitable for the command response on mismatch or I/O failure.
+fn prompt_new_passphrase() -> Result<SecretString, String> {
+    let first = rpassword::prompt_password("New passphrase: ")
+        .map_err(|e| format!("Error: failed to read passphrase: {e}"))?;
+    if first.is_empty() {
+        return Err("Error: passphrase must not be empty.".to_string());
+    }
+    let confirm = rpassword::prompt_password("Confirm passphrase: ")
+        .map_err(|e| format!("Error: failed to read passphrase: {e}"))?;
+    if first != confirm {
+        return Err("Error: passphrases did not match; wallet unchanged.".to_string());
+    }
+    Ok(SecretString::new(first))
+}
+
 struct EncryptCommand {}
 impl Command for EncryptCommand {
     fn help(&self) -> &'static str {
@@ -1893,14 +1910,20 @@ impl Command for EncryptCommand {
             Argon2id + XChaCha20-Poly1305 envelope before it is written to disk. Running this
             on an already-encrypted wallet rotates to a new passphrase (and a new salt).
 
+            You are always prompted for the passphrase twice.
+
             The change is persisted on the next save (the save task runs automatically).
 
+            Optional flag:
+              --kdf-memory-mib <MIB>   Memory used by key derivation (default 64). Higher is
+                                       harder to crack but slower to open. Range 1-256.
+
             WARNING: there is no passphrase recovery. If you lose the passphrase, the wallet
-            file cannot be opened. Note also that passing the passphrase on this command line
-            may leave it in your shell history.
+            file cannot be opened.
 
             usage:
-            encrypt <passphrase>
+            encrypt                        # prompts for passphrase, default memory (64 MiB)
+            encrypt --kdf-memory-mib 32    # prompts for passphrase, uses 32 MiB
         "#}
     }
 
@@ -1909,16 +1932,41 @@ impl Command for EncryptCommand {
     }
 
     fn exec(&self, args: &[&str], lightclient: &mut LightClient) -> String {
-        if args.len() != 1 || args[0].is_empty() {
-            return "Error: encrypt expects exactly one non-empty <passphrase> argument. \
-                    Type \"help encrypt\" for usage."
-                .to_string();
+        // The only accepted argument is the optional `--kdf-memory-mib <MIB>` flag. The
+        // passphrase is never an argument — it is always prompted (with confirmation) — so
+        // nothing ambiguous can follow `encrypt`.
+        let mut memory_mib = zingolib::wallet::encryption::DEFAULT_MEMORY_MIB;
+        let mut it = args.iter();
+        while let Some(arg) = it.next() {
+            match *arg {
+                "--kdf-memory-mib" => match it.next() {
+                    Some(v) => match v.parse::<u32>() {
+                        Ok(n @ 1..=256) => memory_mib = n,
+                        _ => {
+                            return "Error: --kdf-memory-mib expects an integer between 1 and 256."
+                                .to_string();
+                        }
+                    },
+                    None => return "Error: --kdf-memory-mib requires a value.".to_string(),
+                },
+                other => {
+                    return format!(
+                        "Error: unexpected argument {other:?}. Type \"help encrypt\" for usage."
+                    );
+                }
+            }
         }
-        let passphrase = SecretString::new(args[0].to_string());
+        let params = Argon2Params::with_memory_mib(memory_mib);
+
+        let passphrase = match prompt_new_passphrase() {
+            Ok(pw) => pw,
+            Err(e) => return e,
+        };
+
         RT.block_on(async move {
             let mut wallet = lightclient.wallet.write().await;
             let rotating = wallet.is_encrypted();
-            match wallet.set_passphrase(&passphrase) {
+            match wallet.set_passphrase_with_params(&passphrase, params) {
                 Ok(()) if rotating => {
                     "Passphrase rotated. The re-encrypted wallet will be saved shortly.".to_string()
                 }

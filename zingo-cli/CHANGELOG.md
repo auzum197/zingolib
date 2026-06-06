@@ -13,11 +13,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Optional at-rest encryption of the wallet file with a passphrase
   (Argon2id key derivation + XChaCha20-Poly1305). Supply a passphrase via the
   `--passphrase` flag, the `ZINGO_PASSPHRASE` environment variable, or the
-  interactive no-echo prompt shown when opening an encrypted wallet. New
-  interactive commands: `encrypt <passphrase>` (encrypt an unencrypted wallet or
-  rotate the passphrase) and `decrypt` (write the wallet in the clear). Existing
-  unencrypted wallets remain fully compatible. See the README "Wallet Encryption"
-  section for details.
+  interactive no-echo prompt shown when opening an encrypted wallet. Tune the
+  key-derivation memory with `--kdf-memory-mib <MIB>` (default 64) when creating a
+  wallet. New interactive commands: `encrypt` (encrypt an unencrypted wallet or
+  rotate the passphrase — always prompts for the passphrase twice with
+  confirmation; accepts an optional `--kdf-memory-mib <MIB>`) and `decrypt` (write
+  the wallet in the clear). Existing unencrypted wallets remain fully compatible.
+  See the README "Wallet Encryption" section for details.
 
 ### Changed
 
