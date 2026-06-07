@@ -23,9 +23,9 @@
 //!
 //! ## Threat model
 //! This protects the wallet file *at rest* (a stolen backup, a discarded disk, a synced
-//! cloud backup). It does **not** protect a wallet that is currently unlocked: the keys must
-//! live in plaintext in RAM to sync and sign, which is unavoidable for a hot wallet. The
-//! [`zeroize`] usage here is defense-in-depth, not a guarantee.
+//! cloud backup). It does not protect a wallet that is currently open: the keys must live in
+//! plaintext in RAM to sync and sign, which is unavoidable for a hot wallet. The [`zeroize`]
+//! usage here is defense-in-depth, not a guarantee.
 //!
 //! ## Why the magic can't collide with a plaintext wallet
 //! [`crate::wallet::LightWallet::read`] reads the first 8 bytes as a little-endian `u64`
@@ -34,7 +34,7 @@
 //! be mistaken for a plaintext one and vice versa.
 //!
 //! ## Mobile / FFI integration contract
-//! The UniFFI `WalletEngine` that zingo-mobile exposes lives outside this repository; it
+//! The UniFFI `WalletEngine` that zingo-mobile exposes lives outside this repository. It
 //! wraps the public zingolib API. To support encryption from mobile, the FFI layer should:
 //! - Take the passphrase across the FFI boundary as a `String` and immediately wrap it in a
 //!   [`secrecy::SecretString`] before calling into zingolib (never hold it as a plain
@@ -47,7 +47,7 @@
 //!   with the persisted bytes and the passphrase (or `None` for a plaintext buffer). Call
 //!   [`is_encrypted`] on the bytes first to decide whether to prompt the user.
 //! - **Save:** [`crate::wallet::LightWallet::save`] already returns encrypted bytes once a
-//!   passphrase is set — the same save-buffer the FFI persists today, no change required.
+//!   passphrase is set (the same save-buffer the FFI persists today), no change required.
 
 use argon2::{Algorithm, Argon2, Params, Version};
 use chacha20poly1305::{
@@ -116,7 +116,7 @@ pub enum WalletEncryptionError {
     /// Key derivation failed.
     #[error("key derivation failed: {0}")]
     KeyDerivation(String),
-    /// Decryption/authentication failed — almost always a wrong passphrase or a corrupt file.
+    /// Decryption/authentication failed, almost always a wrong passphrase or a corrupt file.
     #[error("decryption failed (wrong passphrase or corrupt wallet file)")]
     DecryptionFailed,
 }
@@ -135,7 +135,7 @@ pub struct Argon2Params {
     pub p_cost: u8,
 }
 
-/// Default memory cost in MiB (64 MiB; the only cost knob exposed to users).
+/// Default memory cost in MiB. This is the only cost knob exposed to users.
 pub const DEFAULT_MEMORY_MIB: u32 = 64;
 /// Default time cost (Argon2 iterations).
 const DEFAULT_ITERATIONS: u32 = 3;
@@ -144,8 +144,8 @@ const DEFAULT_PARALLELISM: u8 = 1;
 
 impl Argon2Params {
     /// Build parameters from an explicit memory cost in MiB, using the default iterations and
-    /// parallelism. This is the only cost knob exposed to callers; iterations/parallelism are
-    /// fixed at sane defaults. No hidden "profiles".
+    /// parallelism. Memory is the only cost knob exposed to callers. Iterations and
+    /// parallelism are fixed at sane defaults, with no hidden presets.
     pub const fn with_memory_mib(memory_mib: u32) -> Self {
         Self {
             m_cost: memory_mib * 1024,
@@ -155,7 +155,7 @@ impl Argon2Params {
     }
 
     /// Reject parameters outside the accepted bounds. MUST be called before any Argon2 work
-    /// on parameters that originate from an (as yet unauthenticated) file header — see the
+    /// on parameters that originate from an (as yet unauthenticated) file header, see the
     /// bounds constants above.
     pub fn validate(&self) -> Result<(), WalletEncryptionError> {
         if !(MIN_M_COST_KIB..=MAX_M_COST_KIB).contains(&self.m_cost) {
@@ -196,7 +196,7 @@ impl Default for Argon2Params {
 /// A cached encryption session: the derived symmetric key plus the parameters needed to
 /// reproduce it.
 ///
-/// The expensive Argon2id derivation is run **once** (at wallet creation, unlock, or
+/// The expensive Argon2id derivation is run **once** (at wallet creation, on open, or on a
 /// passphrase change) and the resulting key is held here so the per-second save loop only
 /// pays for the (cheap) AEAD encryption. The key is zeroized on drop.
 ///
@@ -219,7 +219,7 @@ impl std::fmt::Debug for EncryptionSession {
 impl EncryptionSession {
     /// Derive a fresh session from a passphrase, generating a new random salt.
     ///
-    /// Runs Argon2id; call this only when (re)keying, not on every save.
+    /// Runs Argon2id. Call this only when (re)keying, not on every save.
     pub fn new(
         passphrase: &SecretString,
         params: Argon2Params,
@@ -312,8 +312,9 @@ pub fn decrypt(
         return Err(WalletEncryptionError::UnsupportedKdf(kdf_id));
     }
 
-    let m_cost = u32::from_le_bytes(envelope[10..14].try_into().unwrap());
-    let t_cost = u32::from_le_bytes(envelope[14..18].try_into().unwrap());
+    // Indices are in bounds: the length check above guarantees at least HEADER_LEN bytes.
+    let m_cost = u32::from_le_bytes([envelope[10], envelope[11], envelope[12], envelope[13]]);
+    let t_cost = u32::from_le_bytes([envelope[14], envelope[15], envelope[16], envelope[17]]);
     let p_cost = envelope[18];
     let params = Argon2Params {
         m_cost,
@@ -441,9 +442,9 @@ mod tests {
     #[test]
     fn tampered_kdf_params_rejected_before_argon2() {
         // Build a valid envelope, then tamper the m_cost field in the cleartext header to the
-        // maximum u32 (~4 TiB). decrypt() must reject this as out-of-range *quickly* — i.e.
-        // before attempting the (impossible) Argon2 allocation. If validation were missing or
-        // ran after derive, this test would OOM/hang instead of returning promptly.
+        // maximum u32 (~4 TiB). decrypt() must reject this as out-of-range *quickly*, before
+        // attempting the (impossible) Argon2 allocation. If validation were missing or ran
+        // after derive, this test would OOM/hang instead of returning promptly.
         let session = EncryptionSession::new(&pw("pw"), fast_params()).unwrap();
         let mut envelope = session.encrypt(b"data").unwrap();
         // m_cost occupies header bytes [10..14] (little-endian u32).

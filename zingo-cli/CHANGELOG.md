@@ -16,10 +16,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   interactive no-echo prompt shown when opening an encrypted wallet. Tune the
   key-derivation memory with `--kdf-memory-mib <MIB>` (default 64) when creating a
   wallet. New interactive commands: `encrypt` (encrypt an unencrypted wallet or
-  rotate the passphrase — always prompts for the passphrase twice with
-  confirmation; accepts an optional `--kdf-memory-mib <MIB>`) and `decrypt` (write
-  the wallet in the clear). Existing unencrypted wallets remain fully compatible.
-  See the README "Wallet Encryption" section for details.
+  rotate the passphrase, always prompting for the passphrase twice with
+  confirmation, and accepting an optional `--kdf-memory-mib <MIB>`) and `decrypt`
+  (write the wallet in the clear). Existing unencrypted wallets remain fully
+  compatible. See the README "Wallet Encryption" section for details.
 
 ### Changed
 

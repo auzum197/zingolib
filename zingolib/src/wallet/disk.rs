@@ -127,7 +127,7 @@ impl LightWallet {
     /// Read a wallet, transparently decrypting it first if the file is an encrypted envelope.
     ///
     /// If the file begins with the encryption magic, `passphrase` is required and is used to
-    /// derive the key and decrypt the payload; the resulting [`encryption::EncryptionSession`]
+    /// derive the key and decrypt the payload. The resulting [`encryption::EncryptionSession`]
     /// is stored on the returned wallet so subsequent saves re-encrypt with the same key.
     /// Otherwise the file is read as a plaintext wallet and `passphrase` is ignored.
     pub fn read_encrypted<R: Read>(

@@ -339,7 +339,7 @@ pub struct ConfigTemplate {
     chaintype: ChainType,
     tor_enabled: bool,
     /// Passphrase for at-rest wallet encryption, from `--passphrase` or `$ZINGO_PASSPHRASE`.
-    /// `None` means none was supplied up front; an encrypted wallet will trigger a prompt.
+    /// `None` means none was supplied up front. An encrypted wallet will trigger a prompt.
     passphrase: Option<SecretString>,
     /// KDF parameters used when encrypting a newly created wallet (memory from
     /// `--kdf-memory-mib`). Has no effect when opening an existing wallet.

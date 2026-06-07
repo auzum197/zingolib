@@ -150,7 +150,7 @@ pub struct LightWallet {
     /// At-rest encryption session. When `Some`, the serialized wallet is wrapped in a
     /// passphrase-derived AEAD envelope on every save (see [`crate::wallet::encryption`]).
     /// `None` means the wallet is persisted in the clear (legacy / opt-out). The expensive
-    /// key derivation is performed once when this is set; saves only run the cheap AEAD step.
+    /// key derivation is performed once when this is set. Saves only run the cheap AEAD step.
     encryption: Option<encryption::EncryptionSession>,
 }
 
@@ -454,7 +454,7 @@ impl LightWallet {
     }
 
     /// Rotate the passphrase. Alias for [`Self::set_passphrase`], named for intent at the
-    /// call site; both fully rekey the file with a new salt.
+    /// call site. Both fully rekey the file with a new salt.
     pub fn change_passphrase(
         &mut self,
         passphrase: &secrecy::SecretString,
@@ -463,7 +463,7 @@ impl LightWallet {
     }
 
     /// Disable at-rest encryption: the next save (and all subsequent saves) will write the
-    /// wallet in the clear. This is an explicit opt-out — use with care.
+    /// wallet in the clear. This is an explicit opt-out, so use with care.
     pub fn remove_passphrase(&mut self) {
         if self.encryption.take().is_some() {
             self.save_required = true;

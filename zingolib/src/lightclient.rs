@@ -168,7 +168,7 @@ impl LightClient {
     /// This is the buffer-based counterpart to
     /// [`Self::create_from_wallet_path_with_passphrase`], intended for environments without
     /// direct filesystem access (e.g. mobile via the FFI, which hands zingolib the wallet
-    /// bytes it persisted). Pass `None` for plaintext bytes; an encrypted buffer with a
+    /// bytes it persisted). Pass `None` for plaintext bytes. An encrypted buffer with a
     /// missing/wrong passphrase returns an error. Use [`crate::wallet::encryption::is_encrypted`]
     /// on the bytes first if the caller needs to know whether to prompt for a passphrase.
     #[allow(clippy::result_large_err)]

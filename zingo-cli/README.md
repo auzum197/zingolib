@@ -148,44 +148,42 @@ zcash-conf-path: /home/user/tmp/zcashd_regtest/zcash.conf
 
 ## Wallet Encryption (at rest)
 
-By default the wallet file (`zingo-wallet.dat`) is stored **unencrypted** — its
-protection relies on your operating system (file permissions, full-disk
-encryption, etc.). You can optionally encrypt the wallet file with a passphrase so
-that the file on disk is useless to anyone who obtains it.
+By default the wallet file (`zingo-wallet.dat`) is stored unencrypted, so its protection
+relies on your operating system (file permissions, full-disk encryption, and so on). You can
+optionally encrypt the wallet file with a passphrase so the file on disk is useless to anyone
+who obtains it.
 
 ### What this protects (and what it doesn't)
 
-- **Protects:** the wallet file *at rest* — a stolen or lost device backup, a
-  synced cloud backup, a shared filesystem, a discarded disk. Because the whole
-  file is encrypted, this also hides privacy metadata (your addresses,
-  transaction history, and balances), not just the keys.
-- **Does NOT protect:** a wallet that is currently open/running. While zingo-cli
-  is running the keys are necessarily decrypted in memory in order to sync and
-  sign — this is unavoidable for any hot wallet. It also can't help anyone who
-  has your passphrase.
+It protects the wallet file at rest: a stolen or lost device backup, a synced cloud backup, a
+shared filesystem, a discarded disk. Because the whole file is encrypted, it also hides
+privacy metadata such as your addresses, transaction history, and balances.
 
-> ⚠️ **There is no passphrase recovery.** If you forget the passphrase, the
-> wallet file cannot be opened and the funds are unrecoverable (unless you still
-> have the seed phrase). Back up your seed phrase separately.
+It does not protect a wallet that is currently open. While zingo-cli is running, the keys are
+decrypted in memory so the wallet can sync and sign, which is unavoidable for any hot wallet.
+It also can't help anyone who already has your passphrase.
+
+There is no passphrase recovery. If you forget the passphrase the wallet file cannot be
+opened, and the funds are unrecoverable unless you still have the seed phrase. Back up your
+seed phrase separately.
 
 ### Supplying a passphrase
 
-A passphrase can be provided in three ways, in order of preference:
+A passphrase can be provided three ways, listed most secure first:
 
-1. **Interactive prompt (most secure):** if you open an encrypted wallet without
-   supplying a passphrase, zingo-cli prompts for it without echoing to the
-   terminal.
-2. **Environment variable:** `ZINGO_PASSPHRASE`.
-3. **`--passphrase` flag.** Convenient, but **avoid it on shared machines**: the
-   value can leak via the process list (`ps`) and your shell history.
+1. Interactive prompt. If you open an encrypted wallet without supplying a passphrase,
+   zingo-cli prompts for it without echoing to the terminal.
+2. The `ZINGO_PASSPHRASE` environment variable.
+3. The `--passphrase` flag. Avoid this on shared machines, since the value can leak via the
+   process list (`ps`) and your shell history.
 
 ### Creating a new encrypted wallet
 
-Pass a passphrase when creating a wallet (fresh, from `--seed`, or from
-`--viewkey`). The wallet file will be encrypted from its first save:
+Pass a passphrase when creating a wallet (fresh, from `--seed`, or from `--viewkey`). The
+wallet file is encrypted from its first save:
 
 ```bash
-# Fresh wallet, encrypted (prompted via env var here to avoid shell history)
+# Fresh wallet, encrypted (passed via env var to keep it out of shell history)
 ZINGO_PASSPHRASE='your secret passphrase' ./target/release/zingo-cli
 
 # Restore from seed, encrypted
@@ -193,26 +191,26 @@ ZINGO_PASSPHRASE='your secret passphrase' \
   ./target/release/zingo-cli --seed "word1 word2 ... word24" --birthday 600000
 ```
 
-By default the key-derivation function uses 64 MiB of memory. On a
-memory-constrained device you can lower this when *creating* the wallet with
-`--kdf-memory-mib` (range 1–256; higher is harder to crack but slower to open):
+By default the key-derivation function uses 64 MiB of memory. On a memory-constrained device
+you can lower this when creating the wallet with `--kdf-memory-mib` (range 1 to 256). Higher
+is harder to crack but slower to open:
 
 ```bash
 ZINGO_PASSPHRASE='your secret passphrase' \
   ./target/release/zingo-cli --kdf-memory-mib 32
 ```
 
-The chosen value is recorded in the wallet file, so opening it later needs no
-flag — `--kdf-memory-mib` only affects newly created wallets.
+The chosen value is recorded in the wallet file, so opening it later needs no flag.
+`--kdf-memory-mib` only affects newly created wallets.
 
 ### Opening an encrypted wallet
 
-Just start zingo-cli pointing at the encrypted wallet's data directory. If the
-file is encrypted and you don't pass a passphrase, you'll be prompted:
+Start zingo-cli pointing at the encrypted wallet's data directory. If the file is encrypted
+and you don't pass a passphrase, you are prompted:
 
 ```bash
 ./target/release/zingo-cli --data-dir /path/to/wallet
-# -> Wallet is encrypted. Enter passphrase: ▒▒▒▒▒▒
+# -> Wallet is encrypted. Enter passphrase:
 ```
 
 Or supply it non-interactively:
@@ -222,27 +220,27 @@ ZINGO_PASSPHRASE='your secret passphrase' \
   ./target/release/zingo-cli --data-dir /path/to/wallet
 ```
 
-An unencrypted wallet opens exactly as before — no passphrase is requested.
+An unencrypted wallet opens as before, with no passphrase requested.
 
 ### Managing encryption from inside the CLI
 
-Two interactive commands operate on the currently open wallet. The change is
-written to disk on the next save; the background save task runs automatically
-(roughly once per second), so it is persisted shortly after the command returns:
+Two interactive commands operate on the currently open wallet. The change is written to disk
+on the next save. The background save task runs automatically (roughly once per second), so
+it is persisted shortly after the command returns.
 
-- `encrypt` — Encrypt a previously unencrypted wallet, **or** rotate to a new
-  passphrase if it is already encrypted (a new random salt is generated, fully
-  re-keying the file). It always prompts you for the passphrase twice (no echo)
-  and requires the two entries to match, so a typo can't silently lock you out and
-  the passphrase never lands in your session history. An optional
-  `--kdf-memory-mib <MIB>` flag sets the key-derivation memory (default 64).
-- `decrypt` — Disable encryption and write the wallet in the clear from the next
-  save onward. Only do this if the file is protected by other means.
+`encrypt` encrypts a previously unencrypted wallet, or rotates to a new passphrase if it is
+already encrypted (a new random salt is generated, fully re-keying the file). It always
+prompts for the passphrase twice (no echo) and requires the two entries to match, so a typo
+can't silently lock you out and the passphrase never lands in your session history. An
+optional `--kdf-memory-mib <MIB>` flag sets the key-derivation memory (default 64).
+
+`decrypt` disables encryption and writes the wallet in the clear from the next save onward.
+Only do this if the file is protected by other means.
 
 ```text
 (main) Block:... >> encrypt
-New passphrase: ▒▒▒▒▒▒
-Confirm passphrase: ▒▒▒▒▒▒
+New passphrase:
+Confirm passphrase:
 Wallet encryption enabled. The encrypted wallet will be saved shortly.
 
 (main) Block:... >> encrypt --kdf-memory-mib 32   # prompts, then uses 32 MiB
@@ -252,26 +250,25 @@ Wallet encryption disabled. The wallet will be saved in the clear shortly.
 
 ### How it works (technical)
 
-The entire serialized wallet is wrapped in a single authenticated-encryption
-envelope before being written to disk:
+The entire serialized wallet is wrapped in a single authenticated-encryption envelope before
+being written to disk.
 
-- **Key derivation:** Argon2id derives a 256-bit key from your passphrase and a
-  random per-wallet salt. This runs **once** when the wallet is opened or
-  (re)encrypted; the derived key is then cached in memory, so the routine
-  per-second save loop only pays for the cheap symmetric step. The cost
-  parameters (memory — 64 MiB by default, 3 iterations, 1 lane) are stored in the
-  header and reused on open.
-- **Encryption:** XChaCha20-Poly1305 (AEAD) with a fresh random nonce for every
-  save. The envelope header (format version, KDF parameters, salt, nonce) is
-  stored in the clear and authenticated as associated data, so the file is
-  self-describing and tamper-evident.
-- **Tamper hardening:** because the KDF parameters live in the (clear) header and
-  must be read to derive the key *before* the AEAD can authenticate them, they are
-  bounds-checked against sane limits first — so a tampered file can't request an
-  enormous amount of memory and crash the process on open.
-- **Backward compatible:** existing unencrypted wallet files continue to load
-  unchanged. An encrypted file is identified by a magic prefix that can never be
-  confused with a plaintext wallet.
+Argon2id derives a 256-bit key from your passphrase and a random per-wallet salt. This runs
+once when the wallet is opened or re-encrypted, and the derived key is then cached in memory,
+so the routine per-second save loop only pays for the cheap symmetric step. The cost
+parameters (memory, defaulting to 64 MiB, plus 3 iterations and 1 lane) are stored in the
+header and reused on open.
+
+The payload is encrypted with XChaCha20-Poly1305 (AEAD) using a fresh random nonce for every
+save. The envelope header (format version, KDF parameters, salt, nonce) is stored in the
+clear and authenticated as associated data, so the file is self-describing and tamper-evident.
+
+The KDF parameters live in the clear header and must be read to derive the key before the
+AEAD can authenticate them, so they are bounds-checked against sane limits first. A tampered
+file therefore can't request an enormous amount of memory and crash the process on open.
+
+Existing unencrypted wallet files continue to load unchanged. An encrypted file is identified
+by a magic prefix that can never be confused with a plaintext wallet.
 
 ## Exiting the CLI
 

@@ -1895,7 +1895,7 @@ fn prompt_new_passphrase() -> Result<SecretString, String> {
     let confirm = rpassword::prompt_password("Confirm passphrase: ")
         .map_err(|e| format!("Error: failed to read passphrase: {e}"))?;
     if first != confirm {
-        return Err("Error: passphrases did not match; wallet unchanged.".to_string());
+        return Err("Error: passphrases did not match, wallet unchanged.".to_string());
     }
     Ok(SecretString::new(first))
 }
@@ -1933,7 +1933,7 @@ impl Command for EncryptCommand {
 
     fn exec(&self, args: &[&str], lightclient: &mut LightClient) -> String {
         // The only accepted argument is the optional `--kdf-memory-mib <MIB>` flag. The
-        // passphrase is never an argument — it is always prompted (with confirmation) — so
+        // passphrase is never an argument. It is always prompted (with confirmation), so
         // nothing ambiguous can follow `encrypt`.
         let mut memory_mib = zingolib::wallet::encryption::DEFAULT_MEMORY_MIB;
         let mut it = args.iter();
