@@ -543,7 +543,11 @@ pub fn startup(
             config.wallet_settings.clone(),
         )
         .map_err(|e| std::io::Error::other(format!("Failed to create wallet. {e}")))?;
-        apply_passphrase(&mut wallet, filled_template.passphrase.as_ref(), filled_template.kdf_params)?;
+        apply_passphrase(
+            &mut wallet,
+            filled_template.passphrase.as_ref(),
+            filled_template.kdf_params,
+        )?;
         LightClient::create_from_wallet(wallet, config.clone(), false)
             .map_err(|e| std::io::Error::other(format!("Failed to create lightclient. {e}")))?
     } else if let Some(ufvk) = filled_template.ufvk.clone() {
@@ -555,7 +559,11 @@ pub fn startup(
             config.wallet_settings.clone(),
         )
         .map_err(|e| std::io::Error::other(format!("Failed to create wallet. {e}")))?;
-        apply_passphrase(&mut wallet, filled_template.passphrase.as_ref(), filled_template.kdf_params)?;
+        apply_passphrase(
+            &mut wallet,
+            filled_template.passphrase.as_ref(),
+            filled_template.kdf_params,
+        )?;
         LightClient::create_from_wallet(wallet, config.clone(), false)
             .map_err(|e| std::io::Error::other(format!("Failed to create lightclient. {e}")))?
     } else if config.wallet_path_exists() {
@@ -583,7 +591,11 @@ pub fn startup(
             .map_err(|e| std::io::Error::other(format!("Failed to create lightclient. {e}")))?;
         if let Some(passphrase) = filled_template.passphrase.as_ref() {
             RT.block_on(async {
-                apply_passphrase(&mut *lc.wallet.write().await, Some(passphrase), filled_template.kdf_params)
+                apply_passphrase(
+                    &mut *lc.wallet.write().await,
+                    Some(passphrase),
+                    filled_template.kdf_params,
+                )
             })?;
         }
         lc

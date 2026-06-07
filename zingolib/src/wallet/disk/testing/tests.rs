@@ -388,7 +388,10 @@ fn custom_kdf_memory_recorded_and_buffer_round_trip() {
     wallet
         .set_passphrase_with_params(&passphrase, Argon2Params::with_memory_mib(32))
         .unwrap();
-    let bytes = wallet.save().unwrap().expect("encrypted save produced bytes");
+    let bytes = wallet
+        .save()
+        .unwrap()
+        .expect("encrypted save produced bytes");
     assert!(is_encrypted(&bytes));
 
     // The header records the chosen memory cost (32 MiB = 32*1024 KiB) at bytes [10..14] LE.
