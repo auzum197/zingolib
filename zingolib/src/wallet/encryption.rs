@@ -21,6 +21,46 @@
 //! self-describing and the parameters can be upgraded in a future format version. The full
 //! header is bound as AEAD associated data so it cannot be tampered with.
 //!
+//! ## Example
+//!
+//! Encrypt an existing wallet, save it, and reload it. `wallet` is a [`crate::wallet::LightWallet`]
+//! built through the usual constructors, and `network` is its [`crate::config::ChainType`].
+//!
+//! ```no_run
+//! use std::io::Cursor;
+//!
+//! use secrecy::SecretString;
+//! use zingolib::config::ChainType;
+//! use zingolib::wallet::LightWallet;
+//! use zingolib::wallet::encryption;
+//!
+//! # fn demo(mut wallet: LightWallet, network: ChainType) -> Result<(), Box<dyn std::error::Error>> {
+//! let passphrase = SecretString::new("a strong passphrase".to_string());
+//!
+//! // Turn on at-rest encryption. Argon2id runs once here and the derived key is cached, so
+//! // each later save only pays for the fast symmetric step.
+//! wallet.set_passphrase(&passphrase)?;
+//! // On a memory-constrained device, choose the memory cost explicitly instead:
+//! //   let params = encryption::Argon2Params::with_memory_mib(32);
+//! //   wallet.set_passphrase_with_params(&passphrase, params)?;
+//!
+//! // `save` now returns an encrypted envelope, or `None` when nothing changed since the last
+//! // save. Persist these bytes wherever the wallet file lives.
+//! let Some(encrypted) = wallet.save()? else { return Ok(()) };
+//! assert!(encryption::is_encrypted(&encrypted));
+//!
+//! // Later, reload from those bytes with the same passphrase. A wrong or missing passphrase
+//! // returns an error rather than a corrupt wallet.
+//! let reloaded =
+//!     LightWallet::read_encrypted(Cursor::new(&encrypted), network, Some(&passphrase))?;
+//! assert!(reloaded.is_encrypted());
+//! # Ok(())
+//! # }
+//! ```
+//!
+//! Without filesystem access (e.g. mobile), reload the bytes in one call with
+//! [`crate::lightclient::LightClient::create_from_buffer_with_passphrase`].
+//!
 //! ## Threat model
 //! This protects the wallet file *at rest* (a stolen backup, a discarded disk, a synced
 //! cloud backup). It does not protect a wallet that is currently open: the keys must live in
