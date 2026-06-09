@@ -315,11 +315,11 @@ fn contains_subsequence(haystack: &[u8], needle: &[u8]) -> bool {
 }
 
 /// End-to-end exercise of the at-rest encryption feature using a real example wallet:
-/// - a plaintext wallet still loads via `read_encrypted` with no passphrase (backward compat);
-/// - encrypting then saving produces an envelope whose bytes never contain the raw seed;
+/// - a plaintext wallet still loads via `read_encrypted` with no passphrase (backward compat)
+/// - encrypting then saving produces an envelope whose bytes never contain the raw seed
 /// - the encrypted file round-trips with the correct passphrase and carries the session
-///   forward so subsequent saves stay encrypted;
-/// - a wrong/absent passphrase fails cleanly.
+///   forward so subsequent saves stay encrypted
+/// - a wrong/absent passphrase fails cleanly
 #[test]
 fn encrypted_wallet_round_trip_and_backward_compat() {
     use crate::config::ChainType;
@@ -356,7 +356,7 @@ fn encrypted_wallet_round_trip_and_backward_compat() {
     // The raw seed entropy must not appear anywhere in the ciphertext.
     assert!(!contains_subsequence(&encrypted, &seed_entropy));
 
-    // Round-trip with the correct passphrase; the session is carried forward.
+    // Round-trip with the correct passphrase. The session is carried forward.
     let reloaded = LightWallet::read_encrypted(encrypted.as_slice(), network, Some(&passphrase))
         .expect("decrypt with correct passphrase");
     assert_eq!(reloaded.mnemonic_phrase().unwrap(), expected_phrase);
