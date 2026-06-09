@@ -67,7 +67,7 @@ impl LightWallet {
                         BasicNoteSummary::from_parts(
                             output.value(),
                             spend_status,
-                            u32::from(output.output_id().output_index()),
+                            output.output_id().output_index(),
                             memo,
                         )
                     })
@@ -87,7 +87,7 @@ impl LightWallet {
                         BasicNoteSummary::from_parts(
                             output.value(),
                             spend_status,
-                            u32::from(output.output_id().output_index()),
+                            output.output_id().output_index(),
                             memo,
                         )
                     })
@@ -101,7 +101,7 @@ impl LightWallet {
                         BasicCoinSummary::from_parts(
                             output.value(),
                             spend_status,
-                            u32::from(output.output_id().output_index()),
+                            output.output_id().output_index(),
                         )
                     })
                     .collect::<Vec<_>>();
@@ -120,10 +120,10 @@ impl LightWallet {
                             memo,
                             value: note.value(),
                             recipient: note
-                                .encoded_recipient(&self.network)
+                                .encoded_recipient(&self.chain_type)
                                 .map_err(zcash_address::ParseError::Unified)?,
                             recipient_unified_address: note
-                                .encoded_recipient_full_unified_address(&self.network),
+                                .encoded_recipient_full_unified_address(&self.chain_type),
                             output_index: note.output_id().output_index(),
                             account_id: note.key_id().account_id,
                             scope: Scope::from(note.key_id().scope),
@@ -144,9 +144,11 @@ impl LightWallet {
                             output_index: note.output_id().output_index(),
                             memo,
                             value: note.value(),
-                            recipient: note.encoded_recipient(&self.network).expect("infallible"),
+                            recipient: note
+                                .encoded_recipient(&self.chain_type)
+                                .expect("infallible"),
                             recipient_unified_address: note
-                                .encoded_recipient_full_unified_address(&self.network),
+                                .encoded_recipient_full_unified_address(&self.chain_type),
                             account_id: note.key_id().account_id,
                             scope: Scope::from(note.key_id().scope),
                         }
@@ -168,10 +170,12 @@ impl LightWallet {
                                         OutgoingCoinSummary {
                                             value: transparent_output.value().into_u64(),
                                             recipient: transparent::encode_address(
-                                                &self.network,
+                                                &self.chain_type,
                                                 address,
                                             ),
-                                            output_index: output_index as u16,
+                                            output_index: output_index
+                                                .try_into()
+                                                .expect("output index should be valid u32"),
                                         }
                                     })
                                 })

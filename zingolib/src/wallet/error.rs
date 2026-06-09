@@ -11,7 +11,7 @@ use zcash_protocol::{PoolType, ShieldedProtocol, consensus::BlockHeight};
 use super::output::OutputRef;
 
 /// Top level wallet errors
-// TODO: unify errors and error variants
+// TODO: remove external types from public API
 #[derive(Debug, thiserror::Error)]
 pub enum WalletError {
     /// Key error
@@ -79,6 +79,11 @@ pub enum WalletError {
     /// At-rest encryption setup failed (e.g. key derivation).
     #[error("Wallet encryption error. {0}")]
     Encryption(#[from] crate::wallet::encryption::WalletEncryptionError),
+    /// Cannot create a new wallet with a wallet base of `Read` variant as the wallet is already created and stored as bytes.
+    #[error(
+        "Cannot create a new wallet with a wallet base of `Read` variant as the wallet is already created and stored as bytes."
+    )]
+    WalletAlreadyCreated,
 }
 
 /// Price error
@@ -169,6 +174,7 @@ pub enum BalanceError {
 }
 
 /// Errors associated with key and address derivation
+// TODO: make error private as contains external crate types. have public API safe higher level error type i.e. WalletError.
 #[derive(Debug, thiserror::Error)]
 pub enum KeyError {
     /// Error associated with standard IO
@@ -212,6 +218,9 @@ pub enum KeyError {
         "Transparent address generation failed. Latest transparent address has not received funds."
     )]
     GapError,
+    /// Invalid mnemonic phrase.
+    #[error("Invalid mnemonic phrase: {0}")]
+    InvalidMnemonicPhrase(#[from] bip0039::Error),
 }
 
 impl From<bip32::Error> for KeyError {

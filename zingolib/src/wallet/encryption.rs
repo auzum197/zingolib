@@ -29,22 +29,22 @@
 //! ```no_run
 //! use std::io::Cursor;
 //!
-//! use zcash_protocol::consensus::BlockHeight;
-//! use zingolib::config::ChainType;
+//! use zingolib::config::{ChainType, WalletConfig};
+//! use zingolib::wallet::LightWallet;
 //! use zingolib::wallet::encryption::{self, EncryptionConfig};
-//! use zingolib::wallet::{LightWallet, WalletBase, WalletSettings};
 //!
-//! # fn demo(network: ChainType, wallet_base: WalletBase, birthday: BlockHeight, wallet_settings: WalletSettings) -> Result<(), Box<dyn std::error::Error>> {
+//! # fn demo(chain_type: ChainType, wallet_config: WalletConfig) -> Result<(), Box<dyn std::error::Error>> {
 //! let passphrase = "a strong passphrase".to_string();
 //!
-//! // Encryption is a construction input. Argon2id runs once during `build`, and the derived
-//! // key is cached so each later save only pays for the fast symmetric step.
-//! let mut wallet = LightWallet::builder(network, wallet_base, birthday, wallet_settings)
-//!     .encryption(EncryptionConfig::new(passphrase.clone()))
-//!     // On a constrained device, set the memory cost explicitly instead:
-//!     //   .encryption(EncryptionConfig::with_params(
-//!     //       passphrase.clone(), encryption::Argon2Params::with_memory_mib(32)))
-//!     .build()?;
+//! // Encryption is a construction input. Argon2id runs once during construction, and the
+//! // derived key is cached so each later save only pays for the fast symmetric step. For a
+//! // constrained device, use `EncryptionConfig::with_params(passphrase,
+//! // encryption::Argon2Params::with_memory_mib(32))` instead.
+//! let mut wallet = LightWallet::new(
+//!     chain_type,
+//!     wallet_config,
+//!     Some(EncryptionConfig::new(passphrase.clone())),
+//! )?;
 //!
 //! // `save` returns an encrypted envelope, or `None` when nothing changed since the last save.
 //! // Persist these bytes wherever the wallet file lives.
@@ -54,15 +54,13 @@
 //! // Later, reload from those bytes with the same passphrase. A wrong or missing passphrase
 //! // returns an error rather than a corrupt wallet.
 //! let reloaded =
-//!     LightWallet::read_encrypted(Cursor::new(&encrypted), network, Some(passphrase))?;
+//!     LightWallet::read_encrypted(Cursor::new(&encrypted), chain_type, Some(passphrase))?;
 //! assert!(reloaded.is_encrypted());
 //! # Ok(())
 //! # }
 //! ```
 //!
-//! Without filesystem access (e.g. mobile), reload the bytes in one call with
-//! [`crate::lightclient::LightClient::create_from_buffer_with_passphrase`]. To encrypt an
-//! already-open wallet or rotate the passphrase, use
+//! To encrypt an already-open wallet or rotate the passphrase, use
 //! [`crate::wallet::LightWallet::set_passphrase`] / `change_passphrase`.
 //!
 //! ## Threat model
@@ -82,15 +80,16 @@
 //! wraps the public zingolib API. The passphrase is passed as a plain `String` throughout
 //! (zingolib wraps it in a [`SecretString`] internally), so the FFI layer needs no `secrecy`
 //! dependency. To support encryption from mobile, that layer should:
-//! - **Create encrypted:** build with
-//!   `LightWallet::builder(..).encryption(EncryptionConfig::with_params(passphrase, params)).build()`.
-//!   On a memory-constrained device pass `Argon2Params::with_memory_mib(N)` with a smaller `N`
-//!   (e.g. 19–32) instead of the 64 MiB default.
-//! - **Load:** call [`crate::lightclient::LightClient::create_from_buffer_with_passphrase`]
-//!   with the persisted bytes and the passphrase (or `None` for a plaintext buffer). Call
-//!   [`is_encrypted`] on the bytes first to decide whether to prompt the user.
+//! - **Create encrypted:** call [`crate::lightclient::LightClient::new`] with a create
+//!   [`crate::config::WalletConfig`] variant and
+//!   `Some(EncryptionConfig::with_params(passphrase, params))`. On a memory-constrained device
+//!   pass `Argon2Params::with_memory_mib(N)` with a smaller `N` (e.g. 19 to 32) instead of the
+//!   64 MiB default.
+//! - **Open encrypted:** call `LightClient::new` with `WalletConfig::Read` and
+//!   `Some(EncryptionConfig::new(passphrase))`. The passphrase decrypts the file, whose KDF
+//!   parameters are read from the header.
 //! - **Save:** [`crate::wallet::LightWallet::save`] already returns encrypted bytes once a
-//!   passphrase is set (the same save-buffer the FFI persists today), no change required.
+//!   passphrase is set, no change required.
 
 use argon2::{Algorithm, Argon2, Params, Version};
 use chacha20poly1305::{
@@ -237,8 +236,8 @@ impl Default for Argon2Params {
 }
 
 /// Encryption configuration supplied when *creating* a wallet (see
-/// [`crate::wallet::LightWallet::builder`]). It carries the passphrase and the KDF cost; the
-/// builder derives the key during construction so the wallet is encrypted from its first save.
+/// [`crate::wallet::LightWallet::new`]). It carries the passphrase and the KDF cost. The
+/// wallet construction derives the key so the wallet is encrypted from its first save.
 ///
 /// The passphrase is taken as a plain `String` so callers don't depend on the `secrecy` crate.
 /// It is wrapped in a [`SecretString`] internally and zeroized on drop.
@@ -267,6 +266,12 @@ impl EncryptionConfig {
     /// Run the key derivation, consuming the passphrase and returning the cached session.
     pub(crate) fn derive(self) -> Result<EncryptionSession, WalletEncryptionError> {
         EncryptionSession::new(&self.passphrase, self.params)
+    }
+
+    /// Consume the config, returning just the passphrase. Used on the decrypt/open path, where
+    /// the KDF parameters come from the file header rather than from this config.
+    pub(crate) fn into_passphrase(self) -> String {
+        self.passphrase.expose_secret().clone()
     }
 }
 

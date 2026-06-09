@@ -11,13 +11,12 @@ use tokio::sync::{RwLock, mpsc};
 use incrementalmerkletree::{Marking, Retention};
 use orchard::tree::MerkleHashOrchard;
 use shardtree::store::ShardStore;
-use tonic::transport::Channel;
-use zcash_client_backend::proto::service::RawTransaction;
-use zcash_client_backend::proto::service::compact_tx_streamer_client::CompactTxStreamerClient;
 use zcash_keys::keys::UnifiedFullViewingKey;
 use zcash_primitives::transaction::{Transaction, TxId};
 use zcash_protocol::ShieldedProtocol;
 use zcash_protocol::consensus::{self, BlockHeight};
+use zingo_netutils::lightwallet_protocol::RawTransaction;
+use zingo_netutils::{Indexer, TransparentIndexer};
 use zip32::AccountId;
 
 use zingo_status::confirmation_status::ConfirmationStatus;
@@ -51,7 +50,6 @@ pub(crate) mod transparent;
 pub(crate) mod spend;
 pub(crate) mod state;
 
-const UNCONFIRMED_SPEND_INVALIDATION_THRESHOLD: u32 = 3;
 pub(crate) const MAX_REORG_ALLOWANCE: u32 = 100;
 const VERIFY_BLOCK_RANGE_SIZE: u32 = 10;
 
@@ -307,14 +305,15 @@ impl ScanRange {
 /// times in quick sucession without the sync engine interrupting.
 /// Set `sync_mode` back to `Running` to resume scanning.
 /// Set `sync_mode` to `Shutdown` to stop the sync process.
-pub async fn sync<P, W>(
-    client: CompactTxStreamerClient<Channel>,
+pub async fn sync<C, P, W>(
+    client: C,
     consensus_parameters: &P,
     wallet: Arc<RwLock<W>>,
     sync_mode: Arc<AtomicU8>,
     config: SyncConfig,
 ) -> Result<SyncResult, SyncError<W::Error>>
 where
+    C: Clone + Indexer + TransparentIndexer + Sync + Send + 'static,
     P: consensus::Parameters + Sync + Send + 'static,
     W: SyncWallet
         + SyncBlocks
@@ -402,12 +401,12 @@ where
 
     let initial_reorg_detection_start_height = state::update_scan_ranges(
         consensus_parameters,
+        fetch_request_sender.clone(),
         last_known_chain_height,
         chain_height,
-        wallet_guard
-            .get_sync_state_mut()
-            .map_err(SyncError::WalletError)?,
-    );
+        &mut *wallet_guard,
+    )
+    .await?;
 
     state::set_initial_state(
         consensus_parameters,
@@ -1812,12 +1811,15 @@ where
 ///
 /// If there is some raw transaction, send to be scanned.
 /// If the mempool stream message is `None` (a block was mined) or the request failed, setup a new mempool stream.
-async fn mempool_monitor(
-    mut client: CompactTxStreamerClient<Channel>,
+async fn mempool_monitor<C>(
+    mut client: C,
     mempool_transaction_sender: mpsc::Sender<RawTransaction>,
     unprocessed_transactions_count: Arc<AtomicU8>,
     shutdown_mempool: Arc<AtomicBool>,
-) -> Result<(), MempoolError> {
+) -> Result<(), MempoolError>
+where
+    C: Clone + Indexer + TransparentIndexer + Sync + Send + 'static,
+{
     let mut interval = tokio::time::interval(Duration::from_secs(1));
     interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
     'main: loop {
@@ -1863,10 +1865,7 @@ async fn mempool_monitor(
     Ok(())
 }
 
-/// Spends will be reset to free up funds if transaction has been unconfirmed for
-/// `UNCONFIRMED_SPEND_INVALIDATION_THRESHOLD` confirmed blocks.
-/// Transaction status will then be set to `Failed` if it's still unconfirmed when the chain reaches it's expiry height.
-// TODO: add config to pepper-sync to set UNCONFIRMED_SPEND_INVALIDATION_THRESHOLD
+/// Transaction status will be set to `Failed` if it's still unconfirmed when the chain reaches it's expiry height.
 fn expire_transactions<W>(wallet: &mut W) -> Result<(), SyncError<W::Error>>
 where
     W: SyncWallet + SyncTransactions,
@@ -1890,17 +1889,6 @@ where
         .collect::<Vec<_>>();
     set_transactions_failed(wallet_transactions, expired_txids);
 
-    let stuck_funds_txids = wallet_transactions
-        .values()
-        .filter(|transaction| {
-            transaction.status().is_pending()
-                && last_known_chain_height
-                    >= transaction.status().get_height() + UNCONFIRMED_SPEND_INVALIDATION_THRESHOLD
-        })
-        .map(super::wallet::WalletTransaction::txid)
-        .collect::<Vec<_>>();
-    reset_spends(wallet_transactions, stuck_funds_txids);
-
     Ok(())
 }
 
@@ -1915,7 +1903,6 @@ fn max_nullifier_map_size(performance_level: PerformanceLevel) -> Option<usize> 
 
 #[cfg(test)]
 mod test {
-
     mod checked_height_validation {
         use zcash_protocol::consensus::BlockHeight;
         use zcash_protocol::local_consensus::LocalNetwork;

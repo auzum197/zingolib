@@ -19,7 +19,6 @@ use orchard::tree::MerkleHashOrchard;
 use shardtree::{ShardTree, store::memory::MemoryShardStore};
 use tokio::sync::mpsc;
 use zcash_address::unified::ParseError;
-use zcash_client_backend::proto::compact_formats::CompactBlock;
 use zcash_keys::{address::UnifiedAddress, encoding::encode_payment_address};
 use zcash_primitives::{block::BlockHash, transaction::TxId};
 use zcash_protocol::{
@@ -28,8 +27,10 @@ use zcash_protocol::{
     memo::Memo,
     value::Zatoshis,
 };
-use zcash_transparent::{address::Script, bundle::OutPoint};
+use zcash_transparent::address::Script;
+use zcash_transparent::bundle::OutPoint;
 
+use zingo_netutils::lightwallet_protocol::CompactBlock;
 use zingo_status::confirmation_status::ConfirmationStatus;
 
 use crate::{
@@ -38,6 +39,10 @@ use crate::{
     keys::{self, KeyId, transparent::TransparentAddressId},
     scan::compact_blocks::calculate_block_tree_bounds,
     sync::{MAX_REORG_ALLOWANCE, ScanPriority, ScanRange},
+    utils::{
+        get_compact_block_hash, get_compact_block_height, get_compact_block_prev_hash,
+        get_compact_tx_txid,
+    },
     witness,
 };
 
@@ -287,13 +292,13 @@ pub struct OutputId {
     /// ID of associated transaction.
     txid: TxId,
     /// Index of output within the transactions bundle of the given pool type.
-    output_index: u16,
+    output_index: u32,
 }
 
 impl OutputId {
     /// Creates new `OutputId` from parts.
     #[must_use]
-    pub fn new(txid: TxId, output_index: u16) -> Self {
+    pub fn new(txid: TxId, output_index: u32) -> Self {
         OutputId { txid, output_index }
     }
 
@@ -305,7 +310,7 @@ impl OutputId {
 
     /// Index of output within the transactions bundle of the given pool type.
     #[must_use]
-    pub fn output_index(&self) -> u16 {
+    pub fn output_index(&self) -> u32 {
         self.output_index
     }
 }
@@ -325,13 +330,13 @@ impl std::fmt::Display for OutputId {
 
 impl From<&OutPoint> for OutputId {
     fn from(value: &OutPoint) -> Self {
-        OutputId::new(*value.txid(), value.n() as u16)
+        OutputId::new(*value.txid(), value.n())
     }
 }
 
 impl From<OutputId> for OutPoint {
     fn from(value: OutputId) -> Self {
-        OutPoint::new(value.txid.into(), u32::from(value.output_index))
+        OutPoint::new(value.txid.into(), value.output_index)
     }
 }
 
@@ -388,15 +393,11 @@ impl WalletBlock {
             calculate_block_tree_bounds(consensus_parameters, fetch_request_sender, block).await?;
 
         Ok(Self {
-            block_height: block.height(),
-            block_hash: block.hash(),
-            prev_hash: block.prev_hash(),
+            block_height: get_compact_block_height(block),
+            block_hash: get_compact_block_hash(block),
+            prev_hash: get_compact_block_prev_hash(block),
             time: block.time,
-            txids: block
-                .vtx
-                .iter()
-                .map(zcash_client_backend::proto::compact_formats::CompactTx::txid)
-                .collect(),
+            txids: block.vtx.iter().map(get_compact_tx_txid).collect(),
             tree_bounds,
         })
     }
@@ -530,7 +531,7 @@ impl WalletTransaction {
                 bundle
                     .shielded_spends()
                     .iter()
-                    .map(sapling_crypto::bundle::SpendDescription::nullifier)
+                    .map(|spend| spend.nullifier())
                     .collect::<Vec<_>>()
             })
     }

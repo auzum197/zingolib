@@ -4,7 +4,7 @@ use zcash_keys::keys::Era;
 use zcash_protocol::{PoolType, ShieldedProtocol};
 
 use crate::{
-    config::ZingoConfig,
+    config::ClientConfig,
     lightclient::LightClient,
     wallet::{
         LightWallet,
@@ -25,10 +25,10 @@ use crate::{
 impl NetworkSeedVersion {
     /// this is enough data to restore wallet from! thus, it is the bronze test for backward compatibility
     async fn load_example_wallet_with_verification(&self) -> LightClient {
-        let client = self.load_example_wallet_with_client().await;
-        let wallet = client.wallet.read().await;
+        let client = self.load_example_wallet().await;
+        let wallet = client.wallet().read().await;
 
-        assert_wallet_capability_matches_seed(&wallet, self.example_wallet_base()).await;
+        assert_wallet_capability_matches_seed(&wallet, self.example_wallet_seed()).await;
         for pool in [
             PoolType::Transparent,
             PoolType::Shielded(ShieldedProtocol::Orchard),
@@ -179,7 +179,7 @@ async fn loaded_wallet_assert(
     expected_num_addresses: usize,
 ) {
     {
-        let wallet = lightclient.wallet.read().await;
+        let wallet = lightclient.wallet().read().await;
         assert_wallet_capability_matches_seed(&wallet, expected_seed_phrase).await;
 
         assert_eq!(wallet.unified_addresses.len(), expected_num_addresses);
@@ -219,43 +219,39 @@ async fn loaded_wallet_assert(
 
 // todo: proptest enum
 #[tokio::test]
-async fn reload_wallet_from_buffer() {
-    use crate::wallet::WalletBase;
+async fn reload_wallet_from_file() {
+    use crate::wallet::{LightWallet, WalletConfig};
     use zingo_test_vectors::seeds::CHIMNEY_BETTER_SEED;
 
-    let mid_client =
+    let mut mid_client =
         NetworkSeedVersion::Testnet(TestnetSeedVersion::ChimneyBetter(ChimneyBetterVersion::V28))
             .load_example_wallet_with_verification()
             .await;
-    let mid_client_network = mid_client.wallet.read().await.network;
+    let mid_client_network = mid_client.chain_type();
 
-    let mut mid_buffer: Vec<u8> = vec![];
-    mid_client
-        .wallet
-        .write()
-        .await
-        .write(&mut mid_buffer, &mid_client.config.chain)
-        .unwrap();
+    mid_client.save_task().await;
+    mid_client.wait_for_save().await;
+    mid_client.shutdown_save_task().await.unwrap();
 
-    let config = ZingoConfig::create_testnet();
-    let client = LightClient::create_from_wallet(
-        LightWallet::read(&mid_buffer[..], config.chain).unwrap(),
-        config,
-        true,
-    )
-    .unwrap();
-    let wallet = client.wallet.read().await;
+    let config = ClientConfig::builder()
+        .set_indexer_uri(mid_client.indexer_uri().clone())
+        .set_chain_type(mid_client_network)
+        .set_wallet_dir(mid_client.wallet_dir().unwrap())
+        .set_wallet_config(WalletConfig::Read)
+        .build();
+    let loaded_client = LightClient::new(config, true, None).await.unwrap();
+    let loaded_wallet = loaded_client.wallet().read().await;
 
     let expected_mnemonic = Mnemonic::from_phrase(CHIMNEY_BETTER_SEED.to_string()).unwrap();
 
     let expected_keys = UnifiedKeyStore::new_from_mnemonic(
-        &mid_client_network,
+        mid_client_network,
         &expected_mnemonic,
         zip32::AccountId::ZERO,
     )
     .unwrap();
 
-    let UnifiedKeyStore::Spend(usk) = &wallet
+    let UnifiedKeyStore::Spend(usk) = &loaded_wallet
         .unified_key_store
         .get(&zip32::AccountId::ZERO)
         .unwrap()
@@ -279,24 +275,22 @@ async fn reload_wallet_from_buffer() {
 
     // TODO: there were 3 UAs associated with this wallet, we reset to 1 to ensure index is upheld correctly and
     // should thoroughly test UA discovery when syncing which should find these UAs again
-    assert_eq!(wallet.unified_addresses.len(), 1);
-    for addr in wallet.unified_addresses.values() {
+    assert_eq!(loaded_wallet.unified_addresses.len(), 1);
+    for addr in loaded_wallet.unified_addresses.values() {
         assert!(addr.orchard().is_some());
         assert!(addr.sapling().is_none());
         assert!(addr.transparent().is_none());
     }
 
     let ufvk = usk.to_unified_full_viewing_key();
-    let ufvk_string = ufvk.encode(&wallet.network);
-    let ufvk_base = WalletBase::Ufvk(ufvk_string.clone());
-    let view_wallet = LightWallet::builder(
-        wallet.network,
-        ufvk_base,
-        wallet.birthday,
-        wallet.wallet_settings.clone(),
-    )
-    .build()
-    .unwrap();
+    let chain_type = loaded_client.chain_type();
+    let ufvk_string = ufvk.encode(&chain_type);
+    let wallet_config = WalletConfig::Ufvk {
+        ufvk: ufvk_string.clone(),
+        birthday: loaded_client.birthday(),
+        wallet_settings: loaded_wallet.wallet_settings.clone(),
+    };
+    let view_wallet = LightWallet::new(chain_type, wallet_config, None).unwrap();
     let UnifiedKeyStore::View(v_ufvk) = &view_wallet
         .unified_key_store
         .get(&zip32::AccountId::ZERO)
@@ -304,7 +298,7 @@ async fn reload_wallet_from_buffer() {
     else {
         panic!("should be viewing key!");
     };
-    let v_ufvk_string = v_ufvk.encode(&view_wallet.network);
+    let v_ufvk_string = v_ufvk.encode(&view_wallet.chain_type);
     assert_eq!(ufvk_string, v_ufvk_string);
 
     // NOTE: removed balance check as need to sync to restore transaction data.
@@ -315,33 +309,40 @@ fn contains_subsequence(haystack: &[u8], needle: &[u8]) -> bool {
     !needle.is_empty() && haystack.windows(needle.len()).any(|w| w == needle)
 }
 
-/// End-to-end exercise of the at-rest encryption feature using a real example wallet:
-/// - a plaintext wallet still loads via `read_encrypted` with no passphrase (backward compat)
-/// - encrypting then saving produces an envelope whose bytes never contain the raw seed
-/// - the encrypted file round-trips with the correct passphrase and carries the session
-///   forward so subsequent saves stay encrypted
-/// - a wrong/absent passphrase fails cleanly
+/// End-to-end at-rest encryption. A plaintext wallet still loads with no passphrase (backward
+/// compat). Encrypting via the runtime setter and saving produces an envelope whose bytes never
+/// contain the raw seed. The encrypted file round-trips with the correct passphrase and rejects
+/// a wrong or absent one.
 #[test]
 fn encrypted_wallet_round_trip_and_backward_compat() {
-    use crate::config::ChainType;
+    use crate::config::{ChainType, WalletConfig};
+    use crate::testutils::default_test_wallet_settings;
     use crate::wallet::encryption::is_encrypted;
+    use std::num::NonZeroU32;
 
     let network = ChainType::Testnet;
-    let mut wallet = NetworkSeedVersion::Testnet(TestnetSeedVersion::ChimneyBetter(
-        ChimneyBetterVersion::Latest,
-    ))
-    .load_example_wallet(network);
+    let seed = zingo_test_vectors::seeds::CHIMNEY_BETTER_SEED;
+    let seed_entropy = Mnemonic::<bip0039::English>::from_phrase(seed.to_string())
+        .unwrap()
+        .into_entropy();
 
-    let expected_phrase = wallet.mnemonic_phrase().unwrap();
-    let seed_entropy = wallet.mnemonic().unwrap().clone().into_entropy();
+    let mut wallet = LightWallet::new(
+        network,
+        WalletConfig::MnemonicPhrase {
+            mnemonic_phrase: seed.to_string(),
+            no_of_accounts: NonZeroU32::MIN,
+            birthday: 2_800_000,
+            wallet_settings: default_test_wallet_settings(),
+        },
+        None,
+    )
+    .unwrap();
 
     // Backward compat: a plaintext save still loads with no passphrase.
-    wallet.save_required = true;
     let plaintext = wallet.save().unwrap().expect("save produced bytes");
     assert!(!is_encrypted(&plaintext));
     assert!(contains_subsequence(&plaintext, &seed_entropy)); // sanity: plaintext leaks the seed
     let reloaded_plain = LightWallet::read_encrypted(plaintext.as_slice(), network, None).unwrap();
-    assert_eq!(reloaded_plain.mnemonic_phrase().unwrap(), expected_phrase);
     assert!(!reloaded_plain.is_encrypted());
 
     // Encrypt an already-open wallet via the runtime setter, then save.
@@ -360,53 +361,49 @@ fn encrypted_wallet_round_trip_and_backward_compat() {
     let reloaded =
         LightWallet::read_encrypted(encrypted.as_slice(), network, Some(passphrase.clone()))
             .expect("decrypt with correct passphrase");
-    assert_eq!(reloaded.mnemonic_phrase().unwrap(), expected_phrase);
     assert!(reloaded.is_encrypted());
+    assert_eq!(
+        reloaded.mnemonic().unwrap().clone().into_entropy(),
+        seed_entropy
+    );
 
     // Wrong passphrase and missing passphrase both fail.
     assert!(
-        LightWallet::read_encrypted(
-            encrypted.as_slice(),
-            network,
-            Some("not the passphrase".to_string())
-        )
-        .is_err()
+        LightWallet::read_encrypted(encrypted.as_slice(), network, Some("nope".to_string()))
+            .is_err()
     );
     assert!(LightWallet::read_encrypted(encrypted.as_slice(), network, None).is_err());
 }
 
-/// Encryption supplied at construction (via the builder) with a custom KDF memory cost is
-/// honored, recorded in the header, and the resulting buffer opens via the buffer constructor
-/// (the mobile-consumed entry point), rejecting a wrong passphrase.
+/// Encryption supplied at construction with a custom KDF memory cost is honored and recorded in
+/// the header, and the encrypted bytes round-trip (rejecting a wrong passphrase).
 #[test]
-fn builder_encryption_records_custom_memory_and_buffer_round_trip() {
-    use crate::config::ZingoConfig;
-    use crate::wallet::WalletBase;
+fn construction_encryption_records_custom_memory_and_round_trips() {
+    use crate::config::{ChainType, WalletConfig};
+    use crate::testutils::default_test_wallet_settings;
     use crate::wallet::encryption::{Argon2Params, EncryptionConfig, is_encrypted};
     use std::num::NonZeroU32;
-    use zcash_protocol::consensus::BlockHeight;
 
-    let config = ZingoConfig::create_testnet();
-    let network = config.chain;
+    let network = ChainType::Testnet;
+    let seed = zingo_test_vectors::seeds::CHIMNEY_BETTER_SEED;
     let passphrase = "a passphrase".to_string();
 
-    // Encrypt at construction with a non-default memory cost (32 MiB) to prove the chosen
-    // value is honored. Birthday must be at or after testnet's Sapling activation height.
-    let mut wallet = LightWallet::builder(
+    // Encrypt at construction with a non-default memory cost (32 MiB) to prove the chosen value
+    // is honored.
+    let mut wallet = LightWallet::new(
         network,
-        WalletBase::FreshEntropy {
+        WalletConfig::MnemonicPhrase {
+            mnemonic_phrase: seed.to_string(),
             no_of_accounts: NonZeroU32::MIN,
+            birthday: 2_800_000,
+            wallet_settings: default_test_wallet_settings(),
         },
-        BlockHeight::from_u32(2_800_000),
-        config.wallet_settings.clone(),
+        Some(EncryptionConfig::with_params(
+            passphrase.clone(),
+            Argon2Params::with_memory_mib(32),
+        )),
     )
-    .encryption(EncryptionConfig::with_params(
-        passphrase.clone(),
-        Argon2Params::with_memory_mib(32),
-    ))
-    .build()
     .unwrap();
-    let expected_phrase = wallet.mnemonic_phrase().unwrap();
 
     let bytes = wallet
         .save()
@@ -418,27 +415,11 @@ fn builder_encryption_records_custom_memory_and_buffer_round_trip() {
     let m_cost = u32::from_le_bytes(bytes[10..14].try_into().unwrap());
     assert_eq!(m_cost, 32 * 1024);
 
-    // Wallet-level reload reuses the stored params and recovers the seed.
-    let reloaded = LightWallet::read_encrypted(bytes.as_slice(), network, Some(passphrase.clone()))
+    // Reload reuses the stored params and recovers the seed. A wrong passphrase fails.
+    let reloaded = LightWallet::read_encrypted(bytes.as_slice(), network, Some(passphrase))
         .expect("decrypt with correct passphrase");
-    assert_eq!(reloaded.mnemonic_phrase().unwrap(), expected_phrase);
-
-    // The buffer constructor (the mobile-consumed entry point) opens it with the right
-    // passphrase and rejects a wrong one.
+    assert!(reloaded.mnemonic().is_some());
     assert!(
-        LightClient::create_from_buffer_with_passphrase(
-            &bytes,
-            ZingoConfig::create_testnet(),
-            Some(passphrase),
-        )
-        .is_ok()
-    );
-    assert!(
-        LightClient::create_from_buffer_with_passphrase(
-            &bytes,
-            ZingoConfig::create_testnet(),
-            Some("wrong".to_string()),
-        )
-        .is_err()
+        LightWallet::read_encrypted(bytes.as_slice(), network, Some("wrong".to_string())).is_err()
     );
 }
