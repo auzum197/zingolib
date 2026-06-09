@@ -425,11 +425,12 @@ impl LightWallet {
     }
 
     /// Enable at-rest encryption on a previously unencrypted wallet, or replace the current
-    /// passphrase with a new one, using the default ([`encryption::Argon2Params::desktop`])
-    /// KDF parameters.
+    /// passphrase with a new one, using the default
+    /// ([`encryption::Argon2Params::default`]) KDF parameters.
     ///
     /// Memory-constrained callers (e.g. mobile) should prefer
-    /// [`Self::set_passphrase_with_params`] with [`encryption::Argon2Params::mobile`].
+    /// [`Self::set_passphrase_with_params`] with
+    /// [`encryption::Argon2Params::with_memory_mib`] and a smaller memory cost.
     pub fn set_passphrase(
         &mut self,
         passphrase: &secrecy::SecretString,
