@@ -4558,7 +4558,7 @@ mod testnet_test {
             let wallet_dir = TempDir::new().unwrap();
             let mut config = ZingoConfig::create_testnet();
             config.wallet_dir = Some(wallet_dir.path().to_path_buf());
-            let wallet = LightWallet::new(
+            let wallet = LightWallet::builder(
                 ChainType::Testnet,
                 WalletBase::Mnemonic {
                     mnemonic: Mnemonic::from_phrase(HOSPITAL_MUSEUM_SEED).unwrap(),
@@ -4567,6 +4567,7 @@ mod testnet_test {
                 2_000_000.into(),
                 config.wallet_settings.clone(),
             )
+            .build()
             .unwrap();
 
             let mut lightclient =

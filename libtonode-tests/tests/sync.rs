@@ -53,7 +53,7 @@ async fn sync_mainnet_test() {
     )
     .unwrap();
     let mut lightclient = LightClient::create_from_wallet(
-        LightWallet::new(
+        LightWallet::builder(
             config.chain,
             WalletBase::Mnemonic {
                 mnemonic: Mnemonic::from_phrase(HOSPITAL_MUSEUM_SEED.to_string()).unwrap(),
@@ -62,6 +62,7 @@ async fn sync_mainnet_test() {
             1_500_000.into(),
             config.wallet_settings.clone(),
         )
+        .build()
         .unwrap(),
         config,
         true,
@@ -215,7 +216,7 @@ async fn add_subtree_roots() {
     )
     .unwrap();
     let mut lightclient = LightClient::create_from_wallet(
-        LightWallet::new(
+        LightWallet::builder(
             config.chain,
             WalletBase::Mnemonic {
                 mnemonic: Mnemonic::from_phrase(HOSPITAL_MUSEUM_SEED.to_string()).unwrap(),
@@ -224,6 +225,7 @@ async fn add_subtree_roots() {
             2_000_000.into(),
             config.wallet_settings.clone(),
         )
+        .build()
         .unwrap(),
         config,
         true,

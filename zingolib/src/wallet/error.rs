@@ -76,6 +76,9 @@ pub enum WalletError {
         "birthday {0} below sapling activation height {1}. pre-sapling wallets are not supported!"
     )]
     BirthdayBelowSapling(u32, u32),
+    /// At-rest encryption setup failed (e.g. key derivation).
+    #[error("Wallet encryption error. {0}")]
+    Encryption(#[from] crate::wallet::encryption::WalletEncryptionError),
 }
 
 /// Price error

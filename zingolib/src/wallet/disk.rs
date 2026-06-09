@@ -127,13 +127,13 @@ impl LightWallet {
     /// Read a wallet, transparently decrypting it first if the file is an encrypted envelope.
     ///
     /// If the file begins with the encryption magic, `passphrase` is required and is used to
-    /// derive the key and decrypt the payload. The resulting [`encryption::EncryptionSession`]
-    /// is stored on the returned wallet so subsequent saves re-encrypt with the same key.
-    /// Otherwise the file is read as a plaintext wallet and `passphrase` is ignored.
+    /// derive the key and decrypt the payload. The derived key is cached on the returned
+    /// wallet so subsequent saves re-encrypt with the same passphrase. Otherwise the file is
+    /// read as a plaintext wallet and `passphrase` is ignored.
     pub fn read_encrypted<R: Read>(
         mut reader: R,
         network: ChainType,
-        passphrase: Option<&SecretString>,
+        passphrase: Option<String>,
     ) -> io::Result<Self> {
         let mut head = [0u8; 8];
         reader.read_exact(&mut head)?;
@@ -145,9 +145,10 @@ impl LightWallet {
                     encryption::WalletEncryptionError::PassphraseRequired.to_string(),
                 )
             })?;
+            let passphrase = SecretString::new(passphrase);
             let mut envelope = head.to_vec();
             reader.read_to_end(&mut envelope)?;
-            let (plaintext, session) = encryption::decrypt(passphrase, &envelope)
+            let (plaintext, session) = encryption::decrypt(&passphrase, &envelope)
                 .map_err(|e| io::Error::new(ErrorKind::InvalidData, e.to_string()))?;
             let mut wallet = Self::read(io::Cursor::new(plaintext.as_slice()), network)?;
             wallet.encryption = Some(session);

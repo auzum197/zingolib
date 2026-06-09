@@ -23,43 +23,47 @@
 //!
 //! ## Example
 //!
-//! Encrypt an existing wallet, save it, and reload it. `wallet` is a [`crate::wallet::LightWallet`]
-//! built through the usual constructors, and `network` is its [`crate::config::ChainType`].
+//! Build an encrypted wallet, save it, and reload it. The passphrase is a plain `String`, so
+//! callers don't depend on the `secrecy` crate.
 //!
 //! ```no_run
 //! use std::io::Cursor;
 //!
-//! use secrecy::SecretString;
+//! use zcash_protocol::consensus::BlockHeight;
 //! use zingolib::config::ChainType;
-//! use zingolib::wallet::LightWallet;
-//! use zingolib::wallet::encryption;
+//! use zingolib::wallet::encryption::{self, EncryptionConfig};
+//! use zingolib::wallet::{LightWallet, WalletBase, WalletSettings};
 //!
-//! # fn demo(mut wallet: LightWallet, network: ChainType) -> Result<(), Box<dyn std::error::Error>> {
-//! let passphrase = SecretString::new("a strong passphrase".to_string());
+//! # fn demo(network: ChainType, wallet_base: WalletBase, birthday: BlockHeight, wallet_settings: WalletSettings) -> Result<(), Box<dyn std::error::Error>> {
+//! let passphrase = "a strong passphrase".to_string();
 //!
-//! // Turn on at-rest encryption. Argon2id runs once here and the derived key is cached, so
-//! // each later save only pays for the fast symmetric step.
-//! wallet.set_passphrase(&passphrase)?;
-//! // On a memory-constrained device, choose the memory cost explicitly instead:
-//! //   let params = encryption::Argon2Params::with_memory_mib(32);
-//! //   wallet.set_passphrase_with_params(&passphrase, params)?;
+//! // Encryption is a construction input. Argon2id runs once during `build`, and the derived
+//! // key is cached so each later save only pays for the fast symmetric step.
+//! let mut wallet = LightWallet::builder(network, wallet_base, birthday, wallet_settings)
+//!     .encryption(EncryptionConfig::new(passphrase.clone()))
+//!     // On a constrained device, set the memory cost explicitly instead:
+//!     //   .encryption(EncryptionConfig::with_params(
+//!     //       passphrase.clone(), encryption::Argon2Params::with_memory_mib(32)))
+//!     .build()?;
 //!
-//! // `save` now returns an encrypted envelope, or `None` when nothing changed since the last
-//! // save. Persist these bytes wherever the wallet file lives.
+//! // `save` returns an encrypted envelope, or `None` when nothing changed since the last save.
+//! // Persist these bytes wherever the wallet file lives.
 //! let Some(encrypted) = wallet.save()? else { return Ok(()) };
 //! assert!(encryption::is_encrypted(&encrypted));
 //!
 //! // Later, reload from those bytes with the same passphrase. A wrong or missing passphrase
 //! // returns an error rather than a corrupt wallet.
 //! let reloaded =
-//!     LightWallet::read_encrypted(Cursor::new(&encrypted), network, Some(&passphrase))?;
+//!     LightWallet::read_encrypted(Cursor::new(&encrypted), network, Some(passphrase))?;
 //! assert!(reloaded.is_encrypted());
 //! # Ok(())
 //! # }
 //! ```
 //!
 //! Without filesystem access (e.g. mobile), reload the bytes in one call with
-//! [`crate::lightclient::LightClient::create_from_buffer_with_passphrase`].
+//! [`crate::lightclient::LightClient::create_from_buffer_with_passphrase`]. To encrypt an
+//! already-open wallet or rotate the passphrase, use
+//! [`crate::wallet::LightWallet::set_passphrase`] / `change_passphrase`.
 //!
 //! ## Threat model
 //! This protects the wallet file *at rest* (a stolen backup, a discarded disk, a synced
@@ -75,13 +79,12 @@
 //!
 //! ## Mobile / FFI integration contract
 //! The UniFFI `WalletEngine` that zingo-mobile exposes lives outside this repository. It
-//! wraps the public zingolib API. To support encryption from mobile, the FFI layer should:
-//! - Take the passphrase across the FFI boundary as a `String` and immediately wrap it in a
-//!   [`secrecy::SecretString`] before calling into zingolib (never hold it as a plain
-//!   `String` longer than necessary).
-//! - **Create encrypted:** build the wallet as usual ([`crate::wallet::LightWallet::new`]),
-//!   then call [`crate::wallet::LightWallet::set_passphrase_with_params`]. On a
-//!   memory-constrained device pass `Argon2Params::with_memory_mib(N)` with a smaller `N`
+//! wraps the public zingolib API. The passphrase is passed as a plain `String` throughout
+//! (zingolib wraps it in a [`SecretString`] internally), so the FFI layer needs no `secrecy`
+//! dependency. To support encryption from mobile, that layer should:
+//! - **Create encrypted:** build with
+//!   `LightWallet::builder(..).encryption(EncryptionConfig::with_params(passphrase, params)).build()`.
+//!   On a memory-constrained device pass `Argon2Params::with_memory_mib(N)` with a smaller `N`
 //!   (e.g. 19–32) instead of the 64 MiB default.
 //! - **Load:** call [`crate::lightclient::LightClient::create_from_buffer_with_passphrase`]
 //!   with the persisted bytes and the passphrase (or `None` for a plaintext buffer). Call
@@ -233,6 +236,40 @@ impl Default for Argon2Params {
     }
 }
 
+/// Encryption configuration supplied when *creating* a wallet (see
+/// [`crate::wallet::LightWallet::builder`]). It carries the passphrase and the KDF cost; the
+/// builder derives the key during construction so the wallet is encrypted from its first save.
+///
+/// The passphrase is taken as a plain `String` so callers don't depend on the `secrecy` crate.
+/// It is wrapped in a [`SecretString`] internally and zeroized on drop.
+///
+/// Deliberately NOT `Clone`: the passphrase should not be duplicated in RAM.
+pub struct EncryptionConfig {
+    passphrase: SecretString,
+    params: Argon2Params,
+}
+
+impl EncryptionConfig {
+    /// Encrypt with the default KDF cost ([`Argon2Params::default`]).
+    pub fn new(passphrase: String) -> Self {
+        Self::with_params(passphrase, Argon2Params::default())
+    }
+
+    /// Encrypt with explicit KDF parameters (e.g. a smaller memory cost for a constrained
+    /// device via [`Argon2Params::with_memory_mib`]).
+    pub fn with_params(passphrase: String, params: Argon2Params) -> Self {
+        Self {
+            passphrase: SecretString::new(passphrase),
+            params,
+        }
+    }
+
+    /// Run the key derivation, consuming the passphrase and returning the cached session.
+    pub(crate) fn derive(self) -> Result<EncryptionSession, WalletEncryptionError> {
+        EncryptionSession::new(&self.passphrase, self.params)
+    }
+}
+
 /// A cached encryption session: the derived symmetric key plus the parameters needed to
 /// reproduce it.
 ///
@@ -241,7 +278,7 @@ impl Default for Argon2Params {
 /// pays for the (cheap) AEAD encryption. The key is zeroized on drop.
 ///
 /// Deliberately NOT `Clone`: the wrapped key should never be duplicated in RAM.
-pub struct EncryptionSession {
+pub(crate) struct EncryptionSession {
     key: Zeroizing<[u8; KEY_LEN]>,
     salt: [u8; SALT_LEN],
     params: Argon2Params,
@@ -260,7 +297,7 @@ impl EncryptionSession {
     /// Derive a fresh session from a passphrase, generating a new random salt.
     ///
     /// Runs Argon2id. Call this only when (re)keying, not on every save.
-    pub fn new(
+    pub(crate) fn new(
         passphrase: &SecretString,
         params: Argon2Params,
     ) -> Result<Self, WalletEncryptionError> {
@@ -296,7 +333,7 @@ impl EncryptionSession {
     ///
     /// A fresh random nonce is generated for every call, so it is safe to reuse the same
     /// session across many saves.
-    pub fn encrypt(&self, plaintext: &[u8]) -> Result<Vec<u8>, WalletEncryptionError> {
+    pub(crate) fn encrypt(&self, plaintext: &[u8]) -> Result<Vec<u8>, WalletEncryptionError> {
         let mut nonce_bytes = [0u8; NONCE_LEN];
         OsRng.fill_bytes(&mut nonce_bytes);
 
@@ -335,7 +372,7 @@ pub fn is_encrypted(bytes: &[u8]) -> bool {
 
 /// Decrypt a wallet envelope, returning the plaintext buffer **and** an [`EncryptionSession`]
 /// the caller should cache so subsequent saves re-encrypt with the same key.
-pub fn decrypt(
+pub(crate) fn decrypt(
     passphrase: &SecretString,
     envelope: &[u8],
 ) -> Result<(Zeroizing<Vec<u8>>, EncryptionSession), WalletEncryptionError> {

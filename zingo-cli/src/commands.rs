@@ -13,7 +13,6 @@ use indoc::indoc;
 use json::object;
 use pepper_sync::config::PerformanceLevel;
 use pepper_sync::keys::transparent;
-use secrecy::SecretString;
 use std::sync::LazyLock;
 use tokio::runtime::Runtime;
 
@@ -1886,7 +1885,7 @@ impl Command for SaveCommand {
 
 /// Prompt for a new passphrase twice (no echo) and confirm the two entries match. Returns an
 /// error string suitable for the command response on mismatch or I/O failure.
-fn prompt_new_passphrase() -> Result<SecretString, String> {
+fn prompt_new_passphrase() -> Result<String, String> {
     let first = rpassword::prompt_password("New passphrase: ")
         .map_err(|e| format!("Error: failed to read passphrase: {e}"))?;
     if first.is_empty() {
@@ -1897,7 +1896,7 @@ fn prompt_new_passphrase() -> Result<SecretString, String> {
     if first != confirm {
         return Err("Error: passphrases did not match, wallet unchanged.".to_string());
     }
-    Ok(SecretString::new(first))
+    Ok(first)
 }
 
 struct EncryptCommand {}
@@ -1966,7 +1965,7 @@ impl Command for EncryptCommand {
         RT.block_on(async move {
             let mut wallet = lightclient.wallet.write().await;
             let rotating = wallet.is_encrypted();
-            match wallet.set_passphrase_with_params(&passphrase, params) {
+            match wallet.set_passphrase_with_params(passphrase, params) {
                 Ok(()) if rotating => {
                     "Passphrase rotated. The re-encrypted wallet will be saved shortly.".to_string()
                 }

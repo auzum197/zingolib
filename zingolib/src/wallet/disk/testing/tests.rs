@@ -289,12 +289,13 @@ async fn reload_wallet_from_buffer() {
     let ufvk = usk.to_unified_full_viewing_key();
     let ufvk_string = ufvk.encode(&wallet.network);
     let ufvk_base = WalletBase::Ufvk(ufvk_string.clone());
-    let view_wallet = LightWallet::new(
+    let view_wallet = LightWallet::builder(
         wallet.network,
         ufvk_base,
         wallet.birthday,
         wallet.wallet_settings.clone(),
     )
+    .build()
     .unwrap();
     let UnifiedKeyStore::View(v_ufvk) = &view_wallet
         .unified_key_store
@@ -324,7 +325,6 @@ fn contains_subsequence(haystack: &[u8], needle: &[u8]) -> bool {
 fn encrypted_wallet_round_trip_and_backward_compat() {
     use crate::config::ChainType;
     use crate::wallet::encryption::is_encrypted;
-    use secrecy::SecretString;
 
     let network = ChainType::Testnet;
     let mut wallet = NetworkSeedVersion::Testnet(TestnetSeedVersion::ChimneyBetter(
@@ -344,9 +344,9 @@ fn encrypted_wallet_round_trip_and_backward_compat() {
     assert_eq!(reloaded_plain.mnemonic_phrase().unwrap(), expected_phrase);
     assert!(!reloaded_plain.is_encrypted());
 
-    // Encrypt and save.
-    let passphrase = SecretString::new("correct horse battery staple".to_string());
-    wallet.set_passphrase(&passphrase).unwrap();
+    // Encrypt an already-open wallet via the runtime setter, then save.
+    let passphrase = "correct horse battery staple".to_string();
+    wallet.set_passphrase(passphrase.clone()).unwrap();
     assert!(wallet.is_encrypted());
     let encrypted = wallet
         .save()
@@ -357,37 +357,57 @@ fn encrypted_wallet_round_trip_and_backward_compat() {
     assert!(!contains_subsequence(&encrypted, &seed_entropy));
 
     // Round-trip with the correct passphrase. The session is carried forward.
-    let reloaded = LightWallet::read_encrypted(encrypted.as_slice(), network, Some(&passphrase))
-        .expect("decrypt with correct passphrase");
+    let reloaded =
+        LightWallet::read_encrypted(encrypted.as_slice(), network, Some(passphrase.clone()))
+            .expect("decrypt with correct passphrase");
     assert_eq!(reloaded.mnemonic_phrase().unwrap(), expected_phrase);
     assert!(reloaded.is_encrypted());
 
     // Wrong passphrase and missing passphrase both fail.
-    let wrong = SecretString::new("not the passphrase".to_string());
-    assert!(LightWallet::read_encrypted(encrypted.as_slice(), network, Some(&wrong)).is_err());
+    assert!(
+        LightWallet::read_encrypted(
+            encrypted.as_slice(),
+            network,
+            Some("not the passphrase".to_string())
+        )
+        .is_err()
+    );
     assert!(LightWallet::read_encrypted(encrypted.as_slice(), network, None).is_err());
 }
 
-/// A custom KDF memory cost is honored at encrypt time, recorded in the header, and the
-/// resulting buffer opens via the buffer constructor (the mobile-consumed entry point).
+/// Encryption supplied at construction (via the builder) with a custom KDF memory cost is
+/// honored, recorded in the header, and the resulting buffer opens via the buffer constructor
+/// (the mobile-consumed entry point), rejecting a wrong passphrase.
 #[test]
-fn custom_kdf_memory_recorded_and_buffer_round_trip() {
-    use crate::config::{ChainType, ZingoConfig};
-    use crate::wallet::encryption::{Argon2Params, is_encrypted};
-    use secrecy::SecretString;
+fn builder_encryption_records_custom_memory_and_buffer_round_trip() {
+    use crate::config::ZingoConfig;
+    use crate::wallet::WalletBase;
+    use crate::wallet::encryption::{Argon2Params, EncryptionConfig, is_encrypted};
+    use std::num::NonZeroU32;
+    use zcash_protocol::consensus::BlockHeight;
 
-    let network = ChainType::Testnet;
-    let mut wallet = NetworkSeedVersion::Testnet(TestnetSeedVersion::ChimneyBetter(
-        ChimneyBetterVersion::Latest,
+    let config = ZingoConfig::create_testnet();
+    let network = config.chain;
+    let passphrase = "a passphrase".to_string();
+
+    // Encrypt at construction with a non-default memory cost (32 MiB) to prove the chosen
+    // value is honored. Birthday must be at or after testnet's Sapling activation height.
+    let mut wallet = LightWallet::builder(
+        network,
+        WalletBase::FreshEntropy {
+            no_of_accounts: NonZeroU32::MIN,
+        },
+        BlockHeight::from_u32(2_800_000),
+        config.wallet_settings.clone(),
+    )
+    .encryption(EncryptionConfig::with_params(
+        passphrase.clone(),
+        Argon2Params::with_memory_mib(32),
     ))
-    .load_example_wallet(network);
+    .build()
+    .unwrap();
     let expected_phrase = wallet.mnemonic_phrase().unwrap();
 
-    let passphrase = SecretString::new("a passphrase".to_string());
-    // Use a non-default memory cost (32 MiB) to prove the chosen value is honored.
-    wallet
-        .set_passphrase_with_params(&passphrase, Argon2Params::with_memory_mib(32))
-        .unwrap();
     let bytes = wallet
         .save()
         .unwrap()
@@ -398,9 +418,9 @@ fn custom_kdf_memory_recorded_and_buffer_round_trip() {
     let m_cost = u32::from_le_bytes(bytes[10..14].try_into().unwrap());
     assert_eq!(m_cost, 32 * 1024);
 
-    // Wallet-level reload reuses the stored mobile params and recovers the seed.
-    let reloaded = LightWallet::read_encrypted(bytes.as_slice(), network, Some(&passphrase))
-        .expect("decrypt mobile-profile wallet");
+    // Wallet-level reload reuses the stored params and recovers the seed.
+    let reloaded = LightWallet::read_encrypted(bytes.as_slice(), network, Some(passphrase.clone()))
+        .expect("decrypt with correct passphrase");
     assert_eq!(reloaded.mnemonic_phrase().unwrap(), expected_phrase);
 
     // The buffer constructor (the mobile-consumed entry point) opens it with the right
@@ -409,16 +429,15 @@ fn custom_kdf_memory_recorded_and_buffer_round_trip() {
         LightClient::create_from_buffer_with_passphrase(
             &bytes,
             ZingoConfig::create_testnet(),
-            Some(&passphrase),
+            Some(passphrase),
         )
         .is_ok()
     );
-    let wrong = SecretString::new("wrong".to_string());
     assert!(
         LightClient::create_from_buffer_with_passphrase(
             &bytes,
             ZingoConfig::create_testnet(),
-            Some(&wrong),
+            Some("wrong".to_string()),
         )
         .is_err()
     );

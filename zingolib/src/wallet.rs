@@ -154,17 +154,69 @@ pub struct LightWallet {
     encryption: Option<encryption::EncryptionSession>,
 }
 
+/// Builder for a [`LightWallet`]. Obtain one from [`LightWallet::builder`], optionally add
+/// at-rest encryption with [`WalletBuilder::encryption`], then call [`WalletBuilder::build`].
+pub struct WalletBuilder {
+    network: ChainType,
+    wallet_base: WalletBase,
+    birthday: BlockHeight,
+    wallet_settings: WalletSettings,
+    encryption: Option<encryption::EncryptionConfig>,
+}
+
+impl WalletBuilder {
+    /// Encrypt the wallet file at rest, so it is encrypted from the first save. The
+    /// (intentionally slow) key derivation runs during [`Self::build`].
+    #[must_use]
+    pub fn encryption(mut self, encryption: encryption::EncryptionConfig) -> Self {
+        self.encryption = Some(encryption);
+        self
+    }
+
+    /// Build the wallet.
+    #[allow(clippy::result_large_err)]
+    pub fn build(self) -> Result<LightWallet, WalletError> {
+        LightWallet::from_parts(
+            self.network,
+            self.wallet_base,
+            self.birthday,
+            self.wallet_settings,
+            self.encryption,
+        )
+    }
+}
+
 impl LightWallet {
-    /// Create a new in-memory wallet.
+    /// Start building an in-memory wallet. The required inputs are given here; optional at-rest
+    /// encryption is added with [`WalletBuilder::encryption`]. Finish with
+    /// [`WalletBuilder::build`].
     ///
     /// For wallets from fresh entropy, it is worth considering setting `birthday` to 100 blocks below current height
     /// of block chain to protect from re-orgs.
-    #[allow(clippy::result_large_err)]
-    pub fn new(
+    #[must_use]
+    pub fn builder(
         network: ChainType,
         wallet_base: WalletBase,
         birthday: BlockHeight,
         wallet_settings: WalletSettings,
+    ) -> WalletBuilder {
+        WalletBuilder {
+            network,
+            wallet_base,
+            birthday,
+            wallet_settings,
+            encryption: None,
+        }
+    }
+
+    /// Construct the wallet, deriving the at-rest encryption key now if `encryption` is set.
+    #[allow(clippy::result_large_err)]
+    fn from_parts(
+        network: ChainType,
+        wallet_base: WalletBase,
+        birthday: BlockHeight,
+        wallet_settings: WalletSettings,
+        encryption: Option<encryption::EncryptionConfig>,
     ) -> Result<Self, WalletError> {
         let sapling_activation_height = network
             .activation_height(zcash_protocol::consensus::NetworkUpgrade::Sapling)
@@ -178,7 +230,7 @@ impl LightWallet {
 
         let (unified_key_store, mnemonic) = match wallet_base {
             WalletBase::FreshEntropy { no_of_accounts } => {
-                return Self::new(
+                return Self::from_parts(
                     network,
                     WalletBase::Mnemonic {
                         mnemonic: Mnemonic::generate(bip0039::Count::Words24),
@@ -186,6 +238,7 @@ impl LightWallet {
                     },
                     birthday,
                     wallet_settings,
+                    encryption,
                 );
             }
             WalletBase::Mnemonic {
@@ -256,6 +309,12 @@ impl LightWallet {
             Err(e) => return Err(e.into()),
         }
 
+        // Derive the at-rest encryption key now (once), if requested, so the first save is
+        // already encrypted.
+        let encryption = encryption
+            .map(encryption::EncryptionConfig::derive)
+            .transpose()?;
+
         Ok(Self {
             current_version: LightWallet::serialized_version(),
             read_version: LightWallet::serialized_version(),
@@ -275,7 +334,7 @@ impl LightWallet {
             price_list: PriceList::new(),
             save_required: true,
             send_proposal: None,
-            encryption: None,
+            encryption,
         })
     }
 
@@ -433,7 +492,7 @@ impl LightWallet {
     /// [`encryption::Argon2Params::with_memory_mib`] and a smaller memory cost.
     pub fn set_passphrase(
         &mut self,
-        passphrase: &secrecy::SecretString,
+        passphrase: String,
     ) -> Result<(), encryption::WalletEncryptionError> {
         self.set_passphrase_with_params(passphrase, encryption::Argon2Params::default())
     }
@@ -446,10 +505,11 @@ impl LightWallet {
     /// change is persisted on the next save.
     pub fn set_passphrase_with_params(
         &mut self,
-        passphrase: &secrecy::SecretString,
+        passphrase: String,
         params: encryption::Argon2Params,
     ) -> Result<(), encryption::WalletEncryptionError> {
-        self.encryption = Some(encryption::EncryptionSession::new(passphrase, params)?);
+        self.encryption =
+            Some(encryption::EncryptionConfig::with_params(passphrase, params).derive()?);
         self.save_required = true;
         Ok(())
     }
@@ -458,7 +518,7 @@ impl LightWallet {
     /// call site. Both fully rekey the file with a new salt.
     pub fn change_passphrase(
         &mut self,
-        passphrase: &secrecy::SecretString,
+        passphrase: String,
     ) -> Result<(), encryption::WalletEncryptionError> {
         self.set_passphrase(passphrase)
     }

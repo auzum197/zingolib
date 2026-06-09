@@ -184,7 +184,7 @@ mod shielding {
     fn create_basic_client() -> LightClient {
         let config = ZingoConfigBuilder::default().create();
         LightClient::create_from_wallet(
-            LightWallet::new(
+            LightWallet::builder(
                 config.chain,
                 WalletBase::Mnemonic {
                     mnemonic: Mnemonic::from_phrase(seeds::HOSPITAL_MUSEUM_SEED.to_string())
@@ -201,6 +201,7 @@ mod shielding {
                     min_confirmations: NonZeroU32::try_from(1).unwrap(),
                 },
             )
+            .build()
             .unwrap(),
             config,
             true,

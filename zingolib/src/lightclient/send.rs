@@ -242,7 +242,7 @@ mod test {
 
         let config = ZingoConfigBuilder::default().create();
         let mut lc = LightClient::create_from_wallet(
-            LightWallet::new(
+            LightWallet::builder(
                 config.chain,
                 WalletBase::Mnemonic {
                     mnemonic: Mnemonic::from_phrase(ABANDON_ART_SEED.to_string()).unwrap(),
@@ -258,6 +258,7 @@ mod test {
                     min_confirmations: NonZeroU32::try_from(1).unwrap(),
                 },
             )
+            .build()
             .unwrap(),
             config,
             true,

@@ -65,7 +65,7 @@ pub fn build_fvk_client(fvks: &[&Fvk], config: ZingoConfig) -> LightClient {
         &zcash_protocol::consensus::NetworkType::Regtest,
     );
     LightClient::create_from_wallet(
-        LightWallet::new(
+        LightWallet::builder(
             config.chain,
             WalletBase::Ufvk(ufvk),
             1.into(),
@@ -77,6 +77,7 @@ pub fn build_fvk_client(fvks: &[&Fvk], config: ZingoConfig) -> LightClient {
                 min_confirmations: NonZeroU32::try_from(1).unwrap(),
             },
         )
+        .build()
         .unwrap(),
         config,
         false,

@@ -191,7 +191,7 @@ mod tests {
 
     fn test_wallet() -> LightWallet {
         let config = ZingoConfigBuilder::default().create();
-        LightWallet::new(
+        LightWallet::builder(
             config.chain,
             WalletBase::FreshEntropy {
                 no_of_accounts: 1.try_into().unwrap(),
@@ -205,6 +205,7 @@ mod tests {
                 min_confirmations: NonZeroU32::try_from(1).unwrap(),
             },
         )
+        .build()
         .unwrap()
     }
 

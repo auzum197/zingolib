@@ -64,11 +64,14 @@ impl LightClient {
     /// Creates a `LightClient` with a new wallet from fresh entropy and a birthday of the higher value between
     /// [`chain_height` - 100] or sapling activation height.
     /// Will fail if a wallet file already exists in the given data directory unless `overwrite` is `true`.
+    ///
+    /// Pass `encryption` to encrypt the new wallet file at rest from its first save.
     #[allow(clippy::result_large_err)]
     pub fn new(
         config: ZingoConfig,
         chain_height: BlockHeight,
         overwrite: bool,
+        encryption: Option<crate::wallet::encryption::EncryptionConfig>,
     ) -> Result<Self, LightClientError> {
         let sapling_activation_height = config
             .chain
@@ -76,18 +79,19 @@ impl LightClient {
             .expect("should have some sapling activation height");
         let birthday = sapling_activation_height.max(chain_height - 100);
 
-        Self::create_from_wallet(
-            LightWallet::new(
-                config.chain,
-                WalletBase::FreshEntropy {
-                    no_of_accounts: config.no_of_accounts,
-                },
-                birthday,
-                config.wallet_settings.clone(),
-            )?,
-            config,
-            overwrite,
-        )
+        let mut builder = LightWallet::builder(
+            config.chain,
+            WalletBase::FreshEntropy {
+                no_of_accounts: config.no_of_accounts,
+            },
+            birthday,
+            config.wallet_settings.clone(),
+        );
+        if let Some(encryption) = encryption {
+            builder = builder.encryption(encryption);
+        }
+
+        Self::create_from_wallet(builder.build()?, config, overwrite)
     }
 
     /// Creates a `LightClient` from a `wallet` and `config`.
@@ -138,7 +142,7 @@ impl LightClient {
     #[allow(clippy::result_large_err)]
     pub fn create_from_wallet_path_with_passphrase(
         config: ZingoConfig,
-        passphrase: Option<&secrecy::SecretString>,
+        passphrase: Option<String>,
     ) -> Result<Self, LightClientError> {
         let wallet_path = if config.wallet_path_exists() {
             config.get_wallet_path()
@@ -175,7 +179,7 @@ impl LightClient {
     pub fn create_from_buffer_with_passphrase(
         buffer: &[u8],
         config: ZingoConfig,
-        passphrase: Option<&secrecy::SecretString>,
+        passphrase: Option<String>,
     ) -> Result<Self, LightClientError> {
         let wallet =
             LightWallet::read_encrypted(std::io::Cursor::new(buffer), config.chain, passphrase)
@@ -376,7 +380,7 @@ mod tests {
             .set_wallet_dir(temp_dir.path().to_path_buf())
             .create();
         let mut lc = LightClient::create_from_wallet(
-            LightWallet::new(
+            LightWallet::builder(
                 config.chain,
                 WalletBase::Mnemonic {
                     mnemonic: Mnemonic::from_phrase(CHIMNEY_BETTER_SEED.to_string()).unwrap(),
@@ -385,6 +389,7 @@ mod tests {
                 1.into(),
                 config.wallet_settings.clone(),
             )
+            .build()
             .unwrap(),
             config.clone(),
             false,
@@ -395,7 +400,7 @@ mod tests {
         lc.wait_for_save().await;
 
         let lc_file_exists_error = LightClient::create_from_wallet(
-            LightWallet::new(
+            LightWallet::builder(
                 config.chain,
                 WalletBase::Mnemonic {
                     mnemonic: Mnemonic::from_phrase(CHIMNEY_BETTER_SEED.to_string()).unwrap(),
@@ -404,6 +409,7 @@ mod tests {
                 1.into(),
                 config.wallet_settings.clone(),
             )
+            .build()
             .unwrap(),
             config,
             false,
