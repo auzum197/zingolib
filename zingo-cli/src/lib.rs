@@ -29,6 +29,7 @@ use zingo_netutils::Indexer as _;
 use zingolib::config::{ChainType, ClientConfig, DEFAULT_WALLET_NAME, WalletConfig};
 use zingolib::lightclient::{DEFAULT_REQUEST_TIMEOUT, LightClient};
 use zingolib::wallet::WalletSettings;
+use zingolib::wallet::encryption::{Argon2Params, EncryptionConfig};
 
 use crate::commands::{RT, ShortCircuitedCommand};
 
@@ -78,6 +79,20 @@ pub fn build_clap_app() -> clap::Command {
                 .long("data-dir")
                 .value_name("data-dir")
                 .help("Absolute path to use as data directory"))
+            .arg(Arg::new("passphrase")
+                .long("passphrase")
+                .value_name("PASSPHRASE")
+                .help("Encrypt the wallet file at rest with this passphrase (used to encrypt a newly created wallet, or to open an existing encrypted one). If a wallet file is encrypted and this is omitted, you will be prompted. Can also be supplied via the ZINGO_PASSPHRASE environment variable. Prefer the env var or prompt over the flag, which can leak via the process list and shell history."))
+            .arg(Arg::new("kdf-memory-mib")
+                .long("kdf-memory-mib")
+                .value_name("MIB")
+                .value_parser(clap::value_parser!(u32).range(1..=256))
+                .default_value("64")
+                .help("Memory (in MiB) the key-derivation function uses when encrypting a NEW wallet. Higher is more resistant to password cracking but slower to open. Default 64. Ignored when opening an existing wallet (its stored value is reused)."))
+            .arg(Arg::new("tor")
+                .long("tor")
+                .help("Enable tor for price fetching")
+                .action(clap::ArgAction::SetTrue) )
             .arg(Arg::new("log-file")
                 .long("log-file")
                 .value_name("PATH")
@@ -425,6 +440,12 @@ pub(crate) struct ConfigTemplate {
     sync: bool,
     waitsync: bool,
     chaintype: ChainType,
+    /// Passphrase for at-rest wallet encryption, from `--passphrase` or `$ZINGO_PASSPHRASE`.
+    /// `None` means none was supplied up front. An encrypted wallet file will trigger a prompt.
+    passphrase: Option<String>,
+    /// Key-derivation memory cost (MiB) used when encrypting a newly created wallet, from
+    /// `--kdf-memory-mib`. Has no effect when opening an existing wallet.
+    kdf_memory_mib: u32,
 }
 
 impl ConfigTemplate {
@@ -485,6 +506,17 @@ If you don't remember the block height, you can pass '--birthday 0' to scan from
 
         let sync = !matches.get_flag("nosync");
         let waitsync = matches.get_flag("waitsync");
+        // Prefer the explicit flag, falling back to the environment variable. The env var is
+        // the safer channel since the flag can leak via the process list and shell history.
+        let passphrase = matches
+            .get_one::<String>("passphrase")
+            .cloned()
+            .or_else(|| std::env::var("ZINGO_PASSPHRASE").ok())
+            .filter(|p| !p.is_empty());
+        let kdf_memory_mib = matches
+            .get_one::<u32>("kdf-memory-mib")
+            .copied()
+            .unwrap_or(64);
         Ok(Self {
             mode,
             communication_mode,
@@ -497,6 +529,8 @@ If you don't remember the block height, you can pass '--birthday 0' to scan from
             sync,
             waitsync,
             chaintype,
+            passphrase,
+            kdf_memory_mib,
         })
     }
 }
@@ -564,11 +598,52 @@ fn build_zingo_config(filled_template: &ConfigTemplate) -> std::io::Result<Clien
         .build())
 }
 
+/// Build the encryption config for the CLI: use the supplied passphrase (flag/env) if any, or
+/// prompt for one (no echo) when opening an existing encrypted wallet file. Returns `None` for
+/// an unencrypted wallet.
+fn resolve_cli_encryption(
+    filled_template: &ConfigTemplate,
+    config: &ClientConfig,
+) -> std::io::Result<Option<EncryptionConfig>> {
+    // The KDF memory cost only matters when encrypting a new wallet. On open, the parameters
+    // are read from the file header and this is ignored.
+    let params = Argon2Params::with_memory_mib(filled_template.kdf_memory_mib);
+    if let Some(passphrase) = filled_template.passphrase.clone() {
+        return Ok(Some(EncryptionConfig::with_params(passphrase, params)));
+    }
+    if matches!(config.wallet_config(), WalletConfig::Read)
+        && wallet_file_is_encrypted(config.get_wallet_path().as_ref())?
+    {
+        let entered = rpassword::prompt_password("Wallet is encrypted. Enter passphrase: ")
+            .map_err(|e| std::io::Error::other(format!("Failed to read passphrase: {e}")))?;
+        return Ok(Some(EncryptionConfig::with_params(entered, params)));
+    }
+    Ok(None)
+}
+
+/// Cheaply check whether a wallet file begins with the encryption magic, without loading it.
+fn wallet_file_is_encrypted(path: &std::path::Path) -> std::io::Result<bool> {
+    use std::io::Read as _;
+    let mut file = match std::fs::File::open(path) {
+        Ok(f) => f,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(false),
+        Err(e) => return Err(e),
+    };
+    let mut head = [0u8; 8];
+    match file.read_exact(&mut head) {
+        Ok(()) => Ok(zingolib::wallet::encryption::is_encrypted(&head)),
+        // A file shorter than 8 bytes can't be an encrypted envelope.
+        Err(e) if e.kind() == std::io::ErrorKind::UnexpectedEof => Ok(false),
+        Err(e) => Err(e),
+    }
+}
+
 pub(crate) fn startup(filled_template: &ConfigTemplate) -> std::io::Result<CommandChannel> {
     let config = build_zingo_config(filled_template)?;
+    let encryption = resolve_cli_encryption(filled_template, &config)?;
 
     let mut lightclient = RT.block_on(async move {
-        LightClient::new(config, false)
+        LightClient::new(config, false, encryption)
             .await
             .map_err(|e| std::io::Error::other(format!("Failed to create lightclient. {e}")))
     })?;

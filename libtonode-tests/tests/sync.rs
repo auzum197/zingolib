@@ -47,7 +47,7 @@ async fn sync_mainnet_test() {
             wallet_settings: default_test_wallet_settings(),
         })
         .build();
-    let mut lightclient = LightClient::new(config, true).await.unwrap();
+    let mut lightclient = LightClient::new(config, true, None).await.unwrap();
 
     lightclient.sync().await.unwrap();
     let mut interval = tokio::time::interval(Duration::from_secs(5));
@@ -169,7 +169,7 @@ async fn add_subtree_roots() {
             wallet_settings: default_test_wallet_settings(),
         })
         .build();
-    let mut lightclient = LightClient::new(config, true).await.unwrap();
+    let mut lightclient = LightClient::new(config, true, None).await.unwrap();
 
     let mut grpc_client = GrpcIndexer::new(lightclient.indexer_uri().clone())
         .await

@@ -104,11 +104,19 @@ pub struct LightClient {
 impl LightClient {
     /// Creates a `LightClient` from [`crate::config::ClientConfig`].
     ///
+    /// `encryption` either encrypts a newly created wallet at rest (for the create variants of
+    /// [`crate::config::WalletConfig`]) or supplies the passphrase to decrypt an encrypted
+    /// wallet file (for the `Read` variant). Pass `None` for an unencrypted wallet.
+    ///
     /// Will fail if a wallet file already exists in the given data directory unless `overwrite` is `true` or the
     /// [`crate::config::WalletConfig`] is of `Read` variant.
     /// `overwrite` has no effect if a wallet is being read from file.
     #[allow(clippy::result_large_err)]
-    pub async fn new(config: ClientConfig, overwrite: bool) -> Result<Self, LightClientError> {
+    pub async fn new(
+        config: ClientConfig,
+        overwrite: bool,
+        encryption: Option<crate::wallet::encryption::EncryptionConfig>,
+    ) -> Result<Self, LightClientError> {
         // GrpcIndexer::new pre-builds a TLS endpoint, which requires a rustls CryptoProvider.
         // install_default is idempotent: Ok(()) on first call, Err on subsequent (ignored).
         let _ = rustls::crypto::ring::default_provider().install_default();
@@ -119,7 +127,10 @@ impl LightClient {
                     File::open(config.get_wallet_path()).map_err(LightClientError::FileError)?,
                 );
 
-                LightWallet::read(buffer, config.chain_type())
+                // If the file is encrypted, `encryption` carries the passphrase to decrypt it
+                // (its KDF params are ignored here, since those are read from the file header).
+                let passphrase = encryption.map(|encryption| encryption.into_passphrase());
+                LightWallet::read_encrypted(buffer, config.chain_type(), passphrase)
                     .map_err(LightClientError::FileError)?
             }
             _ => {
@@ -136,7 +147,7 @@ impl LightClient {
                     }
                 }
 
-                LightWallet::new(config.chain_type(), config.wallet_config())?
+                LightWallet::new(config.chain_type(), config.wallet_config(), encryption)?
             }
         };
 
@@ -390,12 +401,12 @@ mod tests {
             })
             .build();
 
-        let mut lc = LightClient::new(config.clone(), false).await.unwrap();
+        let mut lc = LightClient::new(config.clone(), false, None).await.unwrap();
 
         lc.save_task().await;
         lc.wait_for_save().await;
 
-        let lc_file_exists_error = LightClient::new(config, false).await.unwrap_err();
+        let lc_file_exists_error = LightClient::new(config, false, None).await.unwrap_err();
 
         assert!(matches!(
             lc_file_exists_error,

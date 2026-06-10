@@ -233,7 +233,7 @@ impl NetworkSeedVersion {
                 .build(),
         };
 
-        LightClient::new(config, false).await.unwrap()
+        LightClient::new(config, false, None).await.unwrap()
     }
     /// picks the seed (or ufvk) string associated with an example wallet
     #[must_use]

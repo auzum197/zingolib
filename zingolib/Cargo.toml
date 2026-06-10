@@ -16,11 +16,13 @@ testutils = ["portpicker", "zingo_test_vectors", "tempfile"]
 
 [dependencies]
 append-only-vec = { workspace = true }
+argon2 = { workspace = true }
 bech32 = { workspace = true }
 bip0039.workspace = true
 bip32 = { workspace = true, features = ["secp256k1-ffi"] }
 bs58 = { workspace = true, features = ["check"] }
 byteorder = { workspace = true }
+chacha20poly1305 = { workspace = true }
 chrono = { workspace = true }
 dirs.workspace = true
 futures = { workspace = true }
@@ -67,6 +69,7 @@ zingo-status = { workspace = true }
 zingo_common_components = { workspace = true }
 zingo_test_vectors = { workspace = true, optional = true }
 zip32.workspace = true
+zeroize = { workspace = true }
 
 [build-dependencies]
 zcash_proofs = { workspace = true, features = ["download-params"] }

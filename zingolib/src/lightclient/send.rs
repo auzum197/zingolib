@@ -255,7 +255,7 @@ mod test {
                 wallet_settings: default_test_wallet_settings(),
             })
             .build();
-        LightClient::new(config, true).await.unwrap()
+        LightClient::new(config, true, None).await.unwrap()
     }
 
     #[tokio::test]

@@ -1945,6 +1945,96 @@ impl Command for QuitCommand {
     }
 }
 
+/// Prompt for a new passphrase twice (no echo) and confirm the two entries match. Returns an
+/// error string suitable for the command response on mismatch or I/O failure.
+fn prompt_new_passphrase() -> Result<String, String> {
+    let first = rpassword::prompt_password("New passphrase: ")
+        .map_err(|e| format!("Error: failed to read passphrase: {e}"))?;
+    if first.is_empty() {
+        return Err("Error: passphrase must not be empty.".to_string());
+    }
+    let confirm = rpassword::prompt_password("Confirm passphrase: ")
+        .map_err(|e| format!("Error: failed to read passphrase: {e}"))?;
+    if first != confirm {
+        return Err("Error: passphrases did not match, wallet unchanged.".to_string());
+    }
+    Ok(first)
+}
+
+struct EncryptCommand {}
+impl Command for EncryptCommand {
+    fn help(&self) -> &'static str {
+        indoc! {r#"
+            Encrypt the wallet file at rest with a passphrase, or rotate an existing passphrase.
+
+            The serialized wallet (seed, spending keys, and all metadata) is wrapped in an
+            Argon2id + XChaCha20-Poly1305 envelope before it is written to disk. Running this on
+            an already-encrypted wallet rotates to a new passphrase (and a new salt).
+
+            You are always prompted for the passphrase twice (no echo). The two entries must
+            match. The change is persisted on the next save (the save task runs automatically).
+
+            WARNING: there is no passphrase recovery. If you lose the passphrase, the wallet file
+            cannot be opened.
+
+            usage:
+            encrypt
+        "#}
+    }
+
+    fn short_help(&self) -> &'static str {
+        "Encrypt the wallet file at rest (or rotate the passphrase)"
+    }
+
+    fn exec(&self, _args: &[&str], lightclient: &mut LightClient) -> String {
+        let passphrase = match prompt_new_passphrase() {
+            Ok(pw) => pw,
+            Err(e) => return e,
+        };
+        RT.block_on(async move {
+            let mut wallet = lightclient.wallet().write().await;
+            let rotating = wallet.is_encrypted();
+            match wallet.set_passphrase(passphrase) {
+                Ok(()) if rotating => {
+                    "Passphrase rotated. The re-encrypted wallet will be saved shortly.".to_string()
+                }
+                Ok(()) => "Wallet encryption enabled. The encrypted wallet will be saved shortly."
+                    .to_string(),
+                Err(e) => format!("Error: failed to encrypt wallet. {e}"),
+            }
+        })
+    }
+}
+
+struct DecryptCommand {}
+impl Command for DecryptCommand {
+    fn help(&self) -> &'static str {
+        indoc! {r"
+            Disable at-rest encryption: the wallet file will be written in the clear from the next
+            save onward. This is an explicit opt-out. Only do this if the wallet file is protected
+            by other means (e.g. full-disk encryption).
+
+            usage:
+            decrypt
+        "}
+    }
+
+    fn short_help(&self) -> &'static str {
+        "Disable at-rest wallet encryption (write the wallet in the clear)"
+    }
+
+    fn exec(&self, _args: &[&str], lightclient: &mut LightClient) -> String {
+        RT.block_on(async move {
+            let mut wallet = lightclient.wallet().write().await;
+            if !wallet.is_encrypted() {
+                return "Wallet is not encrypted, nothing to do.".to_string();
+            }
+            wallet.remove_passphrase();
+            "Wallet encryption disabled. The wallet will be saved in the clear shortly.".to_string()
+        })
+    }
+}
+
 /// Commands that do not require a wallet connection.
 pub fn get_standalone_commands() -> HashMap<&'static str, Box<dyn Command>> {
     vec![
@@ -1972,7 +2062,9 @@ pub fn get_wallet_commands() -> HashMap<&'static str, Box<dyn Command>> {
         ("coins", Box::new(CoinsCommand {})),
         ("confirm", Box::new(ConfirmCommand {})),
         ("current_price", Box::new(CurrentPriceCommand {})),
+        ("decrypt", Box::new(DecryptCommand {})),
         ("delete", Box::new(DeleteCommand {})),
+        ("encrypt", Box::new(EncryptCommand {})),
         ("export_ufvk", Box::new(ExportUfvkCommand {})),
         ("height", Box::new(HeightCommand {})),
         ("info", Box::new(InfoCommand {})),

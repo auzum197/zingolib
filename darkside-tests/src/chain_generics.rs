@@ -86,7 +86,7 @@ pub(crate) mod conduct_chain {
                 self.configured_activation_heights,
                 wallet_config,
             );
-            let mut lightclient = LightClient::new(config, true).await.unwrap();
+            let mut lightclient = LightClient::new(config, true, None).await.unwrap();
 
             lightclient
                 .generate_unified_address(ReceiverSelection::sapling_only(), zip32::AccountId::ZERO)

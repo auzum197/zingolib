@@ -196,6 +196,7 @@ impl WalletConfig {
                     mnemonic: Some(mnemonic),
                     birthday: BlockHeight::from_u32(birthday),
                     wallet_settings,
+                    encryption: None,
                 })
             }
             WalletConfig::Ufvk {
@@ -213,6 +214,7 @@ impl WalletConfig {
                     mnemonic: None,
                     birthday: BlockHeight::from_u32(birthday),
                     wallet_settings,
+                    encryption: None,
                 })
             }
             WalletConfig::Usk {
@@ -230,6 +232,7 @@ impl WalletConfig {
                     mnemonic: None,
                     birthday: BlockHeight::from_u32(birthday),
                     wallet_settings,
+                    encryption: None,
                 })
             }
             WalletConfig::Read => Err(WalletError::WalletAlreadyCreated),

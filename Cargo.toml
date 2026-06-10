@@ -72,11 +72,14 @@ bip32 = { version = "0.6.0-pre.1", default-features = false }
 zip32 = "0.2.0"
 
 ### Cryptographic
+argon2 = "0.5"
+chacha20poly1305 = "0.10"
 jubjub = "0.10.0"
 ring = "0.17.14"
 secp256k1 = "0.31.1"
 secrecy = "0.8"
 subtle = "2.6.1"
+zeroize = "1.8"
 bech32 = "0.11.0"
 bs58 = "0.5"
 
@@ -112,6 +115,7 @@ thiserror = "2"
 append-only-vec = "0.1.7"
 itertools = "0.14"
 nonempty = "0.11.0"
+rpassword = "7"
 rust_decimal = "1.37.2"
 rustyline = "17.0.2"
 shellwords = "1"

@@ -195,6 +195,7 @@ mod tests {
                 birthday: 419_200,
                 wallet_settings: default_test_wallet_settings(),
             },
+            None,
         )
         .unwrap()
     }

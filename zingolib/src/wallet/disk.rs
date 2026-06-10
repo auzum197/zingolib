@@ -22,6 +22,9 @@ use zingo_common_components::protocol::ActivationHeights;
 use zingo_netutils::lightwallet_protocol::TreeState;
 use zingo_price::PriceList;
 
+use secrecy::SecretString;
+
+use super::encryption;
 use super::keys::unified::{ReceiverSelection, UnifiedAddressId};
 use super::{LightWallet, error::KeyError};
 use crate::wallet::{WalletSettings, legacy::WalletZecPriceInfo, utils};
@@ -127,11 +130,50 @@ impl LightWallet {
     }
 
     /// Deserialize into `reader`
+    /// Read a wallet, transparently decrypting it first if the file is an encrypted envelope.
+    ///
+    /// If the file begins with the encryption magic, `passphrase` is required and is used to
+    /// derive the key and decrypt the payload. The derived key is cached on the returned
+    /// wallet so subsequent saves re-encrypt with the same passphrase. Otherwise the file is
+    /// read as a plaintext wallet and `passphrase` is ignored.
+    pub fn read_encrypted<R: Read>(
+        mut reader: R,
+        chain_type: ChainType,
+        passphrase: Option<String>,
+    ) -> io::Result<Self> {
+        let mut head = [0u8; 8];
+        reader.read_exact(&mut head)?;
+
+        if encryption::is_encrypted(&head) {
+            let passphrase = passphrase.ok_or_else(|| {
+                io::Error::new(
+                    ErrorKind::InvalidInput,
+                    encryption::WalletEncryptionError::PassphraseRequired.to_string(),
+                )
+            })?;
+            let passphrase = SecretString::new(passphrase);
+            let mut envelope = head.to_vec();
+            reader.read_to_end(&mut envelope)?;
+            let (plaintext, session) = encryption::decrypt(&passphrase, &envelope)
+                .map_err(|e| io::Error::new(ErrorKind::InvalidData, e.to_string()))?;
+            let mut wallet = Self::read(io::Cursor::new(plaintext.as_slice()), chain_type)?;
+            wallet.encryption = Some(session);
+            Ok(wallet)
+        } else {
+            // Not encrypted: replay the 8 bytes we peeked and read as a plaintext wallet.
+            Self::read(io::Cursor::new(head).chain(reader), chain_type)
+        }
+    }
+
     // TODO: update to return WalletError
     pub fn read<R: Read>(mut reader: R, chain_type: ChainType) -> io::Result<Self> {
         let version = reader.read_u64::<LittleEndian>()?;
         info!("Reading wallet version {version}");
         match version {
+            encryption::MAGIC_AS_VERSION => Err(io::Error::new(
+                ErrorKind::InvalidInput,
+                "wallet file is encrypted; load it with a passphrase via read_encrypted",
+            )),
             ..32 => Self::read_v0(reader, chain_type, version),
             32..=41 => Self::read_v32(reader, chain_type, version),
             _ => Err(io::Error::new(
@@ -348,6 +390,7 @@ impl LightWallet {
             chain_type,
             send_proposal: None,
             save_required: false,
+            encryption: None,
             wallet_settings: WalletSettings {
                 sync_config: SyncConfig {
                     transparent_address_discovery: TransparentAddressDiscovery::minimal(),
@@ -615,6 +658,7 @@ impl LightWallet {
             price_list,
             send_proposal: None,
             save_required: false,
+            encryption: None,
         })
     }
 }

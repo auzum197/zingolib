@@ -19,6 +19,7 @@ http = { workspace = true }
 indoc = { workspace = true }
 json = { workspace = true }
 log = { workspace = true }
+rpassword = { workspace = true }
 rustls = { workspace = true }
 rustyline = { workspace = true }
 shellwords = { workspace = true }
