@@ -15,9 +15,11 @@ resolver = "2"
 [workspace.dependencies]
 ### Workspace
 pepper-sync = { path = "pepper-sync" } # NOTE: for development between releases
-zingo-memo = { path = "zingo-memo" } # NOTE: for development between releases
+# zingo-memo = { path = "zingo-memo" } # NOTE: for development between releases
+zingo-memo = "0.1.1"
 zingo-price = { path = "zingo-price" }
-zingo-status = { path = "zingo-status" } # NOTE: for development between releases
+# zingo-status = { path = "zingo-status" } # NOTE: for development between releases
+zingo-status = "0.2.1"
 zingolib = { path = "zingolib" }
 
 ### Tests and Integration Tests
@@ -35,7 +37,7 @@ simple-mermaid = "0.2.0"
 ### Logging
 log = "0.4"
 tracing = "0.1"
-tracing-subscriber = "0.3"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 
 ### Zingo-common
 zingo-netutils = { version = "5.0.1", features = ["globally-public-transparent"] }
@@ -51,7 +53,6 @@ zcash_client_backend = { version = "0.23.0", features = [
     "lightwalletd-tonic",
     "orchard",
     "transparent-inputs",
-    "tor",
 ] }
 zcash_encoding = "0.4.0"
 zcash_keys = { version = "0.14.0", features = [
@@ -64,9 +65,6 @@ zcash_primitives = "0.28.0"
 zcash_proofs = "0.28.0"
 zcash_protocol = "0.9.0" # public API (TODO: remove from public API)
 zcash_transparent = "0.8.0"
-
-# Zebra
-zebra-chain = "9.0.0"
 
 ### Blockchain Protocol
 bip0039 = { version = "0.14", features = ["rand"] }
@@ -115,7 +113,6 @@ thiserror = "2"
 
 ### Internal data
 append-only-vec = "0.1.7"
-bytes = "1"
 itertools = "0.14"
 nonempty = "0.11.0"
 rpassword = "7"
@@ -138,3 +135,6 @@ opt-level = 3
 
 [patch.crates-io]
 time = { git = "https://github.com/time-rs/time", tag = "v0.3.47" }
+
+[workspace.metadata.cargo-shear]
+ignored = ["tonic-prost"]

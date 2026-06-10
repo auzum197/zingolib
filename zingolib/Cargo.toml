@@ -22,7 +22,6 @@ bip0039.workspace = true
 bip32 = { workspace = true, features = ["secp256k1-ffi"] }
 bs58 = { workspace = true, features = ["check"] }
 byteorder = { workspace = true }
-bytes = { workspace = true }
 chacha20poly1305 = { workspace = true }
 chrono = { workspace = true }
 dirs.workspace = true
@@ -51,11 +50,9 @@ tempfile = { workspace = true, optional = true }
 thiserror = { workspace = true }
 tokio = { workspace = true, features = ["full"] }
 tracing.workspace = true
-tracing-subscriber = { workspace = true }
 zcash_address = { workspace = true }
 zcash_client_backend = { workspace = true, features = [
     "unstable",
-    "transparent-inputs",
     "unstable-serialization",
     "unstable-spanning-tree",
 ] }

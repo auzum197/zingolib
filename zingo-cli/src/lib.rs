@@ -440,7 +440,6 @@ pub(crate) struct ConfigTemplate {
     sync: bool,
     waitsync: bool,
     chaintype: ChainType,
-    tor_enabled: bool,
     /// Passphrase for at-rest wallet encryption, from `--passphrase` or `$ZINGO_PASSPHRASE`.
     /// `None` means none was supplied up front. An encrypted wallet file will trigger a prompt.
     passphrase: Option<String>,
@@ -455,7 +454,6 @@ impl ConfigTemplate {
         communication_mode: CommunicationMode,
         matches: clap::ArgMatches,
     ) -> Result<Self, String> {
-        let tor_enabled = matches.get_flag("tor");
         let seed = matches.get_one::<String>("seed").cloned();
         let ufvk = matches.get_one::<String>("viewkey").cloned();
         if seed.is_some() && ufvk.is_some() {
@@ -531,7 +529,6 @@ If you don't remember the block height, you can pass '--birthday 0' to scan from
             sync,
             waitsync,
             chaintype,
-            tor_enabled,
             passphrase,
             kdf_memory_mib,
         })
@@ -667,13 +664,6 @@ pub(crate) fn startup(filled_template: &ConfigTemplate) -> std::io::Result<Comma
     println!("{update}");
 
     lightclient = RT.block_on(async move {
-        if filled_template.tor_enabled {
-            info!("Creating tor client");
-            if let Err(e) = lightclient.create_tor_client(None).await {
-                eprintln!("error: failed to create tor client. price updates disabled. {e}");
-            }
-        }
-
         if filled_template.sync
             && filled_template.waitsync
             && let Err(e) = lightclient.await_sync().await
