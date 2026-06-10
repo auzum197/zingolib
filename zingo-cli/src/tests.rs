@@ -372,12 +372,27 @@ mod sync {
         );
     }
 
+    /// Builds a sync status JSON with the given scan ranges as (priority, start, end) triples.
+    fn status_json(ranges: &[(&str, u64, u64)]) -> String {
+        let scan_ranges: Vec<json::JsonValue> = ranges
+            .iter()
+            .map(|(priority, start, end)| {
+                json::object! {
+                    "priority" => *priority,
+                    "start_block" => start.to_string(),
+                    "end_block" => end.to_string(),
+                }
+            })
+            .collect();
+        json::object! { "scan_ranges" => scan_ranges }.to_string()
+    }
+
     #[test]
     fn in_progress_with_valid_status() {
         assert_eq!(
             poll_then_status(
                 "Sync task is not complete.",
-                r#"{"percentage_total_outputs_scanned": 45.2}"#,
+                &status_json(&[("Scanned", 1, 452), ("Historic", 453, 1000)]),
             ),
             " [Syncing 45.2% complete]"
         );
@@ -392,11 +407,22 @@ mod sync {
     }
 
     #[test]
+    fn in_progress_refetching_nullifiers_holds_at_99() {
+        assert_eq!(
+            poll_then_status(
+                "Sync task is not complete.",
+                &status_json(&[("Scanned", 1, 900), ("RefetchingNullifiers", 901, 1000)]),
+            ),
+            " [Syncing 99.0% complete]"
+        );
+    }
+
+    #[test]
     fn not_launched_not_synced() {
         assert_eq!(
             poll_then_status(
                 "Sync task has not been launched.",
-                r#"{"percentage_total_outputs_scanned": 0.0}"#,
+                &status_json(&[("Historic", 1, 1000)]),
             ),
             " [Not syncing 0.0% complete]"
         );
@@ -407,9 +433,17 @@ mod sync {
         assert_eq!(
             poll_then_status(
                 "Sync task has not been launched.",
-                r#"{"percentage_total_outputs_scanned": 100.0}"#,
+                &status_json(&[("Scanned", 1, 1000)]),
             ),
             " [Synced]"
+        );
+    }
+
+    #[test]
+    fn not_launched_empty_scan_ranges() {
+        assert_eq!(
+            poll_then_status("Sync task has not been launched.", r#"{"scan_ranges": []}"#),
+            " [Not syncing]"
         );
     }
 }
@@ -649,6 +683,7 @@ mod config_template {
                         sync_config: SyncConfig {
                             transparent_address_discovery: TransparentAddressDiscovery::minimal(),
                             performance_level: PerformanceLevel::High,
+                            ..SyncConfig::default()
                         },
                         min_confirmations: NonZeroU32::try_from(3).unwrap(),
                     },

@@ -4625,8 +4625,8 @@ mod testnet_test {
             while sync_status(&*lightclient.wallet().read().await)
                 .await
                 .unwrap()
-                .percentage_total_outputs_scanned
-                > 1.0
+                .total_blocks_scanned
+                == 0
             {
                 interval.tick().await;
             }

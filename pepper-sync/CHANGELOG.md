@@ -10,10 +10,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Deprecated
 
 ### Added
+- `events` module: push-based sync event stream so consumers subscribe to committed
+  events instead of polling `sync_status` under the wallet lock.
+  - `events::SyncEvent` - `SessionStarted`, `RangeScanned`, `TxDiscovered`, `Reorg`
+    and `TipMoved` variants. `SessionStarted` carries the note-commitment totals and
+    already-scanned baseline needed to compute a progress metric consumer-side.
+  - `events::SequencedSyncEvent` - a `SyncEvent` with its stream position, the type
+    delivered to subscribers.
+  - `events::SyncEmitter` - non-blocking, lag-tolerant emitter built on
+    `tokio::sync::broadcast`. Constructed by the consumer and passed to `sync`.
+  - re-exported as `SequencedSyncEvent`/`SyncEmitter`/`SyncEvent` in lib.rs.
+- `config::SyncConfig`: added `event_channel_capacity` field (default 512, see
+  `config::DEFAULT_EVENT_CHANNEL_CAPACITY`). Serialized version incremented to 2.
 
 ### Changed
+- `sync::sync` fn: added `events: SyncEmitter` parameter.
+- `sync::sync_status` fn: reduced to a reconcile getter returning facts only
+  (scan range coverage and cumulative scanned counts). Derived metrics, including
+  any progress percentage, are now computed consumer-side from the event stream.
+- `sync::SyncStatus`: `Display` impl now summarises raw counts.
 
 ### Removed
+- `sync::SyncStatus`: removed `percentage_session_blocks_scanned`,
+  `percentage_total_blocks_scanned`, `percentage_session_outputs_scanned`,
+  `percentage_total_outputs_scanned`, `session_blocks_scanned`,
+  `session_sapling_outputs_scanned` and `session_orchard_outputs_scanned` fields,
+  along with their keys in the `json::JsonValue` conversion. The 99%-until-verified
+  clamp is gone with them; consumers choose their own model (see
+  `events::SyncEvent::SessionStarted`).
+- `sync::SyncResult`: removed `percentage_total_outputs_scanned` field and its
+  `Display`/`json::JsonValue` output.
 
 ## [0.5.0] - 2026-06-10
 

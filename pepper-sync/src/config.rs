@@ -4,7 +4,14 @@
 use std::io::{Read, Write};
 
 #[cfg(feature = "wallet_essentials")]
-use byteorder::{ReadBytesExt, WriteBytesExt};
+use byteorder::{LittleEndian, ReadBytesExt, WriteBytesExt};
+
+/// Default capacity of the sync event broadcast channel.
+///
+/// Sized for cadence tolerance: per-batch fan-out is essentially one `RangeScanned` plus a rare
+/// small transaction burst, so this gives a foregrounded subscriber seconds of slack at peak
+/// initial-sync cadence. A backgrounded subscriber lags and reconciles by design.
+pub const DEFAULT_EVENT_CHANNEL_CAPACITY: usize = 512;
 
 /// Performance level.
 ///
@@ -80,18 +87,30 @@ impl std::fmt::Display for PerformanceLevel {
 }
 
 /// Sync configuration.
-#[derive(Default, Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SyncConfig {
     /// Transparent address discovery configuration.
     pub transparent_address_discovery: TransparentAddressDiscovery,
     /// Performance level
     pub performance_level: PerformanceLevel,
+    /// Capacity of the sync event broadcast channel. See [`crate::events`].
+    pub event_channel_capacity: usize,
+}
+
+impl Default for SyncConfig {
+    fn default() -> Self {
+        Self {
+            transparent_address_discovery: TransparentAddressDiscovery::default(),
+            performance_level: PerformanceLevel::default(),
+            event_channel_capacity: DEFAULT_EVENT_CHANNEL_CAPACITY,
+        }
+    }
 }
 
 #[cfg(feature = "wallet_essentials")]
 impl SyncConfig {
     fn serialized_version() -> u8 {
-        1
+        2
     }
 
     /// Deserialize into `reader`
@@ -101,9 +120,14 @@ impl SyncConfig {
         let gap_limit = reader.read_u8()?;
         let scopes = reader.read_u8()?;
         let performance_level = if version >= 1 {
-            PerformanceLevel::read(reader)?
+            PerformanceLevel::read(&mut reader)?
         } else {
             PerformanceLevel::High
+        };
+        let event_channel_capacity = if version >= 2 {
+            reader.read_u64::<LittleEndian>()? as usize
+        } else {
+            DEFAULT_EVENT_CHANNEL_CAPACITY
         };
         Ok(Self {
             transparent_address_discovery: TransparentAddressDiscovery {
@@ -115,6 +139,7 @@ impl SyncConfig {
                 },
             },
             performance_level,
+            event_channel_capacity,
         })
     }
 
@@ -133,7 +158,8 @@ impl SyncConfig {
             scopes |= 0b100;
         }
         writer.write_u8(scopes)?;
-        self.performance_level.write(writer)?;
+        self.performance_level.write(&mut writer)?;
+        writer.write_u64::<LittleEndian>(self.event_channel_capacity as u64)?;
 
         Ok(())
     }

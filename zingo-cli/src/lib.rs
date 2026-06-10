@@ -147,6 +147,36 @@ fn parse_ufvk(s: &str) -> Result<String, String> {
     }
 }
 
+/// Derives a coarse block-coverage percentage from the scan ranges in a sync status JSON.
+///
+/// The sync engine reports raw facts only, so the progress metric is computed here: blocks in
+/// scanned ranges over total blocks, held at 99% while nullifier refetching is pending. Returns
+/// `None` if the JSON carries no scan ranges.
+fn scanned_block_pct(parsed: &json::JsonValue) -> Option<f32> {
+    let mut scanned = 0u64;
+    let mut total = 0u64;
+    let mut fully_scanned = true;
+    for range in parsed["scan_ranges"].members() {
+        let start = range["start_block"].as_str()?.parse::<u64>().ok()?;
+        let end = range["end_block"].as_str()?.parse::<u64>().ok()?;
+        let blocks = end - start + 1;
+        total += blocks;
+        match range["priority"].as_str()? {
+            "Scanned" => scanned += blocks,
+            "ScannedWithoutMapping" | "RefetchingNullifiers" => {
+                scanned += blocks;
+                fully_scanned = false;
+            }
+            _ => fully_scanned = false,
+        }
+    }
+    if total == 0 {
+        return None;
+    }
+    let pct = (scanned as f32 / total as f32) * 100.0;
+    Some(if fully_scanned { pct } else { pct.min(99.0) })
+}
+
 /// Polls the sync task and returns a string to embed in the interactive prompt.
 ///
 /// Returns `" [Syncing X.X%]"` while sync is in progress, `" [Synced]"` when
@@ -162,13 +192,9 @@ fn poll_sync_for_prompt_indicator(send_command: &impl Fn(String, Vec<String>) ->
         " [Synced]".to_string()
     } else if poll == "Sync task is not complete." {
         let status = send_command("sync".to_string(), vec!["status".to_string()]);
-        if let Ok(parsed) = json::parse(&status) {
-            let pct = parsed["percentage_total_outputs_scanned"]
-                .as_f32()
-                .unwrap_or(0.0);
-            format!(" [Syncing {pct:.1}% complete]")
-        } else {
-            " [Syncing]".to_string()
+        match json::parse(&status).as_ref().map(scanned_block_pct) {
+            Ok(Some(pct)) => format!(" [Syncing {pct:.1}% complete]"),
+            _ => " [Syncing]".to_string(),
         }
     } else {
         sync_indicator_from_status(send_command)
@@ -177,21 +203,14 @@ fn poll_sync_for_prompt_indicator(send_command: &impl Fn(String, Vec<String>) ->
 
 /// Checks sync status when no sync task is running.
 ///
-/// Returns `" [Synced]"` if outputs are 100% scanned, otherwise
+/// Returns `" [Synced]"` if all blocks are scanned, otherwise
 /// `" [Not syncing X.X%]"` to indicate incomplete sync without an active task.
 fn sync_indicator_from_status(send_command: &impl Fn(String, Vec<String>) -> String) -> String {
     let status = send_command("sync".to_string(), vec!["status".to_string()]);
-    if let Ok(parsed) = json::parse(&status) {
-        let pct = parsed["percentage_total_outputs_scanned"]
-            .as_f32()
-            .unwrap_or(0.0);
-        if pct >= 100.0 {
-            " [Synced]".to_string()
-        } else {
-            format!(" [Not syncing {pct:.1}% complete]")
-        }
-    } else {
-        " [Not syncing]".to_string()
+    match json::parse(&status).as_ref().map(scanned_block_pct) {
+        Ok(Some(pct)) if pct >= 100.0 => " [Synced]".to_string(),
+        Ok(Some(pct)) => format!(" [Not syncing {pct:.1}% complete]"),
+        _ => " [Not syncing]".to_string(),
     }
 }
 
@@ -546,6 +565,7 @@ fn build_zingo_config(filled_template: &ConfigTemplate) -> std::io::Result<Clien
         sync_config: SyncConfig {
             transparent_address_discovery: TransparentAddressDiscovery::minimal(),
             performance_level: PerformanceLevel::High,
+            ..SyncConfig::default()
         },
         min_confirmations: NonZeroU32::try_from(3).unwrap(),
     };

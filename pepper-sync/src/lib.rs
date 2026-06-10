@@ -107,6 +107,7 @@ After the sync process is initialized, it will be in a state of verification, on
 pub(crate) mod client;
 pub mod config;
 pub mod error;
+pub mod events;
 pub mod keys;
 pub(crate) mod scan;
 pub mod sync;
@@ -114,6 +115,7 @@ pub(crate) mod utils;
 pub mod wallet;
 pub(crate) mod witness;
 
+pub use events::{SequencedSyncEvent, SyncEmitter, SyncEvent};
 use shardtree::store::ShardStore;
 pub use sync::add_scan_targets;
 pub use sync::reset_spends;

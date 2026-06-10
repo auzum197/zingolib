@@ -10,7 +10,9 @@ use zcash_protocol::memo::Memo;
 use pepper_sync::keys::transparent;
 use pepper_sync::wallet::{
     KeyIdInterface, NoteInterface, OutgoingNoteInterface, OutputInterface, TransparentCoin,
+    WalletTransaction,
 };
+use zcash_primitives::transaction::TxId;
 
 use super::LightWallet;
 use super::error::{KeyError, SummaryError};
@@ -38,192 +40,7 @@ impl LightWallet {
         let mut transaction_summaries = self
             .wallet_transactions
             .values()
-            .map(|transaction| {
-                let kind = self.transaction_kind(transaction)?;
-                let value = match kind {
-                    TransactionKind::Received | TransactionKind::Sent(SendType::Shield) => {
-                        transaction.total_value_received()
-                    }
-                    TransactionKind::Sent(SendType::Send | SendType::SendToSelf) => {
-                        transaction.total_value_sent()
-                    }
-                };
-                let fee: Option<u64> = self
-                    .calculate_transaction_fee(transaction)
-                    .ok()
-                    .map(zcash_protocol::value::Zatoshis::into_u64);
-                let orchard_notes = transaction
-                    .orchard_notes()
-                    .iter()
-                    .map(|output| {
-                        let spend_status = self.output_spend_status(output);
-
-                        let memo = if let Memo::Text(memo_text) = output.memo() {
-                            Some(memo_text.to_string())
-                        } else {
-                            None
-                        };
-
-                        BasicNoteSummary::from_parts(
-                            output.value(),
-                            spend_status,
-                            output.output_id().output_index(),
-                            memo,
-                        )
-                    })
-                    .collect::<Vec<_>>();
-                let sapling_notes = transaction
-                    .sapling_notes()
-                    .iter()
-                    .map(|output| {
-                        let spend_status = self.output_spend_status(output);
-
-                        let memo = if let Memo::Text(memo_text) = output.memo() {
-                            Some(memo_text.to_string())
-                        } else {
-                            None
-                        };
-
-                        BasicNoteSummary::from_parts(
-                            output.value(),
-                            spend_status,
-                            output.output_id().output_index(),
-                            memo,
-                        )
-                    })
-                    .collect::<Vec<_>>();
-                let transparent_coins = transaction
-                    .transparent_coins()
-                    .iter()
-                    .map(|output| {
-                        let spend_status = self.output_spend_status(output);
-
-                        BasicCoinSummary::from_parts(
-                            output.value(),
-                            spend_status,
-                            output.output_id().output_index(),
-                        )
-                    })
-                    .collect::<Vec<_>>();
-
-                let outgoing_orchard_notes = transaction
-                    .outgoing_orchard_notes()
-                    .iter()
-                    .map(|note| {
-                        let memo = if let Memo::Text(memo_text) = note.memo() {
-                            Some(memo_text.to_string())
-                        } else {
-                            None
-                        };
-
-                        Ok(OutgoingNoteSummary {
-                            memo,
-                            value: note.value(),
-                            recipient: note
-                                .encoded_recipient(&self.chain_type)
-                                .map_err(zcash_address::ParseError::Unified)?,
-                            recipient_unified_address: note
-                                .encoded_recipient_full_unified_address(&self.chain_type),
-                            output_index: note.output_id().output_index(),
-                            account_id: note.key_id().account_id,
-                            scope: Scope::from(note.key_id().scope),
-                        })
-                    })
-                    .collect::<Result<Vec<_>, SummaryError>>()?;
-                let outgoing_sapling_notes = transaction
-                    .outgoing_sapling_notes()
-                    .iter()
-                    .map(|note| {
-                        let memo = if let Memo::Text(memo_text) = note.memo() {
-                            Some(memo_text.to_string())
-                        } else {
-                            None
-                        };
-
-                        OutgoingNoteSummary {
-                            output_index: note.output_id().output_index(),
-                            memo,
-                            value: note.value(),
-                            recipient: note
-                                .encoded_recipient(&self.chain_type)
-                                .expect("infallible"),
-                            recipient_unified_address: note
-                                .encoded_recipient_full_unified_address(&self.chain_type),
-                            account_id: note.key_id().account_id,
-                            scope: Scope::from(note.key_id().scope),
-                        }
-                    })
-                    .collect::<Vec<_>>();
-                let outgoing_transparent_coins = if kind == TransactionKind::Received {
-                    Vec::new()
-                } else {
-                    transaction
-                        .transaction()
-                        .transparent_bundle()
-                        .map_or(Vec::new(), |bundle| {
-                            bundle
-                                .vout
-                                .iter()
-                                .enumerate()
-                                .filter_map(|(output_index, transparent_output)| {
-                                    transparent_output.recipient_address().map(|address| {
-                                        OutgoingCoinSummary {
-                                            value: transparent_output.value().into_u64(),
-                                            recipient: transparent::encode_address(
-                                                &self.chain_type,
-                                                address,
-                                            ),
-                                            output_index: output_index
-                                                .try_into()
-                                                .expect("output index should be valid u32"),
-                                        }
-                                    })
-                                })
-                                .collect()
-                        })
-                };
-
-                // add price to transaction summary
-                // takes price from the day of transaction's datetime. otherwise, current price.
-                // TODO: historical prices currently unimplemented
-                // let mut price = None;
-                // for daily_price in self.price_list.daily_prices() {
-                //     if daily_price.time > transaction.datetime() {
-                //         assert!(daily_price.time - transaction.datetime() < 24 * 60 * 60);
-                //         price = Some(daily_price.price_usd);
-                //         break;
-                //     }
-                // }
-                // if price.is_none() {
-                //     price = self.price_list.current_price().and_then(|current_price| {
-                //         if transaction.datetime() <= current_price.time
-                //             && transaction.datetime() > current_price.time - 2 * 24 * 60 * 60
-                //         // exchange APIs may start daily prices 2 days back
-                //         {
-                //             Some(current_price.price_usd)
-                //         } else {
-                //             None
-                //         }
-                //     });
-                // }
-
-                Ok(TransactionSummary {
-                    txid: transaction.txid(),
-                    datetime: transaction.datetime(),
-                    status: transaction.status(),
-                    blockheight: transaction.status().get_height(),
-                    kind,
-                    value,
-                    fee,
-                    zec_price: None,
-                    orchard_notes,
-                    sapling_notes,
-                    transparent_coins,
-                    outgoing_orchard_notes,
-                    outgoing_sapling_notes,
-                    outgoing_transparent_coins,
-                })
-            })
+            .map(|transaction| self.build_transaction_summary(transaction))
             .collect::<Result<Vec<_>, SummaryError>>()?;
 
         transaction_summaries.sort_by(|summary_a, summary_b| {
@@ -241,6 +58,208 @@ impl LightWallet {
         }
 
         Ok(TransactionSummaries::new(transaction_summaries))
+    }
+
+    /// Returns a summary of the wallet transaction with the given `txid`, or `None` if the
+    /// transaction is not in the wallet.
+    pub fn transaction_summary(
+        &self,
+        txid: TxId,
+    ) -> Result<Option<TransactionSummary>, SummaryError> {
+        self.wallet_transactions
+            .get(&txid)
+            .map(|transaction| self.build_transaction_summary(transaction))
+            .transpose()
+    }
+
+    fn build_transaction_summary(
+        &self,
+        transaction: &WalletTransaction,
+    ) -> Result<TransactionSummary, SummaryError> {
+        let kind = self.transaction_kind(transaction)?;
+        let value = match kind {
+            TransactionKind::Received | TransactionKind::Sent(SendType::Shield) => {
+                transaction.total_value_received()
+            }
+            TransactionKind::Sent(SendType::Send | SendType::SendToSelf) => {
+                transaction.total_value_sent()
+            }
+        };
+        let fee: Option<u64> = self
+            .calculate_transaction_fee(transaction)
+            .ok()
+            .map(zcash_protocol::value::Zatoshis::into_u64);
+        let orchard_notes = transaction
+            .orchard_notes()
+            .iter()
+            .map(|output| {
+                let spend_status = self.output_spend_status(output);
+
+                let memo = if let Memo::Text(memo_text) = output.memo() {
+                    Some(memo_text.to_string())
+                } else {
+                    None
+                };
+
+                BasicNoteSummary::from_parts(
+                    output.value(),
+                    spend_status,
+                    output.output_id().output_index(),
+                    memo,
+                )
+            })
+            .collect::<Vec<_>>();
+        let sapling_notes = transaction
+            .sapling_notes()
+            .iter()
+            .map(|output| {
+                let spend_status = self.output_spend_status(output);
+
+                let memo = if let Memo::Text(memo_text) = output.memo() {
+                    Some(memo_text.to_string())
+                } else {
+                    None
+                };
+
+                BasicNoteSummary::from_parts(
+                    output.value(),
+                    spend_status,
+                    output.output_id().output_index(),
+                    memo,
+                )
+            })
+            .collect::<Vec<_>>();
+        let transparent_coins = transaction
+            .transparent_coins()
+            .iter()
+            .map(|output| {
+                let spend_status = self.output_spend_status(output);
+
+                BasicCoinSummary::from_parts(
+                    output.value(),
+                    spend_status,
+                    output.output_id().output_index(),
+                )
+            })
+            .collect::<Vec<_>>();
+
+        let outgoing_orchard_notes = transaction
+            .outgoing_orchard_notes()
+            .iter()
+            .map(|note| {
+                let memo = if let Memo::Text(memo_text) = note.memo() {
+                    Some(memo_text.to_string())
+                } else {
+                    None
+                };
+
+                Ok(OutgoingNoteSummary {
+                    memo,
+                    value: note.value(),
+                    recipient: note
+                        .encoded_recipient(&self.chain_type)
+                        .map_err(zcash_address::ParseError::Unified)?,
+                    recipient_unified_address: note
+                        .encoded_recipient_full_unified_address(&self.chain_type),
+                    output_index: note.output_id().output_index(),
+                    account_id: note.key_id().account_id,
+                    scope: Scope::from(note.key_id().scope),
+                })
+            })
+            .collect::<Result<Vec<_>, SummaryError>>()?;
+        let outgoing_sapling_notes = transaction
+            .outgoing_sapling_notes()
+            .iter()
+            .map(|note| {
+                let memo = if let Memo::Text(memo_text) = note.memo() {
+                    Some(memo_text.to_string())
+                } else {
+                    None
+                };
+
+                OutgoingNoteSummary {
+                    output_index: note.output_id().output_index(),
+                    memo,
+                    value: note.value(),
+                    recipient: note
+                        .encoded_recipient(&self.chain_type)
+                        .expect("infallible"),
+                    recipient_unified_address: note
+                        .encoded_recipient_full_unified_address(&self.chain_type),
+                    account_id: note.key_id().account_id,
+                    scope: Scope::from(note.key_id().scope),
+                }
+            })
+            .collect::<Vec<_>>();
+        let outgoing_transparent_coins = if kind == TransactionKind::Received {
+            Vec::new()
+        } else {
+            transaction
+                .transaction()
+                .transparent_bundle()
+                .map_or(Vec::new(), |bundle| {
+                    bundle
+                        .vout
+                        .iter()
+                        .enumerate()
+                        .filter_map(|(output_index, transparent_output)| {
+                            transparent_output.recipient_address().map(|address| {
+                                OutgoingCoinSummary {
+                                    value: transparent_output.value().into_u64(),
+                                    recipient: transparent::encode_address(
+                                        &self.chain_type,
+                                        address,
+                                    ),
+                                    output_index: output_index
+                                        .try_into()
+                                        .expect("output index should be valid u32"),
+                                }
+                            })
+                        })
+                        .collect()
+                })
+        };
+
+        // add price to transaction summary
+        // takes price from the day of transaction's datetime. otherwise, current price.
+        // TODO: historical prices currently unimplemented
+        // let mut price = None;
+        // for daily_price in self.price_list.daily_prices() {
+        //     if daily_price.time > transaction.datetime() {
+        //         assert!(daily_price.time - transaction.datetime() < 24 * 60 * 60);
+        //         price = Some(daily_price.price_usd);
+        //         break;
+        //     }
+        // }
+        // if price.is_none() {
+        //     price = self.price_list.current_price().and_then(|current_price| {
+        //         if transaction.datetime() <= current_price.time
+        //             && transaction.datetime() > current_price.time - 2 * 24 * 60 * 60
+        //         // exchange APIs may start daily prices 2 days back
+        //         {
+        //             Some(current_price.price_usd)
+        //         } else {
+        //             None
+        //         }
+        //     });
+        // }
+
+        Ok(TransactionSummary {
+            txid: transaction.txid(),
+            datetime: transaction.datetime(),
+            status: transaction.status(),
+            blockheight: transaction.status().get_height(),
+            kind,
+            value,
+            fee,
+            zec_price: None,
+            orchard_notes,
+            sapling_notes,
+            transparent_coins,
+            outgoing_orchard_notes,
+            outgoing_sapling_notes,
+            outgoing_transparent_coins,
+        })
     }
 
     /// Provides a list of value transfers related to this capability.
