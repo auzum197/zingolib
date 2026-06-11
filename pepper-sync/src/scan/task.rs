@@ -708,7 +708,7 @@ where
                     }
                 };
 
-                // scanning is done; the result now queues for the serialized commit stage.
+                // scanning is done and the result now queues for the serialized commit stage.
                 // nullifier refetch batches announce nothing, mirroring the commit side.
                 if scan_range.priority() != ScanPriority::ScannedWithoutMapping {
                     events.emit(SyncEvent::BatchScanCompleted {

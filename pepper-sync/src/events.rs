@@ -30,7 +30,7 @@ use zingo_status::confirmation_status::ConfirmationStatus;
 use crate::sync::ScanPriority;
 
 /// Wall-clock cost of the commit phase, split into its sub-phases for tuning. The sub-phases
-/// are the named suspects in commit-phase performance work; `other` is the remainder of the
+/// are the named suspects in commit-phase performance work. `other` is the remainder of the
 /// measured commit (block and transaction appends, state merges) so that [`CommitTiming::total`]
 /// equals the wall-clock commit time.
 #[derive(Clone, Copy, Debug, Default)]

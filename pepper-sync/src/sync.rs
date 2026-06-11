@@ -955,7 +955,7 @@ where
                 tree_duration,
             } = results;
 
-            // the commit phase is the wallet work below; time it and patch it into the
+            // the commit phase is the wallet work below. time it and patch it into the
             // `RangeScanned` event, which is built mid-commit before the writes finish
             let commit_started = Instant::now();
             let mut commit_timing = CommitTiming::default();

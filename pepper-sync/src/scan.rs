@@ -175,7 +175,7 @@ where
             wallet_transactions: HashMap::new(),
             sapling_located_trees: Vec::new(),
             orchard_located_trees: Vec::new(),
-            // this path only collects nullifiers; none of the timed phases run
+            // this path only collects nullifiers, so none of the timed phases run
             fetch_duration: Duration::ZERO,
             decryption_duration: Duration::ZERO,
             tree_duration: Duration::ZERO,
@@ -183,7 +183,7 @@ where
     }
 
     // each phase is timed separately so consumers see where a batch spends its time and can
-    // estimate the whole batch, not just one phase
+    // estimate the whole batch from measured rates
     let fetch_started = Instant::now();
     let initial_scan_data = InitialScanData::new(
         fetch_request_sender.clone(),
