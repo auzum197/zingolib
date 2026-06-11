@@ -127,6 +127,11 @@ pub use sync::sync_status;
 #[cfg(test)]
 mod mocks;
 
+/// Synthetic workloads for measuring the scan and commit paths offline. Available to in-crate
+/// tests and, behind the `test-features` feature, to the `benches/` Criterion targets.
+#[cfg(any(test, feature = "test-features"))]
+pub mod bench_support;
+
 use zcash_protocol::ShieldedProtocol;
 use zcash_protocol::consensus::BlockHeight;
 

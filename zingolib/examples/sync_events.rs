@@ -8,7 +8,7 @@
 //! event stream (the consumer-side recipe from SYNC_UX_SPEC.md §7.3). Each batch line follows
 //! the engine's lifecycle: a scanning bar, then `WAITING FOR OTHER TASKS` while it is blocked
 //! behind the serialized commit stage, then a committing bar, each estimated from the engine's
-//! measured per-phase timing; a finished batch prints its wait and per-phase times. Nothing is
+//! measured per-phase timing. A finished batch prints its wait and per-phase times. Nothing is
 //! written to disk.
 //!
 //! ```text
@@ -149,12 +149,12 @@ struct DoneInfo {
 enum Phase {
     /// Fetch, decryption, and tree construction are in progress (`BatchScanStarted`).
     Scanning,
-    /// Scanning finished; the batch is blocked behind the serialized commit stage
+    /// Scanning finished. The batch is blocked behind the serialized commit stage
     /// (`BatchScanCompleted`).
     Waiting { since: Instant },
     /// The batch holds the wallet lock and is committing (`BatchCommitStarted`).
     Committing { since: Instant, waited: Duration },
-    /// The batch committed (`RangeScanned`); it lingers in the block until flushed to the log.
+    /// The batch committed (`RangeScanned`). It lingers in the block until flushed to the log.
     Done(DoneInfo),
 }
 
@@ -309,7 +309,7 @@ impl View {
             Phase::Done(done) => {
                 let timing = &done.timing;
                 let commit = &timing.commit;
-                // the commit breakdown leads (the suspect under investigation); it survives the
+                // the commit breakdown leads (the suspect under investigation). it survives the
                 // width truncation while pinned, and prints in full once flushed to history
                 format!(
                     "{BATCH_INDENT}✓ scanned {start}..{end} [{priority}] ({} blocks, {} outputs) \
@@ -718,7 +718,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     std::process::exit(130);
                 }
                 stopping = true;
-                // a failed stop means sync already finished; the poll arm picks up the result
+                // a failed stop means sync already finished, and the poll arm picks up the result
                 let _already_finished = lc.stop_sync();
                 view.line("stopping after current batch (Ctrl-C again to abort)...");
             }

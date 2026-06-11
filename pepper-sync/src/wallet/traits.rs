@@ -324,16 +324,8 @@ pub trait SyncShardTrees: SyncWallet {
                 .saturating_sub(timing.frontiers);
 
             let insert_started = Instant::now();
-            for tree in sapling_located_trees {
-                shard_trees
-                    .sapling
-                    .insert_tree(tree.subtree, tree.checkpoints)?;
-            }
-            for tree in orchard_located_trees {
-                shard_trees
-                    .orchard
-                    .insert_tree(tree.subtree, tree.checkpoints)?;
-            }
+            insert_located_trees(&mut shard_trees.sapling, sapling_located_trees)?;
+            insert_located_trees(&mut shard_trees.orchard, orchard_located_trees)?;
             timing.insert_tree = insert_started.elapsed();
 
             Ok(timing)
@@ -386,6 +378,27 @@ pub trait SyncShardTrees: SyncWallet {
 }
 
 // TODO: move into `update_shard_trees` trait method
+/// Merges a batch's located trees into a commitment tree, pruning excess checkpoints per
+/// `insert_tree` call. This is the commit-phase insert shared by `update_shard_trees`, the
+/// benchmarks, and the tests, so all three exercise the same code and any change to the commit
+/// strategy applies everywhere at once.
+pub(crate) fn insert_located_trees<L, const DEPTH: u8, const SHARD_HEIGHT: u8>(
+    shard_tree: &mut shardtree::ShardTree<
+        shardtree::store::memory::MemoryShardStore<L, BlockHeight>,
+        DEPTH,
+        SHARD_HEIGHT,
+    >,
+    located_trees: Vec<LocatedTreeData<L>>,
+) -> Result<(), shardtree::error::ShardTreeError<std::convert::Infallible>>
+where
+    L: Clone + PartialEq + incrementalmerkletree::Hashable,
+{
+    for tree in located_trees {
+        shard_tree.insert_tree(tree.subtree, tree.checkpoints)?;
+    }
+    Ok(())
+}
+
 /// Adds a checkpoint at `checkpoint_height`. Returns the wall-clock time spent on an awaited
 /// `get_frontiers` fetch (zero when the checkpoint resolves without a network round trip), for
 /// commit-phase instrumentation.
