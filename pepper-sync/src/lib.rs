@@ -115,7 +115,7 @@ pub(crate) mod utils;
 pub mod wallet;
 pub(crate) mod witness;
 
-pub use events::{SequencedSyncEvent, SyncEmitter, SyncEvent};
+pub use events::{CommitTiming, ScanTiming, SequencedSyncEvent, SyncEmitter, SyncEvent};
 use shardtree::store::ShardStore;
 pub use sync::add_scan_targets;
 pub use sync::reset_spends;

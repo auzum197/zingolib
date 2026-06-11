@@ -20,6 +20,7 @@ use std::sync::{
     Arc,
     atomic::{AtomicU64, Ordering},
 };
+use std::time::Duration;
 
 use tokio::sync::broadcast;
 use zcash_primitives::transaction::TxId;
@@ -27,6 +28,67 @@ use zcash_protocol::consensus::BlockHeight;
 use zingo_status::confirmation_status::ConfirmationStatus;
 
 use crate::sync::ScanPriority;
+
+/// Wall-clock cost of the commit phase, split into its sub-phases for tuning. The sub-phases
+/// are the named suspects in commit-phase performance work; `other` is the remainder of the
+/// measured commit (block and transaction appends, state merges) so that [`CommitTiming::total`]
+/// equals the wall-clock commit time.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct CommitTiming {
+    /// The `add_checkpoint` loop: checkpoint-map scans and store inserts, excluding fetches.
+    pub checkpoints: Duration,
+    /// Awaited `get_frontiers` network fetches in the checkpoint path (held under the lock).
+    pub frontiers: Duration,
+    /// Merging the located trees into the commitment trees (`insert_tree`, incl. its pruning).
+    pub insert_tree: Duration,
+    /// Awaited network fetches in shielded-spend detection (transactions and blocks).
+    pub spend_fetch: Duration,
+    /// The CPU portion of shielded-spend detection (nullifier derivation and matching).
+    pub spend_cpu: Duration,
+    /// Pruning wallet data no longer needed (`remove_irrelevant_data` and state merges).
+    pub cleanup: Duration,
+    /// The remaining measured commit time outside the named sub-phases.
+    pub other: Duration,
+}
+
+impl CommitTiming {
+    /// The full wall-clock cost of the commit phase, summed over all sub-phases.
+    #[must_use]
+    pub fn total(&self) -> Duration {
+        self.checkpoints
+            + self.frontiers
+            + self.insert_tree
+            + self.spend_fetch
+            + self.spend_cpu
+            + self.cleanup
+            + self.other
+    }
+}
+
+/// Wall-clock cost of processing a scanned range, split into its phases.
+///
+/// Sum the phases with [`ScanTiming::total`] for the batch's full processing time, and pair the
+/// total with the range's output counts for a measured throughput. These are values for tuning
+/// progress estimates, not chain facts: they vary with hardware, server latency, and contention.
+#[derive(Clone, Copy, Debug)]
+pub struct ScanTiming {
+    /// Fetching the range's tree state and any discovered full transactions.
+    pub fetch: Duration,
+    /// Trial decryption of the range's compact outputs, the dominant cost.
+    pub decryption: Duration,
+    /// Constructing the note-commitment (witness) trees.
+    pub tree: Duration,
+    /// Committing the results to the wallet, split into sub-phases.
+    pub commit: CommitTiming,
+}
+
+impl ScanTiming {
+    /// The full wall-clock cost of processing the range, summed over all phases.
+    #[must_use]
+    pub fn total(&self) -> Duration {
+        self.fetch + self.decryption + self.tree + self.commit.total()
+    }
+}
 
 /// A committed sync event with its position in the stream.
 #[derive(Clone, Debug)]
@@ -84,6 +146,25 @@ pub enum SyncEvent {
         /// Orchard note commitments in the batch.
         orchard_outputs: u32,
     },
+    /// A batch finished scanning (fetch, decryption, and tree construction) and is now queued
+    /// for the single-threaded commit stage. Because commits are serialized under the wallet
+    /// lock, the range may wait here while another batch commits.
+    ///
+    /// Advisory like [`Self::BatchScanStarted`]: it pairs with the eventual
+    /// [`Self::BatchCommitStarted`] and [`Self::RangeScanned`] for the same range, and an
+    /// unpaired one has no durable meaning.
+    BatchScanCompleted {
+        /// The batch's block range.
+        range: Range<BlockHeight>,
+    },
+    /// A batch acquired the wallet lock and began committing, ending the wait that follows
+    /// [`Self::BatchScanCompleted`].
+    ///
+    /// Advisory: it precedes the committed [`Self::RangeScanned`] for the same range.
+    BatchCommitStarted {
+        /// The batch's block range.
+        range: Range<BlockHeight>,
+    },
     /// A contiguous range was fully scanned and committed. Output counts are tree-size deltas
     /// summed over the batch's scanned blocks.
     RangeScanned {
@@ -95,6 +176,10 @@ pub enum SyncEvent {
         sapling_outputs: u32,
         /// Orchard note commitments scanned in this range.
         orchard_outputs: u32,
+        /// Wall-clock cost of processing this range, split into phases (fetch, decryption,
+        /// tree construction, and commit). Paired with the output counts above its total yields
+        /// a measured throughput. See [`ScanTiming`].
+        timing: ScanTiming,
     },
     /// A relevant transaction was decrypted and committed.
     /// Hint only: full data is queryable from the wallet by `txid`.
@@ -270,5 +355,55 @@ mod tests {
         // fast-forwarded to the oldest retained event
         let event = rx.try_recv().expect("retained event");
         assert_eq!(event.seq, 3);
+    }
+
+    #[test]
+    fn range_scanned_carries_measured_timing() {
+        let (emitter, mut rx) = SyncEmitter::new(16);
+        let timing = ScanTiming {
+            fetch: Duration::from_millis(50),
+            decryption: Duration::from_millis(600),
+            tree: Duration::from_millis(80),
+            commit: CommitTiming {
+                insert_tree: Duration::from_millis(12),
+                spend_cpu: Duration::from_millis(8),
+                ..CommitTiming::default()
+            },
+        };
+        emitter.emit(SyncEvent::RangeScanned {
+            range: height(100)..height(200),
+            priority: ScanPriority::Historic,
+            sapling_outputs: 4_096,
+            orchard_outputs: 2_048,
+            timing,
+        });
+        match rx.try_recv().expect("retained event").event {
+            SyncEvent::RangeScanned { timing, .. } => {
+                assert_eq!(timing.decryption, Duration::from_millis(600));
+                assert_eq!(timing.commit.total(), Duration::from_millis(20));
+                assert_eq!(timing.total(), Duration::from_millis(750));
+            }
+            event => panic!("expected RangeScanned, got: {event:?}"),
+        }
+    }
+
+    #[test]
+    fn batch_lifecycle_transitions_in_order() {
+        let (emitter, mut rx) = SyncEmitter::new(16);
+        let range = height(100)..height(200);
+        emitter.emit(SyncEvent::BatchScanCompleted {
+            range: range.clone(),
+        });
+        emitter.emit(SyncEvent::BatchCommitStarted {
+            range: range.clone(),
+        });
+        assert!(matches!(
+            rx.try_recv().expect("retained event").event,
+            SyncEvent::BatchScanCompleted { range: r } if r == range
+        ));
+        assert!(matches!(
+            rx.try_recv().expect("retained event").event,
+            SyncEvent::BatchCommitStarted { range: r } if r == range
+        ));
     }
 }

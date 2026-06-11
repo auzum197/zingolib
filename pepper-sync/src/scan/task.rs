@@ -157,6 +157,7 @@ where
             self.scan_results_sender.clone(),
             self.fetch_request_sender.clone(),
             self.ufvks.clone(),
+            self.events.clone(),
         );
         worker.run(max_batch_outputs);
         self.workers.push(worker);
@@ -643,6 +644,7 @@ pub(crate) struct ScanWorker<P> {
     scan_results_sender: mpsc::UnboundedSender<(ScanRange, Result<ScanResults, ScanError>)>,
     fetch_request_sender: mpsc::UnboundedSender<FetchRequest>,
     ufvks: HashMap<AccountId, UnifiedFullViewingKey>,
+    events: SyncEmitter,
 }
 
 impl<P> ScanWorker<P>
@@ -655,6 +657,7 @@ where
         scan_results_sender: mpsc::UnboundedSender<(ScanRange, Result<ScanResults, ScanError>)>,
         fetch_request_sender: mpsc::UnboundedSender<FetchRequest>,
         ufvks: HashMap<AccountId, UnifiedFullViewingKey>,
+        events: SyncEmitter,
     ) -> Self {
         Self {
             id,
@@ -665,6 +668,7 @@ where
             scan_results_sender,
             fetch_request_sender,
             ufvks,
+            events,
         }
     }
 
@@ -679,6 +683,7 @@ where
         let fetch_request_sender = self.fetch_request_sender.clone();
         let consensus_parameters = self.consensus_parameters.clone();
         let ufvks = self.ufvks.clone();
+        let events = self.events.clone();
 
         let handle = tokio::spawn(async move {
             while let Some(scan_task) = scan_task_receiver.recv().await {
@@ -703,6 +708,13 @@ where
                     }
                 };
 
+                // scanning is done; the result now queues for the serialized commit stage.
+                // nullifier refetch batches announce nothing, mirroring the commit side.
+                if scan_range.priority() != ScanPriority::ScannedWithoutMapping {
+                    events.emit(SyncEvent::BatchScanCompleted {
+                        range: scan_range.block_range().clone(),
+                    });
+                }
                 let _ignore_error = scan_results_sender.send((scan_range, scan_results));
 
                 is_scanning.store(false, atomic::Ordering::Release);

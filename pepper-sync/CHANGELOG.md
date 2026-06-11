@@ -12,11 +12,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 - `events` module: push-based sync event stream so consumers subscribe to committed
   events instead of polling `sync_status` under the wallet lock.
-  - `events::SyncEvent` - `SessionStarted`, `BatchScanStarted`, `RangeScanned`,
-    `TxDiscovered`, `Reorg` and `TipMoved` variants. `SessionStarted` carries the
-    note-commitment totals and already-scanned baseline needed to compute a progress
-    metric consumer-side. `BatchScanStarted` announces the exact output counts of a
-    batch as a worker takes it, for accurate in-flight progress.
+  - `events::SyncEvent` - `SessionStarted`, `BatchScanStarted`, `BatchScanCompleted`,
+    `BatchCommitStarted`, `RangeScanned`, `TxDiscovered`, `Reorg` and `TipMoved`
+    variants. `SessionStarted` carries the note-commitment totals and already-scanned
+    baseline needed to compute a progress metric consumer-side. `BatchScanStarted`
+    announces the exact output counts of a batch as a worker takes it, for accurate
+    in-flight progress. `BatchScanCompleted` and `BatchCommitStarted` mark the batch
+    lifecycle transitions (scanning → waiting for the serialized commit stage →
+    committing), so consumers can show a batch waiting behind another's commit rather
+    than guessing. `RangeScanned` carries a `ScanTiming` breakdown (fetch, decryption,
+    tree construction, and commit) measured by the engine, so consumers estimate each
+    phase, including the commit, from measured times rather than from commit wall-clock.
+  - `events::ScanTiming` - the per-phase wall-clock cost carried by `RangeScanned`, with a
+    `total()` helper. Its `commit` field is an `events::CommitTiming` breakdown (checkpoints,
+    frontiers, insert_tree, spend_fetch, spend_cpu, cleanup, other) for commit-phase tuning.
+    Both re-exported in lib.rs.
   - `events::SequencedSyncEvent` - a `SyncEvent` with its stream position, the type
     delivered to subscribers.
   - `events::SyncEmitter` - non-blocking, lag-tolerant emitter built on

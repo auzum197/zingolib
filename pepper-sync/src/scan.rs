@@ -1,6 +1,7 @@
 use std::{
     array::TryFromSliceError,
     collections::{BTreeMap, BTreeSet, HashMap},
+    time::{Duration, Instant},
 };
 
 use orchard::tree::MerkleHashOrchard;
@@ -91,6 +92,15 @@ pub(crate) struct ScanResults {
     pub(crate) wallet_transactions: HashMap<TxId, WalletTransaction>,
     pub(crate) sapling_located_trees: Vec<LocatedTreeData<sapling_crypto::Node>>,
     pub(crate) orchard_located_trees: Vec<LocatedTreeData<MerkleHashOrchard>>,
+    /// Wall-clock time spent fetching this batch's tree state and any discovered full
+    /// transactions. One phase of the timing carried out to consumers on
+    /// [`crate::events::SyncEvent::RangeScanned`].
+    pub(crate) fetch_duration: Duration,
+    /// Wall-clock time spent on trial decryption of this batch's compact blocks, the dominant
+    /// scan cost, measured in isolation from fetch and witness construction.
+    pub(crate) decryption_duration: Duration,
+    /// Wall-clock time spent constructing this batch's note-commitment (witness) trees.
+    pub(crate) tree_duration: Duration,
 }
 
 pub(crate) struct DecryptedNoteData {
@@ -165,9 +175,16 @@ where
             wallet_transactions: HashMap::new(),
             sapling_located_trees: Vec::new(),
             orchard_located_trees: Vec::new(),
+            // this path only collects nullifiers; none of the timed phases run
+            fetch_duration: Duration::ZERO,
+            decryption_duration: Duration::ZERO,
+            tree_duration: Duration::ZERO,
         });
     }
 
+    // each phase is timed separately so consumers see where a batch spends its time and can
+    // estimate the whole batch, not just one phase
+    let fetch_started = Instant::now();
     let initial_scan_data = InitialScanData::new(
         fetch_request_sender.clone(),
         consensus_parameters,
@@ -178,9 +195,11 @@ where
         end_seam_block,
     )
     .await?;
+    let mut fetch_duration = fetch_started.elapsed();
 
     let consensus_parameters_clone = consensus_parameters.clone();
     let ufvks_clone = ufvks.clone();
+    let decrypt_started = Instant::now();
     let scan_data = tokio::task::spawn_blocking(move || {
         scan_compact_blocks(
             compact_blocks,
@@ -192,6 +211,7 @@ where
     })
     .await
     .expect("task panicked")?;
+    let decryption_duration = decrypt_started.elapsed();
 
     let ScanData {
         nullifiers,
@@ -204,6 +224,7 @@ where
     scan_targets.append(&mut decrypted_scan_targets);
 
     let mut outpoints = BTreeMap::new();
+    let scan_transactions_started = Instant::now();
     let wallet_transactions = scan_transactions(
         fetch_request_sender,
         consensus_parameters,
@@ -215,6 +236,7 @@ where
         transparent_addresses,
     )
     .await?;
+    fetch_duration += scan_transactions_started.elapsed();
 
     let WitnessData {
         sapling_initial_position,
@@ -223,6 +245,7 @@ where
         orchard_leaves_and_retentions,
     } = witness_data;
 
+    let tree_started = Instant::now();
     let (sapling_located_trees, orchard_located_trees) = tokio::task::spawn_blocking(move || {
         (
             witness::build_located_trees(
@@ -239,6 +262,7 @@ where
     })
     .await
     .expect("task panicked");
+    let tree_duration = tree_started.elapsed();
 
     Ok(ScanResults {
         nullifiers,
@@ -247,6 +271,9 @@ where
         wallet_transactions,
         sapling_located_trees,
         orchard_located_trees,
+        fetch_duration,
+        decryption_duration,
+        tree_duration,
     })
 }
 
