@@ -40,6 +40,7 @@ pub fn default_test_wallet_settings() -> WalletSettings {
         sync_config: SyncConfig {
             transparent_address_discovery: TransparentAddressDiscovery::minimal(),
             performance_level: PerformanceLevel::High,
+            ..SyncConfig::default()
         },
         min_confirmations: NonZeroU32::try_from(1).expect("hard-coded non-zero integer"),
     }

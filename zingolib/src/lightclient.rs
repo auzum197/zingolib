@@ -16,11 +16,13 @@ use tokio::{sync::RwLock, task::JoinHandle};
 
 use bip0039::Mnemonic;
 use zcash_keys::address::UnifiedAddress;
+use zcash_primitives::transaction::TxId;
 use zcash_protocol::consensus::BlockHeight;
 use zcash_transparent::address::TransparentAddress;
 
 use pepper_sync::{
-    error::SyncError, keys::transparent::TransparentAddressId, sync::SyncResult, wallet::SyncMode,
+    error::SyncError, events::SyncEmitter, keys::transparent::TransparentAddressId,
+    sync::SyncResult, wallet::SyncMode,
 };
 use zingo_netutils::Indexer as _;
 
@@ -33,7 +35,7 @@ use crate::{
         error::{BalanceError, KeyError, SummaryError, WalletError},
         keys::unified::{ReceiverSelection, UnifiedAddressId},
         summary::data::{
-            TransactionSummaries, ValueTransfers,
+            TransactionSummaries, TransactionSummary, ValueTransfers,
             finsight::{TotalMemoBytesToAddress, TotalSendsToAddress, TotalValueToAddress},
         },
     },
@@ -97,6 +99,7 @@ pub struct LightClient {
     wallet: WalletMeta,
     sync_mode: Arc<AtomicU8>,
     sync_handle: Option<JoinHandle<Result<SyncResult, SyncError<WalletError>>>>,
+    sync_events: SyncEmitter,
     save_active: Arc<AtomicBool>,
     save_handle: Option<JoinHandle<std::io::Result<()>>>,
 }
@@ -158,11 +161,15 @@ impl LightClient {
 
         let indexer = zingo_netutils::GrpcIndexer::new(config.indexer_uri()).await?;
 
+        let (sync_events, _root_receiver) =
+            SyncEmitter::new(wallet.wallet_settings.sync_config.event_channel_capacity);
+
         Ok(LightClient {
             indexer,
             wallet: WalletMeta::new(config.get_wallet_path().to_path_buf(), wallet),
             sync_mode: Arc::new(AtomicU8::new(SyncMode::NotRunning as u8)),
             sync_handle: None,
+            sync_events,
             save_active: Arc::new(AtomicBool::new(false)),
             save_handle: None,
         })
@@ -298,6 +305,14 @@ impl LightClient {
             .await
             .transaction_summaries(reverse_sort)
             .await
+    }
+
+    /// Wrapper for [`crate::wallet::LightWallet::transaction_summary`].
+    pub async fn transaction_summary(
+        &self,
+        txid: TxId,
+    ) -> Result<Option<TransactionSummary>, SummaryError> {
+        self.wallet().read().await.transaction_summary(txid)
     }
 
     /// Wrapper for [`crate::wallet::LightWallet::value_transfers`].

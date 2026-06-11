@@ -151,6 +151,31 @@ async fn verify_example_wallet_testnet_glorygoddess() {
         .load_example_wallet_with_verification()
         .await;
 }
+/// GloryGoddess is the only example wallet in a file format new enough (v32) to deserialize
+/// `wallet_transactions`, so it anchors the single-tx summary lookup against the bulk path.
+#[tokio::test]
+async fn transaction_summary_matches_transaction_summaries() {
+    let client = NetworkSeedVersion::Testnet(TestnetSeedVersion::GloryGoddess)
+        .load_example_wallet()
+        .await;
+    let wallet = client.wallet().read().await;
+
+    let summaries = wallet.transaction_summaries(false).await.unwrap();
+    assert!(!summaries.0.is_empty());
+    for summary in summaries.iter() {
+        assert_eq!(
+            wallet.transaction_summary(summary.txid).unwrap().as_ref(),
+            Some(summary)
+        );
+    }
+
+    assert_eq!(
+        wallet
+            .transaction_summary(zcash_primitives::transaction::TxId::from_bytes([0; 32]))
+            .unwrap(),
+        None
+    );
+}
 #[tokio::test]
 async fn verify_example_wallet_mainnet_vtfcorfbcbpctcfupmegmwbp_v28() {
     NetworkSeedVersion::Mainnet(MainnetSeedVersion::VillageTarget(VillageTargetVersion::V28))

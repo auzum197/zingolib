@@ -6,6 +6,7 @@ use std::time::Duration;
 
 use futures::FutureExt;
 use pepper_sync::error::{SyncError, SyncModeError, SyncRecoveryObservables};
+use pepper_sync::events::SequencedSyncEvent;
 use pepper_sync::wallet::SyncMode;
 use tokio::time::MissedTickBehavior;
 use tokio::time::interval;
@@ -42,8 +43,17 @@ impl LightClient {
             .clone();
         let wallet = self.wallet().clone();
         let sync_mode = self.sync_mode.clone();
+        let sync_events = self.sync_events.clone();
         let sync_handle = tokio::spawn(async move {
-            pepper_sync::sync(client, &chain_type, wallet, sync_mode, sync_config).await
+            pepper_sync::sync(
+                client,
+                &chain_type,
+                wallet,
+                sync_mode,
+                sync_config,
+                sync_events,
+            )
+            .await
         });
         self.sync_handle = Some(sync_handle);
 
@@ -102,6 +112,16 @@ impl LightClient {
         }
         self.wallet().write().await.clear_all();
         self.sync().await
+    }
+
+    /// Subscribes to the live sync event stream.
+    ///
+    /// The subscription persists across sync sessions. On
+    /// [`tokio::sync::broadcast::error::RecvError::Lagged`], reconcile against wallet state via
+    /// [`pepper_sync::sync_status`] and the wallet's transactions instead of replaying the
+    /// stream.
+    pub fn subscribe_sync_events(&self) -> tokio::sync::broadcast::Receiver<SequencedSyncEvent> {
+        self.sync_events.subscribe()
     }
 
     /// Returns the lightclient's sync mode in non-atomic (enum) form.

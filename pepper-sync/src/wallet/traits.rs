@@ -1,6 +1,7 @@
 //! Traits for interfacing a wallet with the sync engine
 
 use std::collections::{BTreeMap, BTreeSet, HashMap};
+use std::time::{Duration, Instant};
 
 use tokio::sync::mpsc;
 use zip32::DiversifierIndex;
@@ -223,6 +224,17 @@ pub trait SyncOutPoints: SyncWallet {
     }
 }
 
+/// Wall-clock breakdown of [`SyncShardTrees::update_shard_trees`], for commit instrumentation.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct ShardTreeTiming {
+    /// The `add_checkpoint` loop's checkpoint-map scans and store inserts, excluding fetches.
+    pub checkpoints: Duration,
+    /// Awaited `get_frontiers` network fetches in the checkpoint path.
+    pub frontiers: Duration,
+    /// Merging the located trees into the commitment trees (`insert_tree`).
+    pub insert_tree: Duration,
+}
+
 /// Trait for interfacing shard tree data with wallet data
 pub trait SyncShardTrees: SyncWallet {
     /// Get reference to shard trees
@@ -241,11 +253,12 @@ pub trait SyncShardTrees: SyncWallet {
         highest_scanned_height: BlockHeight,
         sapling_located_trees: Vec<LocatedTreeData<sapling_crypto::Node>>,
         orchard_located_trees: Vec<LocatedTreeData<MerkleHashOrchard>>,
-    ) -> impl std::future::Future<Output = Result<(), SyncError<Self::Error>>> + Send
+    ) -> impl std::future::Future<Output = Result<ShardTreeTiming, SyncError<Self::Error>>> + Send
     where
         Self: std::marker::Send,
     {
         async move {
+            let mut timing = ShardTreeTiming::default();
             let shard_trees = self.get_shard_trees_mut().map_err(SyncError::WalletError)?;
 
             // limit the range that checkpoints are manually added to the top MAX_REORG_ALLOWANCE scanned blocks for efficiency.
@@ -274,12 +287,13 @@ pub trait SyncShardTrees: SyncWallet {
             // in the case that sapling and/or orchard note commitments are not in an entire block there will be no retention
             // at that height. Therefore, to prevent anchor and truncate errors, checkpoints are manually added first and
             // copy the tree state from the previous checkpoint where the commitment tree has not changed as of that block.
+            let checkpoints_started = Instant::now();
             for checkpoint_height in
                 u32::from(checkpoint_range.start)..u32::from(checkpoint_range.end)
             {
                 let checkpoint_height = BlockHeight::from_u32(checkpoint_height);
 
-                add_checkpoint::<
+                timing.frontiers += add_checkpoint::<
                     Sapling,
                     sapling_crypto::Node,
                     { sapling_crypto::NOTE_COMMITMENT_TREE_DEPTH },
@@ -291,7 +305,7 @@ pub trait SyncShardTrees: SyncWallet {
                     &mut shard_trees.sapling,
                 )
                 .await?;
-                add_checkpoint::<
+                timing.frontiers += add_checkpoint::<
                     Orchard,
                     MerkleHashOrchard,
                     { orchard::NOTE_COMMITMENT_TREE_DEPTH as u8 },
@@ -304,19 +318,17 @@ pub trait SyncShardTrees: SyncWallet {
                 )
                 .await?;
             }
+            // the loop's wall time minus the awaited fetches is the checkpoint-map CPU cost
+            timing.checkpoints = checkpoints_started
+                .elapsed()
+                .saturating_sub(timing.frontiers);
 
-            for tree in sapling_located_trees {
-                shard_trees
-                    .sapling
-                    .insert_tree(tree.subtree, tree.checkpoints)?;
-            }
-            for tree in orchard_located_trees {
-                shard_trees
-                    .orchard
-                    .insert_tree(tree.subtree, tree.checkpoints)?;
-            }
+            let insert_started = Instant::now();
+            insert_located_trees(&mut shard_trees.sapling, sapling_located_trees)?;
+            insert_located_trees(&mut shard_trees.orchard, orchard_located_trees)?;
+            timing.insert_tree = insert_started.elapsed();
 
-            Ok(())
+            Ok(timing)
         }
     }
 
@@ -366,6 +378,30 @@ pub trait SyncShardTrees: SyncWallet {
 }
 
 // TODO: move into `update_shard_trees` trait method
+/// Merges a batch's located trees into a commitment tree, pruning excess checkpoints per
+/// `insert_tree` call. This is the commit-phase insert shared by `update_shard_trees`, the
+/// benchmarks, and the tests, so all three exercise the same code and any change to the commit
+/// strategy applies everywhere at once.
+pub(crate) fn insert_located_trees<L, const DEPTH: u8, const SHARD_HEIGHT: u8>(
+    shard_tree: &mut shardtree::ShardTree<
+        shardtree::store::memory::MemoryShardStore<L, BlockHeight>,
+        DEPTH,
+        SHARD_HEIGHT,
+    >,
+    located_trees: Vec<LocatedTreeData<L>>,
+) -> Result<(), shardtree::error::ShardTreeError<std::convert::Infallible>>
+where
+    L: Clone + PartialEq + incrementalmerkletree::Hashable,
+{
+    for tree in located_trees {
+        shard_tree.insert_tree(tree.subtree, tree.checkpoints)?;
+    }
+    Ok(())
+}
+
+/// Adds a checkpoint at `checkpoint_height`. Returns the wall-clock time spent on an awaited
+/// `get_frontiers` fetch (zero when the checkpoint resolves without a network round trip), for
+/// commit-phase instrumentation.
 async fn add_checkpoint<D, L, const DEPTH: u8, const SHARD_HEIGHT: u8>(
     fetch_request_sender: mpsc::UnboundedSender<FetchRequest>,
     checkpoint_height: BlockHeight,
@@ -375,11 +411,12 @@ async fn add_checkpoint<D, L, const DEPTH: u8, const SHARD_HEIGHT: u8>(
         DEPTH,
         SHARD_HEIGHT,
     >,
-) -> Result<(), ServerError>
+) -> Result<Duration, ServerError>
 where
     L: Clone + PartialEq + incrementalmerkletree::Hashable,
     D: SyncDomain,
 {
+    let mut frontier_fetch = Duration::ZERO;
     let checkpoint = if let Some((_, position)) = located_trees
         .iter()
         .flat_map(|tree| tree.checkpoints.iter())
@@ -401,8 +438,10 @@ where
         let tree_state = if let Some(checkpoint) = previous_checkpoint {
             checkpoint.tree_state()
         } else {
+            let fetch_started = Instant::now();
             let frontiers =
                 client::get_frontiers(fetch_request_sender.clone(), checkpoint_height).await?;
+            frontier_fetch = fetch_started.elapsed();
             let tree_size = match D::SHIELDED_PROTOCOL {
                 ShieldedProtocol::Sapling => frontiers.final_sapling_tree().tree_size(),
                 ShieldedProtocol::Orchard => frontiers.final_orchard_tree().tree_size(),
@@ -422,5 +461,5 @@ where
         .add_checkpoint(checkpoint_height, checkpoint)
         .expect("infallible");
 
-    Ok(())
+    Ok(frontier_fetch)
 }

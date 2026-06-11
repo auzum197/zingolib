@@ -10,6 +10,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Deprecated
 
 ### Added
+- `wallet::LightWallet::transaction_summary` and `lightclient::LightClient::transaction_summary`:
+  summarize a single transaction by txid, returning `None` if the transaction is not in the wallet.
+  Shares the construction path of `transaction_summaries`, so kind/value/fee always agree with the
+  bulk view.
 
 ### Changed
 
