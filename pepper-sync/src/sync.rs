@@ -447,6 +447,7 @@ where
         scan_results_sender,
         fetch_request_sender.clone(),
         ufvks.clone(),
+        events.clone(),
     );
     scanner.launch(config.performance_level);
 

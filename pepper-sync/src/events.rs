@@ -66,6 +66,24 @@ pub enum SyncEvent {
         /// Blocks scanned in previous sessions.
         already_scanned_blocks: u32,
     },
+    /// A batch was handed to a scan worker. Carries the exact output counts of the batch, so
+    /// consumers can render an accurate in-flight progress bar against their measured
+    /// throughput.
+    ///
+    /// Advisory rather than committed: a started batch may fail, be retried, or be discarded
+    /// by a reorg before it commits. An unpaired `BatchScanStarted` has no durable meaning,
+    /// and there is nothing to recover after a lagged stream. The pairing [`Self::RangeScanned`]
+    /// carries the same range and counts once the batch commits.
+    BatchScanStarted {
+        /// The batch's block range.
+        range: Range<BlockHeight>,
+        /// The priority the range is being scanned with.
+        priority: ScanPriority,
+        /// Sapling note commitments in the batch.
+        sapling_outputs: u32,
+        /// Orchard note commitments in the batch.
+        orchard_outputs: u32,
+    },
     /// A contiguous range was fully scanned and committed. Output counts are tree-size deltas
     /// summed over the batch's scanned blocks.
     RangeScanned {

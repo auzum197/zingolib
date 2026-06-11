@@ -12,9 +12,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 - `events` module: push-based sync event stream so consumers subscribe to committed
   events instead of polling `sync_status` under the wallet lock.
-  - `events::SyncEvent` - `SessionStarted`, `RangeScanned`, `TxDiscovered`, `Reorg`
-    and `TipMoved` variants. `SessionStarted` carries the note-commitment totals and
-    already-scanned baseline needed to compute a progress metric consumer-side.
+  - `events::SyncEvent` - `SessionStarted`, `BatchScanStarted`, `RangeScanned`,
+    `TxDiscovered`, `Reorg` and `TipMoved` variants. `SessionStarted` carries the
+    note-commitment totals and already-scanned baseline needed to compute a progress
+    metric consumer-side. `BatchScanStarted` announces the exact output counts of a
+    batch as a worker takes it, for accurate in-flight progress.
   - `events::SequencedSyncEvent` - a `SyncEvent` with its stream position, the type
     delivered to subscribers.
   - `events::SyncEmitter` - non-blocking, lag-tolerant emitter built on

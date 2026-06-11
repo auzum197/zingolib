@@ -21,8 +21,6 @@ use std::time::{Duration, Instant};
 
 use pepper_sync::config::{PerformanceLevel, SyncConfig};
 use pepper_sync::events::{SequencedSyncEvent, SyncEvent};
-use pepper_sync::sync::ScanPriority;
-use pepper_sync::wallet::traits::SyncWallet as _;
 use tokio::sync::broadcast::error::RecvError;
 
 use zingolib::config::{
@@ -117,31 +115,56 @@ fn fmt_duration(seconds: u64) -> String {
     }
 }
 
-/// Terminal view: event lines print and scroll, a two-line status block redraws in place.
+/// A batch announced by `BatchScanStarted` and not yet committed by `RangeScanned`.
+struct InFlightBatch {
+    range: Range<u32>,
+    priority: String,
+    outputs: u64,
+    started: Instant,
+}
+
+/// Terminal view: event lines print and scroll, a status block redraws in place underneath.
 ///
-/// Batch timing is predicted as `expected outputs per batch / throughput` rather than from
-/// inter-commit intervals: the engine sizes batches by a fixed output threshold and scan time is
-/// dominated by trial decryption, so outputs are the unit of work. Throughput is measured over a
-/// window of commits (cumulative outputs vs wall time), which the two parallel scan workers
-/// cannot skew by committing in clumps.
+/// The block is one overall line plus one line per in-flight batch. Every status line is
+/// truncated to the terminal width: a wrapped status line would occupy two physical rows and
+/// break the cursor movements that redraw the block.
+///
+/// Batch timing is `announced outputs / throughput`: `BatchScanStarted` carries the exact
+/// output count of the batch a worker just took, and scan time is dominated by trial
+/// decryption, so outputs are the unit of work. Throughput is the only estimated term,
+/// measured over a window of commits (cumulative outputs vs wall time). The workers share the
+/// decryption thread pool, so a batch's own rate is the aggregate divided by the number of
+/// batches in flight.
 struct View {
     outputs_total: u64,
     outputs_scanned: u64,
     txs_found: u64,
     batches_done: u64,
-    /// In-flight scan ranges (`Scanning` priority), from non-blocking peeks at the sync state.
-    scanning: Vec<Range<u32>>,
-    /// Start of the current batch, taken as the previous batch's commit time.
-    batch_started: Instant,
+    /// Started batches awaiting their commit, in start order.
+    in_flight: Vec<InFlightBatch>,
     /// Recent commits as (commit time, cumulative outputs), for windowed throughput.
     commit_log: VecDeque<(Instant, u64)>,
-    /// EMA of outputs in a full batch; partial tail batches are excluded.
-    batch_outputs: Option<f64>,
     spinner_frame: usize,
-    status_drawn: bool,
+    /// Physical rows the status block occupied at the last draw.
+    status_rows: usize,
+    term_width: usize,
 }
 
 const COMMIT_WINDOW: usize = 12;
+
+/// Queries the controlling terminal for its width, defaulting to 100 columns.
+fn terminal_width() -> usize {
+    std::process::Command::new("stty")
+        .arg("size")
+        .stdin(std::process::Stdio::inherit())
+        .output()
+        .ok()
+        .and_then(|out| String::from_utf8(out.stdout).ok())
+        .and_then(|size| size.split_whitespace().nth(1)?.parse().ok())
+        .or_else(|| std::env::var("COLUMNS").ok()?.parse().ok())
+        .filter(|width| *width >= 40)
+        .unwrap_or(100)
+}
 
 impl View {
     fn new() -> Self {
@@ -150,12 +173,11 @@ impl View {
             outputs_scanned: 0,
             txs_found: 0,
             batches_done: 0,
-            scanning: Vec::new(),
-            batch_started: Instant::now(),
+            in_flight: Vec::new(),
             commit_log: VecDeque::with_capacity(COMMIT_WINDOW + 1),
-            batch_outputs: None,
             spinner_frame: 0,
-            status_drawn: false,
+            status_rows: 0,
+            term_width: terminal_width(),
         }
     }
 
@@ -166,6 +188,16 @@ impl View {
         let span = last_at.duration_since(*first_at).as_secs_f64();
         (span > 0.5 && last_outputs > first_outputs)
             .then(|| (last_outputs - first_outputs) as f64 / span)
+    }
+
+    /// Truncates a status line so it cannot wrap.
+    fn fit(&self, line: String) -> String {
+        let max = self.term_width.saturating_sub(1);
+        if line.chars().count() <= max {
+            line
+        } else {
+            line.chars().take(max).collect()
+        }
     }
 
     fn overall_line(&self) -> String {
@@ -182,68 +214,75 @@ impl View {
             _ => String::new(),
         };
         format!(
-            "[{}] {:5.1}% | outputs {}/{} | txs found {}{eta}",
-            bar(frac, 30),
+            "[{}] {:5.1}%{eta} | {}/{} outputs | {} txs | {} batches",
+            bar(frac, 24),
             frac * 100.0,
             group(self.outputs_scanned),
             group(self.outputs_total),
             self.txs_found,
+            self.batches_done,
         )
     }
 
-    fn batch_line(&self) -> String {
+    fn batch_line(&self, batch: &InFlightBatch) -> String {
         let spinner = SPINNER[self.spinner_frame % SPINNER.len()];
-        let target = match self.scanning.as_slice() {
-            [] => "waiting for scanner".to_string(),
-            [range] => format!("scanning {}..{}", range.start, range.end),
-            [range, rest @ ..] => {
-                format!(
-                    "scanning {}..{} (+{} more)",
-                    range.start,
-                    range.end,
-                    rest.len()
-                )
-            }
-        };
-        let estimate = match (self.throughput(), self.batch_outputs) {
-            (Some(rate), Some(outputs)) if rate > 0.0 => {
-                let expected = outputs / rate;
-                let elapsed = self.batch_started.elapsed().as_secs_f64();
+        let target = format!(
+            "scanning {}..{} [{}]",
+            batch.range.start, batch.range.end, batch.priority
+        );
+        // the workers share the decryption pool: each in-flight batch progresses at
+        // roughly the aggregate rate split between them
+        let batch_rate = self
+            .throughput()
+            .map(|rate| rate / self.in_flight.len().max(1) as f64);
+        let estimate = match batch_rate {
+            Some(rate) if rate > 0.0 && batch.outputs > 0 => {
+                let expected = batch.outputs as f64 / rate;
+                let elapsed = batch.started.elapsed().as_secs_f64();
                 let frac = (elapsed / expected).min(0.99);
                 let left = (expected - elapsed).max(0.0);
                 format!(
-                    " | batch [{}] ~{:3.0}% (~{} left)",
+                    " [{}] ~{:3.0}% (~{} left)",
                     bar(frac, 10),
                     frac * 100.0,
                     fmt_duration(left.ceil() as u64),
                 )
             }
-            _ => String::new(),
+            _ => format!(" | {} outputs", group(batch.outputs)),
         };
-        format!(
-            "{spinner} {target}{estimate} | {} batches done",
-            self.batches_done
-        )
+        format!("{spinner} {target}{estimate}")
+    }
+
+    fn status_lines(&self) -> Vec<String> {
+        let mut lines = vec![self.fit(self.overall_line())];
+        if self.in_flight.is_empty() {
+            let spinner = SPINNER[self.spinner_frame % SPINNER.len()];
+            lines.push(self.fit(format!("{spinner} waiting for scanner")));
+        } else {
+            lines.extend(
+                self.in_flight
+                    .iter()
+                    .map(|batch| self.fit(self.batch_line(batch))),
+            );
+        }
+        lines
     }
 
     fn draw_status(&mut self) {
-        if self.status_drawn {
-            // cursor sits at the end of the second status line: move to the first
-            print!("\x1b[1A\r");
-        }
-        print!(
-            "\x1b[2K{}\n\x1b[2K{}",
-            self.overall_line(),
-            self.batch_line()
-        );
+        self.clear_status();
+        let lines = self.status_lines();
+        print!("{}", lines.join("\n"));
         let _ = std::io::stdout().flush();
-        self.status_drawn = true;
+        self.status_rows = lines.len();
     }
 
     fn clear_status(&mut self) {
-        if self.status_drawn {
-            print!("\r\x1b[2K\x1b[1A\r\x1b[2K");
-            self.status_drawn = false;
+        if self.status_rows > 0 {
+            print!("\r\x1b[2K");
+            for _ in 1..self.status_rows {
+                print!("\x1b[1A\x1b[2K");
+            }
+            self.status_rows = 0;
         }
     }
 
@@ -254,26 +293,23 @@ impl View {
         self.draw_status();
     }
 
-    /// Records a committed batch, updating the timing estimates.
-    fn batch_committed(&mut self, outputs: u64) {
+    /// Records a committed batch, updating the throughput window and retiring its
+    /// in-flight entry.
+    fn batch_committed(&mut self, range: &Range<u32>, outputs: u64) {
         self.outputs_scanned += outputs;
         self.batches_done += 1;
-        self.batch_started = Instant::now();
         self.commit_log
-            .push_back((self.batch_started, self.outputs_scanned));
+            .push_back((Instant::now(), self.outputs_scanned));
         if self.commit_log.len() > COMMIT_WINDOW {
             self.commit_log.pop_front();
         }
-        if outputs > 0 {
-            let sample = outputs as f64;
-            self.batch_outputs = Some(match self.batch_outputs {
-                // a much smaller commit is a range tail, not a full batch: don't let it
-                // drag the expected batch size down
-                Some(prev) if sample < prev * 0.25 => prev,
-                Some(prev) => prev * 0.7 + sample * 0.3,
-                None => sample,
-            });
-        }
+        self.in_flight.retain(|batch| batch.range != *range);
+    }
+
+    /// Records a batch handed to a scan worker, replacing a retried range's stale entry.
+    fn batch_started(&mut self, batch: InFlightBatch) {
+        self.in_flight.retain(|other| other.range != batch.range);
+        self.in_flight.push(batch);
     }
 
     fn tick(&mut self) {
@@ -282,26 +318,10 @@ impl View {
     }
 
     fn finish(&mut self) {
-        if self.status_drawn {
+        if self.status_rows > 0 {
             println!();
-            self.status_drawn = false;
+            self.status_rows = 0;
         }
-    }
-}
-
-/// Non-blocking peek at the wallet's in-flight scan ranges. Skipped when the sync loop holds
-/// the lock, so this never contends with a batch commit.
-fn refresh_scanning(view: &mut View, lc: &LightClient) {
-    let Ok(wallet) = lc.wallet().try_read() else {
-        return;
-    };
-    if let Ok(sync_state) = wallet.get_sync_state() {
-        view.scanning = sync_state
-            .scan_ranges()
-            .iter()
-            .filter(|range| range.priority() == ScanPriority::Scanning)
-            .map(|range| u32::from(range.block_range().start)..u32::from(range.block_range().end))
-            .collect();
     }
 }
 
@@ -320,10 +340,9 @@ async fn handle_event(event: SequencedSyncEvent, view: &mut View, lc: &LightClie
             view.outputs_total = u64::from(total_sapling_outputs + total_orchard_outputs);
             view.outputs_scanned =
                 u64::from(already_scanned_sapling_outputs + already_scanned_orchard_outputs);
-            view.batch_started = Instant::now();
             view.commit_log.clear();
             view.commit_log
-                .push_back((view.batch_started, view.outputs_scanned));
+                .push_back((Instant::now(), view.outputs_scanned));
             view.line(&format!(
                 "session started: birthday {birthday}, sync start {sync_start_height}, tip {tip}"
             ));
@@ -335,6 +354,20 @@ async fn handle_event(event: SequencedSyncEvent, view: &mut View, lc: &LightClie
                 group(view.outputs_scanned),
             ));
         }
+        SyncEvent::BatchScanStarted {
+            range,
+            priority,
+            sapling_outputs,
+            orchard_outputs,
+        } => {
+            view.batch_started(InFlightBatch {
+                range: u32::from(range.start)..u32::from(range.end),
+                priority: format!("{priority:?}"),
+                outputs: u64::from(sapling_outputs + orchard_outputs),
+                started: Instant::now(),
+            });
+            view.draw_status();
+        }
         SyncEvent::RangeScanned {
             range,
             priority,
@@ -342,15 +375,15 @@ async fn handle_event(event: SequencedSyncEvent, view: &mut View, lc: &LightClie
             orchard_outputs,
         } => {
             let outputs = u64::from(sapling_outputs + orchard_outputs);
-            view.batch_committed(outputs);
-            let blocks = u32::from(range.end) - u32::from(range.start);
+            let range = u32::from(range.start)..u32::from(range.end);
+            view.batch_committed(&range, outputs);
             view.line(&format!(
-                "scanned {}..{} [{priority:?}] ({blocks} blocks, {} outputs)",
+                "scanned {}..{} [{priority:?}] ({} blocks, {} outputs)",
                 range.start,
                 range.end,
+                range.end - range.start,
                 group(outputs),
             ));
-            refresh_scanning(view, lc);
         }
         SyncEvent::TxDiscovered { txid, status } => {
             view.txs_found += 1;
@@ -368,6 +401,8 @@ async fn handle_event(event: SequencedSyncEvent, view: &mut View, lc: &LightClie
             view.line(&text);
         }
         SyncEvent::Reorg { reverted_to } => {
+            // a reverted verify batch never commits: drop any unpaired starts
+            view.in_flight.clear();
             view.line(&format!("reorg! wallet data reverted to {reverted_to}"));
         }
         SyncEvent::TipMoved { to } => {
@@ -446,10 +481,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 Err(RecvError::Closed) => break Err("event stream closed".into()),
             },
 
-            _ = render_interval.tick() => {
-                refresh_scanning(&mut view, &lc);
-                view.tick();
-            }
+            _ = render_interval.tick() => view.tick(),
 
             _ = poll_interval.tick() => match lc.poll_sync() {
                 PollReport::Ready(result) => {
