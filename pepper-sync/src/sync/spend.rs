@@ -1,6 +1,7 @@
 //! Module for reading and updating wallet data related to spending
 
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
+use std::time::{Duration, Instant};
 
 use tokio::sync::mpsc;
 
@@ -29,6 +30,15 @@ use crate::{
 
 use super::state;
 
+/// Wall-clock breakdown of [`update_shielded_spends`], for commit instrumentation.
+#[derive(Clone, Copy, Debug, Default)]
+pub(crate) struct SpendTiming {
+    /// Awaited network fetches for spending transactions and their blocks.
+    pub fetch: Duration,
+    /// The CPU portion: nullifier derivation, spend matching, and note updates.
+    pub cpu: Duration,
+}
+
 /// Helper function for handling spend detection and the spend status of notes.
 ///
 /// Detects if any derived nullifiers of notes in the wallet's transactions match a nullifier in the wallet's nullifier map.
@@ -46,11 +56,12 @@ pub(super) async fn update_shielded_spends<P, W>(
     ufvks: &HashMap<AccountId, UnifiedFullViewingKey>,
     scanned_blocks: &BTreeMap<BlockHeight, WalletBlock>,
     additional_nullifier_map: Option<&mut NullifierMap>,
-) -> Result<(), SyncError<W::Error>>
+) -> Result<SpendTiming, SyncError<W::Error>>
 where
     P: consensus::Parameters,
     W: SyncBlocks + SyncTransactions + SyncNullifiers + SyncShardTrees,
 {
+    let started = Instant::now();
     let (sapling_derived_nullifiers, orchard_derived_nullifiers) = collect_derived_nullifiers(
         wallet
             .get_wallet_transactions()
@@ -92,6 +103,7 @@ where
     );
 
     // in the edge case where a spending transaction received no change, scan the transactions that evaded trial decryption
+    let fetch_started = Instant::now();
     scan_spending_transactions(
         fetch_request_sender,
         consensus_parameters,
@@ -104,6 +116,8 @@ where
         scanned_blocks,
     )
     .await?;
+    // this step is dominated by the awaited transaction and block fetches
+    let fetch = fetch_started.elapsed();
 
     update_spent_notes(
         wallet,
@@ -113,7 +127,10 @@ where
     )
     .map_err(SyncError::WalletError)?;
 
-    Ok(())
+    Ok(SpendTiming {
+        fetch,
+        cpu: started.elapsed().saturating_sub(fetch),
+    })
 }
 
 /// For each scan target, fetch the spending transaction and then scan and append to the wallet transactions.

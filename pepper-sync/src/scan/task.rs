@@ -24,6 +24,7 @@ use crate::{
     client::{self, FetchRequest},
     config::PerformanceLevel,
     error::{ScanError, ServerError, SyncError},
+    events::{SyncEmitter, SyncEvent},
     keys::transparent::TransparentAddressId,
     scan::get_compact_block_height,
     sync::{self, ScanPriority, ScanRange},
@@ -68,6 +69,7 @@ pub(crate) struct Scanner<P> {
     fetch_request_sender: mpsc::UnboundedSender<FetchRequest>,
     consensus_parameters: P,
     ufvks: HashMap<AccountId, UnifiedFullViewingKey>,
+    events: SyncEmitter,
 }
 
 impl<P> Scanner<P>
@@ -79,6 +81,7 @@ where
         scan_results_sender: mpsc::UnboundedSender<(ScanRange, Result<ScanResults, ScanError>)>,
         fetch_request_sender: mpsc::UnboundedSender<FetchRequest>,
         ufvks: HashMap<AccountId, UnifiedFullViewingKey>,
+        events: SyncEmitter,
     ) -> Self {
         let workers: Vec<ScanWorker<P>> = Vec::with_capacity(MAX_WORKER_POOLSIZE);
 
@@ -91,6 +94,7 @@ where
             fetch_request_sender,
             consensus_parameters,
             ufvks,
+            events,
         }
     }
 
@@ -153,6 +157,7 @@ where
             self.scan_results_sender.clone(),
             self.fetch_request_sender.clone(),
             self.ufvks.clone(),
+            self.events.clone(),
         );
         worker.run(max_batch_outputs);
         self.workers.push(worker);
@@ -270,6 +275,17 @@ where
                 .batch
                 .clone()
                 .expect("batch should exist in this closure");
+            // nullifier refetch batches announce nothing, mirroring the commit side where
+            // refetch ranges emit no `RangeScanned`
+            if batch.scan_range.priority() != ScanPriority::ScannedWithoutMapping {
+                let (sapling_outputs, orchard_outputs) = batch.output_counts();
+                self.events.emit(SyncEvent::BatchScanStarted {
+                    range: batch.scan_range.block_range().clone(),
+                    priority: batch.scan_range.priority(),
+                    sapling_outputs,
+                    orchard_outputs,
+                });
+            }
             worker.add_scan_task(batch);
             self.batcher
                 .as_mut()
@@ -628,6 +644,7 @@ pub(crate) struct ScanWorker<P> {
     scan_results_sender: mpsc::UnboundedSender<(ScanRange, Result<ScanResults, ScanError>)>,
     fetch_request_sender: mpsc::UnboundedSender<FetchRequest>,
     ufvks: HashMap<AccountId, UnifiedFullViewingKey>,
+    events: SyncEmitter,
 }
 
 impl<P> ScanWorker<P>
@@ -640,6 +657,7 @@ where
         scan_results_sender: mpsc::UnboundedSender<(ScanRange, Result<ScanResults, ScanError>)>,
         fetch_request_sender: mpsc::UnboundedSender<FetchRequest>,
         ufvks: HashMap<AccountId, UnifiedFullViewingKey>,
+        events: SyncEmitter,
     ) -> Self {
         Self {
             id,
@@ -650,6 +668,7 @@ where
             scan_results_sender,
             fetch_request_sender,
             ufvks,
+            events,
         }
     }
 
@@ -664,6 +683,7 @@ where
         let fetch_request_sender = self.fetch_request_sender.clone();
         let consensus_parameters = self.consensus_parameters.clone();
         let ufvks = self.ufvks.clone();
+        let events = self.events.clone();
 
         let handle = tokio::spawn(async move {
             while let Some(scan_task) = scan_task_receiver.recv().await {
@@ -688,6 +708,13 @@ where
                     }
                 };
 
+                // scanning is done and the result now queues for the serialized commit stage.
+                // nullifier refetch batches announce nothing, mirroring the commit side.
+                if scan_range.priority() != ScanPriority::ScannedWithoutMapping {
+                    events.emit(SyncEvent::BatchScanCompleted {
+                        range: scan_range.block_range().clone(),
+                    });
+                }
                 let _ignore_error = scan_results_sender.send((scan_range, scan_results));
 
                 is_scanning.store(false, atomic::Ordering::Release);
@@ -750,6 +777,25 @@ pub(crate) struct ScanTask {
 }
 
 impl ScanTask {
+    /// Returns the (sapling, orchard) note commitment counts across the task's compact blocks.
+    ///
+    /// Matches the quantities a consumer later receives on the pairing
+    /// [`crate::events::SyncEvent::RangeScanned`], which sums tree-size deltas over the same
+    /// blocks.
+    fn output_counts(&self) -> (u32, u32) {
+        self.compact_blocks.iter().fold((0u32, 0u32), |acc, block| {
+            block
+                .vtx
+                .iter()
+                .fold(acc, |(sapling, orchard), transaction| {
+                    (
+                        sapling + transaction.outputs.len() as u32,
+                        orchard + transaction.actions.len() as u32,
+                    )
+                })
+        })
+    }
+
     pub(crate) fn from_parts(
         scan_range: ScanRange,
         start_seam_block: Option<WalletBlock>,
@@ -848,5 +894,51 @@ impl ScanTask {
                 transparent_addresses: self.transparent_addresses,
             },
         ))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::collections::{BTreeSet, HashMap};
+
+    use zcash_protocol::consensus::BlockHeight;
+    use zingo_netutils::lightwallet_protocol::{
+        CompactBlock, CompactOrchardAction, CompactSaplingOutput, CompactTx,
+    };
+
+    use crate::sync::{ScanPriority, ScanRange};
+
+    use super::ScanTask;
+
+    fn compact_block(sapling_outputs: usize, orchard_actions: usize) -> CompactBlock {
+        CompactBlock {
+            vtx: vec![CompactTx {
+                outputs: vec![CompactSaplingOutput::default(); sapling_outputs],
+                actions: vec![CompactOrchardAction::default(); orchard_actions],
+                ..Default::default()
+            }],
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn output_counts_sum_over_compact_blocks() {
+        let mut scan_task = ScanTask::from_parts(
+            ScanRange::from_parts(
+                BlockHeight::from_u32(1)..BlockHeight::from_u32(4),
+                ScanPriority::Historic,
+            ),
+            None,
+            None,
+            BTreeSet::new(),
+            HashMap::new(),
+        );
+        scan_task.compact_blocks = vec![
+            compact_block(2, 1),
+            compact_block(0, 0),
+            compact_block(3, 5),
+        ];
+
+        assert_eq!(scan_task.output_counts(), (5, 6));
     }
 }

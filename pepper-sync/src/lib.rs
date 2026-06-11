@@ -115,7 +115,7 @@ pub(crate) mod utils;
 pub mod wallet;
 pub(crate) mod witness;
 
-pub use events::{SequencedSyncEvent, SyncEmitter, SyncEvent};
+pub use events::{CommitTiming, ScanTiming, SequencedSyncEvent, SyncEmitter, SyncEvent};
 use shardtree::store::ShardStore;
 pub use sync::add_scan_targets;
 pub use sync::reset_spends;
@@ -126,6 +126,11 @@ pub use sync::sync_status;
 
 #[cfg(test)]
 mod mocks;
+
+/// Synthetic workloads for measuring the scan and commit paths offline. Available to in-crate
+/// tests and, behind the `test-features` feature, to the `benches/` Criterion targets.
+#[cfg(any(test, feature = "test-features"))]
+pub mod bench_support;
 
 use zcash_protocol::ShieldedProtocol;
 use zcash_protocol::consensus::BlockHeight;

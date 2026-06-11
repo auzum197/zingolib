@@ -183,7 +183,7 @@ where
     })
 }
 
-fn trial_decrypt<P>(
+pub(crate) fn trial_decrypt<P>(
     consensus_parameters: &P,
     scanning_keys: &ScanningKeys,
     compact_blocks: &[CompactBlock],

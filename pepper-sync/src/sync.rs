@@ -4,7 +4,7 @@ use std::collections::{BTreeMap, HashMap};
 use std::ops::Range;
 use std::sync::Arc;
 use std::sync::atomic::{self, AtomicBool, AtomicU8, AtomicU64};
-use std::time::{Duration, SystemTime};
+use std::time::{Duration, Instant, SystemTime};
 
 use tokio::sync::{RwLock, mpsc};
 
@@ -27,14 +27,15 @@ use crate::error::{
     ContinuityError, MempoolError, ScanError, ServerError, SyncError, SyncModeError,
     SyncStatusError,
 };
-use crate::events::{SyncEmitter, SyncEvent, emit_tip_if_advanced};
+use crate::events::{CommitTiming, ScanTiming, SyncEmitter, SyncEvent, emit_tip_if_advanced};
 use crate::keys::transparent::TransparentAddressId;
 use crate::scan::ScanResults;
 use crate::scan::task::{Scanner, ScannerState};
 use crate::scan::transactions::scan_transaction;
 use crate::sync::state::truncate_scan_ranges;
 use crate::wallet::traits::{
-    SyncBlocks, SyncNullifiers, SyncOutPoints, SyncShardTrees, SyncTransactions, SyncWallet,
+    ShardTreeTiming, SyncBlocks, SyncNullifiers, SyncOutPoints, SyncShardTrees, SyncTransactions,
+    SyncWallet,
 };
 use crate::wallet::{
     InitialSyncState, KeyIdInterface, NoteInterface, NullifierMap, OutputId, OutputInterface,
@@ -447,6 +448,7 @@ where
         scan_results_sender,
         fetch_request_sender.clone(),
         ufvks.clone(),
+        events.clone(),
     );
     scanner.launch(config.performance_level);
 
@@ -458,6 +460,14 @@ where
     loop {
         tokio::select! {
             Some((scan_range, scan_results)) = scan_results_receiver.recv() => {
+                // dequeued for commit: the wait behind the serialized commit stage is over.
+                // announce before taking the lock, so the send never overlaps it (refetch
+                // ranges announce nothing, mirroring `RangeScanned`)
+                if scan_range.priority() != ScanPriority::ScannedWithoutMapping {
+                    events.emit(SyncEvent::BatchCommitStarted {
+                        range: scan_range.block_range().clone(),
+                    });
+                }
                 let mut wallet_guard = wallet.write().await;
                 let scan_events = process_scan_results(
                     consensus_parameters,
@@ -940,7 +950,16 @@ where
                 wallet_transactions,
                 sapling_located_trees,
                 orchard_located_trees,
+                fetch_duration,
+                decryption_duration,
+                tree_duration,
             } = results;
+
+            // the commit phase is the wallet work below. time it and patch it into the
+            // `RangeScanned` event, which is built mid-commit before the writes finish
+            let commit_started = Instant::now();
+            let mut commit_timing = CommitTiming::default();
+            let mut range_scanned_index = None;
 
             if scan_range.priority() == ScanPriority::ScannedWithoutMapping {
                 // no events on this path: the range's blocks and outputs were already announced
@@ -1032,6 +1051,7 @@ where
                     return Ok(events);
                 }
 
+                // refetch path: this range emits no `RangeScanned`, so its timing is unused
                 spend::update_shielded_spends(
                     consensus_parameters,
                     wallet,
@@ -1065,11 +1085,19 @@ where
                         )
                     });
                 events.reserve(wallet_transactions.len() + 1);
+                range_scanned_index = Some(events.len());
                 events.push(SyncEvent::RangeScanned {
                     range: scan_range.block_range().clone(),
                     priority: scan_range.priority(),
                     sapling_outputs,
                     orchard_outputs,
+                    // commit is filled in once the wallet writes below complete
+                    timing: ScanTiming {
+                        fetch: fetch_duration,
+                        decryption: decryption_duration,
+                        tree: tree_duration,
+                        commit: CommitTiming::default(),
+                    },
                 });
                 for (txid, transaction) in &wallet_transactions {
                     events.push(SyncEvent::TxDiscovered {
@@ -1129,7 +1157,7 @@ where
                     }
                 }
 
-                update_wallet_data(
+                let shard_tree_timing = update_wallet_data(
                     consensus_parameters,
                     wallet,
                     fetch_request_sender.clone(),
@@ -1150,6 +1178,9 @@ where
                     orchard_located_trees,
                 )
                 .await?;
+                commit_timing.checkpoints += shard_tree_timing.checkpoints;
+                commit_timing.frontiers += shard_tree_timing.frontiers;
+                commit_timing.insert_tree += shard_tree_timing.insert_tree;
                 spend::update_transparent_spends(
                     wallet,
                     if map_outpoints {
@@ -1159,7 +1190,7 @@ where
                     },
                 )
                 .map_err(SyncError::WalletError)?;
-                spend::update_shielded_spends(
+                let spend_timing = spend::update_shielded_spends(
                     consensus_parameters,
                     wallet,
                     fetch_request_sender,
@@ -1172,6 +1203,8 @@ where
                     },
                 )
                 .await?;
+                commit_timing.spend_fetch += spend_timing.fetch;
+                commit_timing.spend_cpu += spend_timing.cpu;
                 add_scanned_blocks(wallet, scanned_blocks, &scan_range)
                     .map_err(SyncError::WalletError)?;
 
@@ -1190,6 +1223,7 @@ where
                 );
             }
 
+            let cleanup_started = Instant::now();
             state::merge_scan_ranges(
                 wallet
                     .get_sync_state_mut()
@@ -1197,7 +1231,19 @@ where
                 ScanPriority::Scanned,
             );
             remove_irrelevant_data(wallet).map_err(SyncError::WalletError)?;
+            commit_timing.cleanup += cleanup_started.elapsed();
             tracing::debug!("Scan results processed.");
+
+            // the wallet writes are done: record the commit breakdown, attributing the
+            // remainder (block and transaction appends, state) to `other`
+            if let Some(index) = range_scanned_index
+                && let Some(SyncEvent::RangeScanned { timing, .. }) = events.get_mut(index)
+            {
+                commit_timing.other = commit_started
+                    .elapsed()
+                    .saturating_sub(commit_timing.total());
+                timing.commit = commit_timing;
+            }
         }
         Err(ScanError::ContinuityError(ContinuityError::HashDiscontinuity { height, .. })) => {
             tracing::warn!("Hash discontinuity detected before block {height}.");
@@ -1435,7 +1481,7 @@ async fn update_wallet_data<W>(
     mut transactions: HashMap<TxId, WalletTransaction>,
     sapling_located_trees: Vec<LocatedTreeData<sapling_crypto::Node>>,
     orchard_located_trees: Vec<LocatedTreeData<MerkleHashOrchard>>,
-) -> Result<(), SyncError<W::Error>>
+) -> Result<ShardTreeTiming, SyncError<W::Error>>
 where
     W: SyncBlocks + SyncTransactions + SyncNullifiers + SyncOutPoints + SyncShardTrees + Send,
 {
@@ -1506,7 +1552,7 @@ where
             .append_outpoints(outpoints)
             .map_err(SyncError::WalletError)?;
     }
-    wallet
+    let shard_tree_timing = wallet
         .update_shard_trees(
             fetch_request_sender,
             scan_range,
@@ -1516,7 +1562,7 @@ where
         )
         .await?;
 
-    Ok(())
+    Ok(shard_tree_timing)
 }
 
 fn discover_unified_addresses<W>(
@@ -1900,6 +1946,7 @@ fn max_nullifier_map_size(performance_level: PerformanceLevel) -> Option<usize> 
 mod test {
     mod process_scan_results_events {
         use std::collections::{BTreeMap, HashMap};
+        use std::time::Duration;
 
         use tokio::sync::mpsc;
         use zcash_primitives::block::BlockHash;
@@ -2015,6 +2062,9 @@ mod test {
                 )]),
                 sapling_located_trees: Vec::new(),
                 orchard_located_trees: Vec::new(),
+                fetch_duration: Duration::ZERO,
+                decryption_duration: Duration::ZERO,
+                tree_duration: Duration::ZERO,
             };
 
             let (fetch_request_sender, _fetch_request_receiver) = mpsc::unbounded_channel();
@@ -2040,12 +2090,20 @@ mod test {
                     priority,
                     sapling_outputs,
                     orchard_outputs,
+                    timing,
                 } => {
                     assert_eq!(range, scan_range.block_range());
                     assert_eq!(*priority, ScanPriority::Historic);
                     // 9 blocks of 2 sapling and 1 orchard outputs each
                     assert_eq!(*sapling_outputs, 18);
                     assert_eq!(*orchard_outputs, 9);
+                    // the mock bypasses the scan phases, but the commit phase is measured here.
+                    // with a higher range already scanned the checkpoint window is empty, so no
+                    // `get_frontiers` fetch occurs and the frontier time is deterministically zero
+                    assert_eq!(timing.fetch, Duration::ZERO);
+                    assert_eq!(timing.decryption, Duration::ZERO);
+                    assert_eq!(timing.tree, Duration::ZERO);
+                    assert_eq!(timing.commit.frontiers, Duration::ZERO);
                 }
                 event => panic!("expected RangeScanned, found {event:?}"),
             }

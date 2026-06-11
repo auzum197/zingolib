@@ -82,3 +82,9 @@ simple-mermaid.workspace = true
 
 [dev-dependencies]
 zcash_protocol = { workspace = true, features = [ "local-consensus"] }
+criterion.workspace = true
+
+[[bench]]
+name = "commit"
+harness = false
+required-features = ["test-features"]
