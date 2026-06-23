@@ -678,6 +678,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     println!("connecting to {}", args.server);
     let mut lc = LightClient::new(config, true, None).await?;
+    lc.set_indexer_uri(args.server.clone()).await?;
 
     // subscribe before launching so SessionStarted is not missed
     let mut events = lc.subscribe_sync_events();

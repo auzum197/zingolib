@@ -128,6 +128,7 @@ impl LightClient {
         &mut self,
         calculated_txids: NonEmpty<TxId>,
     ) -> Result<NonEmpty<TxId>, LightClientError> {
+        let indexer = self.indexer.clone().ok_or(LightClientError::NoIndexer)?;
         let mut wallet = self.wallet().write().await;
         for txid in calculated_txids.iter() {
             let calculated_transaction = wallet
@@ -161,8 +162,7 @@ impl LightClient {
 
             let mut retry_count = 0;
             let txid_from_server = loop {
-                let transmission_result = self
-                    .indexer
+                let transmission_result = indexer
                     .clone()
                     .send_transaction(
                         RawTransaction {

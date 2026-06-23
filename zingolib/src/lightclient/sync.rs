@@ -32,7 +32,7 @@ impl LightClient {
             ));
         }
 
-        let client = self.indexer.clone();
+        let client = self.indexer.clone().ok_or(LightClientError::NoIndexer)?;
         let chain_type = self.chain_type();
         let sync_config = self
             .wallet()
@@ -252,6 +252,16 @@ pub mod test {
         }
 
         let mut lc = wallet_case.load_example_wallet().await;
+
+        // Loading is network-free; explicitly connect to the default indexer for the wallet's
+        // chain before syncing.
+        let indexer_uri = match lc.chain_type() {
+            crate::config::ChainType::Testnet => crate::config::DEFAULT_INDEXER_URI_TESTNET,
+            _ => crate::config::DEFAULT_INDEXER_URI,
+        }
+        .parse()
+        .expect("hard-coded default indexer URI is valid");
+        lc.set_indexer_uri(indexer_uri).await.unwrap();
 
         let sync_result = lc.sync_and_await().await.unwrap();
         tracing::info!("{sync_result}");

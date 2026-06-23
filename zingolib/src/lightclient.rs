@@ -95,7 +95,14 @@ impl WalletMeta {
 ///
 /// `sync_mode` is an atomic representation of [`pepper_sync::wallet::SyncMode`].
 pub struct LightClient {
-    indexer: zingo_netutils::GrpcIndexer,
+    /// The gRPC indexer used for all network operations.
+    ///
+    /// `None` until a server is explicitly configured via [`LightClient::set_indexer_uri`].
+    /// A freshly opened wallet holds no indexer: opening is network-free and an offline
+    /// wallet never constructs a client it doesn't need. Network operations
+    /// ([`LightClient::sync`], [`LightClient::do_info`], sending) return an error while this
+    /// is `None`.
+    indexer: Option<zingo_netutils::GrpcIndexer>,
     wallet: WalletMeta,
     sync_mode: Arc<AtomicU8>,
     sync_handle: Option<JoinHandle<Result<SyncResult, SyncError<WalletError>>>>,
@@ -120,10 +127,6 @@ impl LightClient {
         overwrite: bool,
         encryption: Option<crate::wallet::encryption::EncryptionConfig>,
     ) -> Result<Self, LightClientError> {
-        // GrpcIndexer::new pre-builds a TLS endpoint, which requires a rustls CryptoProvider.
-        // install_default is idempotent: Ok(()) on first call, Err on subsequent (ignored).
-        let _ = rustls::crypto::ring::default_provider().install_default();
-
         let wallet = match config.wallet_config() {
             WalletConfig::Read => {
                 let buffer = BufReader::new(
@@ -154,18 +157,15 @@ impl LightClient {
             }
         };
 
-        // Install the ring crypto provider for rustls. Required because both
-        // `ring` and `aws-lc-rs` features are unified in via transitive deps,
-        // preventing rustls from auto-selecting a provider.
-        let _ = rustls::crypto::ring::default_provider().install_default();
-
-        let indexer = zingo_netutils::GrpcIndexer::new(config.indexer_uri()).await?;
-
+        // Opening a wallet is network-free: no indexer is constructed here. A client is only
+        // built when a server is explicitly configured via `set_indexer_uri`. This keeps
+        // offline wallet opens from holding a connection they never wanted, and relocates the
+        // first (lazy) connection to the explicit opt-in.
         let (sync_events, _root_receiver) =
             SyncEmitter::new(wallet.wallet_settings.sync_config.event_channel_capacity);
 
         Ok(LightClient {
-            indexer,
+            indexer: None,
             wallet: WalletMeta::new(config.get_wallet_path().to_path_buf(), wallet),
             sync_mode: Arc::new(AtomicU8::new(SyncMode::NotRunning as u8)),
             sync_handle: None,
@@ -215,31 +215,46 @@ impl LightClient {
         &self.wallet.wallet_data
     }
 
-    /// Returns URI of the indexer the lightclient is connected to.
-    pub fn indexer_uri(&self) -> &http::Uri {
-        self.indexer.uri()
+    /// Returns the URI of the indexer the lightclient is connected to, or `None` if no
+    /// indexer has been configured yet (see [`LightClient::set_indexer_uri`]).
+    pub fn indexer_uri(&self) -> Option<&http::Uri> {
+        self.indexer.as_ref().map(|indexer| indexer.uri())
     }
 
     /// Set indexer URI.
     ///
-    /// Replaces the current gRPC client(s) with new ones that point at the provided URI.
+    /// Constructs the gRPC client(s) pointing at the provided URI, replacing any existing
+    /// indexer. This is the explicit opt-in to network operations: a wallet holds no indexer
+    /// until this is called. The connection is lazy, so this neither dials the server nor
+    /// validates its reachability; probe with [`LightClient::do_info`] to confirm a server is
+    /// reachable.
     pub async fn set_indexer_uri(
         &mut self,
         server: http::Uri,
     ) -> Result<(), zingo_netutils::GetClientError> {
-        self.indexer = zingo_netutils::GrpcIndexer::new(server).await?;
+        // GrpcIndexer::new pre-builds a TLS endpoint, which requires a rustls CryptoProvider.
+        // install_default is idempotent: Ok(()) on first call, Err on subsequent (ignored).
+        // Required because both `ring` and `aws-lc-rs` features are unified in via transitive
+        // deps, preventing rustls from auto-selecting a provider.
+        let _ = rustls::crypto::ring::default_provider().install_default();
+
+        self.indexer = Some(zingo_netutils::GrpcIndexer::new(server).await?);
         Ok(())
     }
 
     /// Returns server information.
     // TODO: return concrete struct with from json impl
     pub async fn do_info(&mut self) -> String {
-        match self.indexer.get_lightd_info(DEFAULT_REQUEST_TIMEOUT).await {
+        let Some(indexer) = self.indexer.as_mut() else {
+            return "No indexer configured. Call `set_indexer_uri` to connect to a server."
+                .to_string();
+        };
+        match indexer.get_lightd_info(DEFAULT_REQUEST_TIMEOUT).await {
             Ok(i) => {
                 let o = json::object! {
                     "version" => i.version,
                     "git_commit" => i.git_commit,
-                    "server_uri" => self.indexer.uri().to_string(),
+                    "server_uri" => indexer.uri().to_string(),
                     "vendor" => i.vendor,
                     "taddr_support" => i.taddr_support,
                     "chain_name" => i.chain_name,
@@ -402,10 +417,10 @@ mod tests {
     use zingo_common_components::protocol::ActivationHeights;
     use zingo_test_vectors::seeds::CHIMNEY_BETTER_SEED;
 
-    #[tokio::test]
-    async fn new_wallet_from_phrase() {
-        let temp_dir = TempDir::new().unwrap();
-        let config = ClientConfig::builder()
+    /// Builds a regtest spending-wallet config rooted in `temp_dir`. The config carries the
+    /// default indexer URI, but [`LightClient::new`] does not connect it.
+    fn regtest_config(temp_dir: &TempDir) -> ClientConfig {
+        ClientConfig::builder()
             .set_chain_type(ChainType::Regtest(ActivationHeights::default()))
             .set_wallet_dir(temp_dir.path().to_path_buf())
             .set_wallet_config(WalletConfig::MnemonicPhrase {
@@ -414,7 +429,67 @@ mod tests {
                 birthday: 1,
                 wallet_settings: default_test_wallet_settings(),
             })
-            .build();
+            .build()
+    }
+
+    /// A freshly opened wallet holds no indexer: opening is network-free and an offline wallet
+    /// never constructs a client it didn't ask for.
+    #[tokio::test]
+    async fn new_wallet_has_no_indexer() {
+        let temp_dir = TempDir::new().unwrap();
+        let lc = LightClient::new(regtest_config(&temp_dir), false, None)
+            .await
+            .unwrap();
+
+        assert!(
+            lc.indexer_uri().is_none(),
+            "a freshly opened wallet should not hold an indexer"
+        );
+    }
+
+    /// Network operations error while no indexer is configured, rather than silently doing
+    /// nothing.
+    #[tokio::test]
+    async fn sync_without_indexer_errors() {
+        let temp_dir = TempDir::new().unwrap();
+        let mut lc = LightClient::new(regtest_config(&temp_dir), false, None)
+            .await
+            .unwrap();
+
+        assert!(matches!(lc.sync().await, Err(LightClientError::NoIndexer)));
+    }
+
+    /// `do_info` reports the absent indexer instead of panicking on a missing client.
+    #[tokio::test]
+    async fn do_info_without_indexer_reports_no_indexer() {
+        let temp_dir = TempDir::new().unwrap();
+        let mut lc = LightClient::new(regtest_config(&temp_dir), false, None)
+            .await
+            .unwrap();
+
+        assert!(lc.do_info().await.contains("No indexer configured"));
+    }
+
+    /// `set_indexer_uri` is the explicit opt-in: it lazily constructs the indexer without
+    /// dialing, so it succeeds against an unreachable server and the URI becomes observable.
+    #[tokio::test]
+    async fn set_indexer_uri_creates_indexer_without_dialing() {
+        let temp_dir = TempDir::new().unwrap();
+        let mut lc = LightClient::new(regtest_config(&temp_dir), false, None)
+            .await
+            .unwrap();
+
+        // An unreachable address: lazy connect must not attempt to dial here.
+        let uri: http::Uri = "http://127.0.0.1:1".parse().unwrap();
+        lc.set_indexer_uri(uri.clone()).await.unwrap();
+
+        assert_eq!(lc.indexer_uri(), Some(&uri));
+    }
+
+    #[tokio::test]
+    async fn new_wallet_from_phrase() {
+        let temp_dir = TempDir::new().unwrap();
+        let config = regtest_config(&temp_dir);
 
         let mut lc = LightClient::new(config.clone(), false, None).await.unwrap();
 

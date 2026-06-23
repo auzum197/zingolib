@@ -33,7 +33,9 @@ pub trait ConductChain {
     async fn create_client(&mut self) -> LightClient {
         let config = self.zingo_config().await;
         assert!(!matches!(config.wallet_config(), WalletConfig::Read));
+        let indexer_uri = config.indexer_uri();
         let mut lightclient = LightClient::new(config, false, None).await.unwrap();
+        lightclient.set_indexer_uri(indexer_uri).await.unwrap();
         lightclient
             .generate_unified_address(ReceiverSelection::sapling_only(), zip32::AccountId::ZERO)
             .await
@@ -45,7 +47,10 @@ pub trait ConductChain {
     /// loads a client from bytes
     async fn load_client(&mut self, config: ClientConfig) -> LightClient {
         assert!(matches!(config.wallet_config(), WalletConfig::Read));
-        LightClient::new(config, false, None).await.unwrap()
+        let indexer_uri = config.indexer_uri();
+        let mut lightclient = LightClient::new(config, false, None).await.unwrap();
+        lightclient.set_indexer_uri(indexer_uri).await.unwrap();
+        lightclient
     }
 
     /// moves the chain tip forward, creating 1 new block

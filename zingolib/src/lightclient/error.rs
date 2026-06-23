@@ -32,6 +32,9 @@ pub enum LightClientError {
     /// gPRC client error.
     #[error("gRPC client error. {0}")]
     ClientError(#[from] GetClientError),
+    /// No indexer configured.
+    #[error("No indexer configured. Call `set_indexer_uri` to connect to a server.")]
+    NoIndexer,
     /// File error.
     #[error("File error. {0}")]
     FileError(std::io::Error),

@@ -48,6 +48,7 @@ async fn sync_mainnet_test() {
         })
         .build();
     let mut lightclient = LightClient::new(config, true, None).await.unwrap();
+    lightclient.set_indexer_uri(uri.clone()).await.unwrap();
 
     lightclient.sync().await.unwrap();
     let mut interval = tokio::time::interval(Duration::from_secs(5));
@@ -170,10 +171,9 @@ async fn add_subtree_roots() {
         })
         .build();
     let mut lightclient = LightClient::new(config, true, None).await.unwrap();
+    lightclient.set_indexer_uri(uri.clone()).await.unwrap();
 
-    let mut grpc_client = GrpcIndexer::new(lightclient.indexer_uri().clone())
-        .await
-        .unwrap();
+    let mut grpc_client = GrpcIndexer::new(uri.clone()).await.unwrap();
 
     let mut sapling_subtree_roots_server = Vec::new();
     let mut sapling_subtree_roots_stream = grpc_client
