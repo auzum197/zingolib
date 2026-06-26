@@ -63,7 +63,7 @@ pub mod serialization;
 /// Sync only ever consumes `Memo::Arbitrary` (0xFF) memos via `parse_encoded_memos` —
 /// a class disjoint from the failing text range — so degrading a failed text-memo
 /// parse discards nothing the scanner reads.
-pub(crate) fn decode_memo_lenient(memo_bytes: &[u8]) -> Result<Memo, zcash_protocol::memo::Error> {
+pub(crate) fn decode_memo_relaxed(memo_bytes: &[u8]) -> Result<Memo, zcash_protocol::memo::Error> {
     let mb = MemoBytes::from_bytes(memo_bytes)?;
     Ok(Memo::try_from(mb.clone()).unwrap_or(Memo::Future(mb)))
 }
@@ -1294,7 +1294,7 @@ impl Default for ShardTrees {
 
 #[cfg(test)]
 mod tests {
-    use super::{Memo, decode_memo_lenient};
+    use super::{Memo, decode_memo_relaxed};
 
     /// Builds a 512-byte memo field with `leading` as the first byte and `body`
     /// filling the remainder.
@@ -1309,7 +1309,7 @@ mod tests {
         // A text-range leading byte (0x00..=0xF4) with a non-UTF-8 body. This is
         // the regtest coinbase-noise / hostile-sender case that could abort the scan.
         let bytes = memo_field(0x01, 0xFF);
-        let memo = decode_memo_lenient(&bytes).expect("must not error on bad text memo");
+        let memo = decode_memo_relaxed(&bytes).expect("must not error on bad text memo");
         // Preserves raw bytes, and is NOT Arbitrary (so parse_encoded_memos ignores it).
         assert!(matches!(memo, Memo::Future(_)), "got {memo:?}");
     }
@@ -1318,7 +1318,7 @@ mod tests {
     fn arbitrary_memo_is_preserved() {
         // 0xFF leading byte: zingo's own binary memos, the only class sync consumes.
         let bytes = memo_field(0xFF, 0x00);
-        let memo = decode_memo_lenient(&bytes).expect("arbitrary memo must decode");
+        let memo = decode_memo_relaxed(&bytes).expect("arbitrary memo must decode");
         assert!(matches!(memo, Memo::Arbitrary(_)), "got {memo:?}");
     }
 
@@ -1326,7 +1326,7 @@ mod tests {
     fn valid_text_memo_decodes_as_text() {
         let mut bytes = [0u8; 512];
         bytes[..5].copy_from_slice(b"hello");
-        let memo = decode_memo_lenient(&bytes).expect("valid text memo must decode");
+        let memo = decode_memo_relaxed(&bytes).expect("valid text memo must decode");
         assert!(matches!(memo, Memo::Text(_)), "got {memo:?}");
     }
 
@@ -1334,7 +1334,7 @@ mod tests {
     fn empty_memo_decodes_as_empty() {
         // 0xF6 followed by zeros is the canonical empty memo.
         let bytes = memo_field(0xF6, 0x00);
-        let memo = decode_memo_lenient(&bytes).expect("empty memo must decode");
+        let memo = decode_memo_relaxed(&bytes).expect("empty memo must decode");
         assert!(matches!(memo, Memo::Empty), "got {memo:?}");
     }
 }

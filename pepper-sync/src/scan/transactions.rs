@@ -39,7 +39,7 @@ use crate::{
     wallet::{
         NullifierMap, OrchardNote, OutgoingNote, OutgoingNoteInterface, OutgoingOrchardNote,
         OutgoingSaplingNote, OutputId, SaplingNote, ScanTarget, TransparentCoin, WalletBlock,
-        WalletNote, WalletTransaction, decode_memo_lenient,
+        WalletNote, WalletTransaction, decode_memo_relaxed,
     },
 };
 
@@ -435,7 +435,7 @@ where
                 note,
                 nullifier,
                 position,
-                memo: decode_memo_lenient(memo_bytes.as_ref())?,
+                memo: decode_memo_relaxed(memo_bytes.as_ref())?,
                 spending_transaction: None,
                 refetch_nullifier_ranges: Vec::new(),
             });
@@ -475,7 +475,7 @@ where
                 ),
                 key_id: key_ids[key_index],
                 note,
-                memo: decode_memo_lenient(memo_bytes.as_ref())?,
+                memo: decode_memo_relaxed(memo_bytes.as_ref())?,
                 recipient_full_unified_address: None,
             });
         }
