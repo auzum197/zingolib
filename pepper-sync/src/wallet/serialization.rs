@@ -22,7 +22,6 @@ use zcash_primitives::{
 };
 use zcash_protocol::{
     consensus::{self, BlockHeight},
-    memo::Memo,
     value::Zatoshis,
 };
 use zcash_transparent::address::Script;
@@ -43,7 +42,7 @@ use super::{
     InitialSyncState, KeyIdInterface, NullifierMap, OrchardNote, OutgoingNote,
     OutgoingNoteInterface, OutgoingOrchardNote, OutgoingSaplingNote, OutputId, OutputInterface,
     SaplingNote, ShardTrees, SyncState, TransparentCoin, TreeBounds, WalletBlock, WalletNote,
-    WalletTransaction,
+    WalletTransaction, decode_memo_relaxed,
 };
 
 fn read_string<R: Read>(mut reader: R) -> std::io::Result<String> {
@@ -597,7 +596,7 @@ impl SaplingNote {
         })?;
         let mut memo_bytes = [0u8; 512];
         reader.read_exact(&mut memo_bytes)?;
-        let memo = Memo::from_bytes(&memo_bytes).map_err(|e| {
+        let memo = decode_memo_relaxed(&memo_bytes).map_err(|e| {
             std::io::Error::new(
                 std::io::ErrorKind::InvalidData,
                 format!("failed to read memo. {e}"),
@@ -711,7 +710,7 @@ impl OrchardNote {
         })?;
         let mut memo_bytes = [0u8; 512];
         reader.read_exact(&mut memo_bytes)?;
-        let memo = Memo::from_bytes(&memo_bytes).map_err(|e| {
+        let memo = decode_memo_relaxed(&memo_bytes).map_err(|e| {
             std::io::Error::new(
                 std::io::ErrorKind::InvalidData,
                 format!("failed to read memo. {e}"),
@@ -829,7 +828,7 @@ impl OutgoingSaplingNote {
 
         let mut memo_bytes = [0u8; 512];
         reader.read_exact(&mut memo_bytes)?;
-        let memo = Memo::from_bytes(&memo_bytes).map_err(|e| {
+        let memo = decode_memo_relaxed(&memo_bytes).map_err(|e| {
             std::io::Error::new(
                 std::io::ErrorKind::InvalidData,
                 format!("failed to read memo. {e}"),
@@ -935,7 +934,7 @@ impl OutgoingOrchardNote {
 
         let mut memo_bytes = [0u8; 512];
         reader.read_exact(&mut memo_bytes)?;
-        let memo = Memo::from_bytes(&memo_bytes).map_err(|e| {
+        let memo = decode_memo_relaxed(&memo_bytes).map_err(|e| {
             std::io::Error::new(
                 std::io::ErrorKind::InvalidData,
                 format!("failed to read memo. {e}"),
