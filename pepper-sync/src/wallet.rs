@@ -24,7 +24,7 @@ use zcash_primitives::{block::BlockHash, transaction::TxId};
 use zcash_protocol::{
     PoolType, ShieldedProtocol,
     consensus::{self, BlockHeight},
-    memo::Memo,
+    memo::{Memo, MemoBytes},
     value::Zatoshis,
 };
 use zcash_transparent::address::Script;
@@ -50,6 +50,23 @@ pub mod traits;
 
 #[cfg(feature = "wallet_essentials")]
 pub mod serialization;
+
+/// Decodes a 512-byte memo field, preserving the raw bytes as `Memo::Future` on an
+/// interpretation failure (e.g. non-UTF-8 text) instead of aborting. Only a memo
+/// that is not a valid length still errors. Mirrors the fallback in zingolib
+/// `wallet/legacy.rs`.
+///
+/// Rationale: the strict `Memo::from_bytes` runs UTF-8 validation on any text-range
+/// leading byte (`0x00..=0xF4`) and returns `InvalidUtf8` for non-UTF-8 bodies. Used
+/// directly on the scan path this aborts the whole scan round (e.g. regtest coinbase
+/// memos are 512 bytes of random noise, and any sender can attach a non-UTF-8 memo).
+/// Sync only ever consumes `Memo::Arbitrary` (0xFF) memos via `parse_encoded_memos` —
+/// a class disjoint from the failing text range — so degrading a failed text-memo
+/// parse discards nothing the scanner reads.
+pub(crate) fn decode_memo_lenient(memo_bytes: &[u8]) -> Result<Memo, zcash_protocol::memo::Error> {
+    let mb = MemoBytes::from_bytes(memo_bytes)?;
+    Ok(Memo::try_from(mb.clone()).unwrap_or(Memo::Future(mb)))
+}
 
 /// Block height and txid of relevant transactions that have yet to be scanned. These may be added due to transparent
 /// output/spend discovery or for targetted rescan.
@@ -1272,5 +1289,52 @@ impl ShardTrees {
 impl Default for ShardTrees {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{Memo, decode_memo_lenient};
+
+    /// Builds a 512-byte memo field with `leading` as the first byte and `body`
+    /// filling the remainder.
+    fn memo_field(leading: u8, body: u8) -> [u8; 512] {
+        let mut bytes = [body; 512];
+        bytes[0] = leading;
+        bytes
+    }
+
+    #[test]
+    fn non_utf8_text_memo_degrades_to_future_not_error() {
+        // A text-range leading byte (0x00..=0xF4) with a non-UTF-8 body. This is
+        // the regtest coinbase-noise / hostile-sender case that could abort the scan.
+        let bytes = memo_field(0x01, 0xFF);
+        let memo = decode_memo_lenient(&bytes).expect("must not error on bad text memo");
+        // Preserves raw bytes, and is NOT Arbitrary (so parse_encoded_memos ignores it).
+        assert!(matches!(memo, Memo::Future(_)), "got {memo:?}");
+    }
+
+    #[test]
+    fn arbitrary_memo_is_preserved() {
+        // 0xFF leading byte: zingo's own binary memos, the only class sync consumes.
+        let bytes = memo_field(0xFF, 0x00);
+        let memo = decode_memo_lenient(&bytes).expect("arbitrary memo must decode");
+        assert!(matches!(memo, Memo::Arbitrary(_)), "got {memo:?}");
+    }
+
+    #[test]
+    fn valid_text_memo_decodes_as_text() {
+        let mut bytes = [0u8; 512];
+        bytes[..5].copy_from_slice(b"hello");
+        let memo = decode_memo_lenient(&bytes).expect("valid text memo must decode");
+        assert!(matches!(memo, Memo::Text(_)), "got {memo:?}");
+    }
+
+    #[test]
+    fn empty_memo_decodes_as_empty() {
+        // 0xF6 followed by zeros is the canonical empty memo.
+        let bytes = memo_field(0xF6, 0x00);
+        let memo = decode_memo_lenient(&bytes).expect("empty memo must decode");
+        assert!(matches!(memo, Memo::Empty), "got {memo:?}");
     }
 }
