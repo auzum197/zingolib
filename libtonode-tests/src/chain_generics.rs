@@ -40,14 +40,18 @@ impl ConductChain for LibtonodeEnvironment {
         self.client_builder
             .build_faucet(
                 false,
-                self.local_net.validator().get_activation_heights().await,
+                zingolib_testutils::scenarios::from_consensus_activation_heights(
+                    self.local_net.validator().get_activation_heights().await,
+                ),
             )
             .await
     }
 
     async fn zingo_config(&mut self) -> zingolib::config::ClientConfig {
         self.client_builder.make_unique_data_dir_and_create_config(
-            self.local_net.validator().get_activation_heights().await,
+            zingolib_testutils::scenarios::from_consensus_activation_heights(
+                self.local_net.validator().get_activation_heights().await,
+            ),
             WalletConfig::NewSeed {
                 no_of_accounts: 1.try_into().unwrap(),
                 chain_height: 1,

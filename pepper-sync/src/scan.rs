@@ -35,6 +35,7 @@ struct InitialScanData {
     end_seam_block: Option<WalletBlock>,
     sapling_initial_tree_size: u32,
     orchard_initial_tree_size: u32,
+    ironwood_initial_tree_size: u32,
 }
 
 impl InitialScanData {
@@ -48,11 +49,12 @@ impl InitialScanData {
     where
         P: consensus::Parameters + Sync + Send + 'static,
     {
-        let (sapling_initial_tree_size, orchard_initial_tree_size) =
+        let (sapling_initial_tree_size, orchard_initial_tree_size, ironwood_initial_tree_size) =
             if let Some(prev) = &start_seam_block {
                 (
                     prev.tree_bounds().sapling_final_tree_size,
                     prev.tree_bounds().orchard_final_tree_size,
+                    prev.tree_bounds().ironwood_final_tree_size,
                 )
             } else {
                 let tree_bounds = compact_blocks::calculate_block_tree_bounds(
@@ -65,6 +67,7 @@ impl InitialScanData {
                 (
                     tree_bounds.sapling_initial_tree_size,
                     tree_bounds.orchard_initial_tree_size,
+                    tree_bounds.ironwood_initial_tree_size,
                 )
             };
 
@@ -73,6 +76,7 @@ impl InitialScanData {
             end_seam_block,
             sapling_initial_tree_size,
             orchard_initial_tree_size,
+            ironwood_initial_tree_size,
         })
     }
 }
@@ -92,6 +96,7 @@ pub(crate) struct ScanResults {
     pub(crate) wallet_transactions: HashMap<TxId, WalletTransaction>,
     pub(crate) sapling_located_trees: Vec<LocatedTreeData<sapling_crypto::Node>>,
     pub(crate) orchard_located_trees: Vec<LocatedTreeData<MerkleHashOrchard>>,
+    pub(crate) ironwood_located_trees: Vec<LocatedTreeData<MerkleHashOrchard>>,
     /// Wall-clock time spent fetching this batch's tree state and any discovered full
     /// transactions. One phase of the timing carried out to consumers on
     /// [`crate::events::SyncEvent::RangeScanned`].
@@ -106,6 +111,7 @@ pub(crate) struct ScanResults {
 pub(crate) struct DecryptedNoteData {
     sapling_nullifiers_and_positions: HashMap<OutputId, (sapling_crypto::Nullifier, Position)>,
     orchard_nullifiers_and_positions: HashMap<OutputId, (orchard::note::Nullifier, Position)>,
+    ironwood_nullifiers_and_positions: HashMap<OutputId, (orchard::note::Nullifier, Position)>,
 }
 
 impl DecryptedNoteData {
@@ -113,6 +119,7 @@ impl DecryptedNoteData {
         DecryptedNoteData {
             sapling_nullifiers_and_positions: HashMap::new(),
             orchard_nullifiers_and_positions: HashMap::new(),
+            ironwood_nullifiers_and_positions: HashMap::new(),
         }
     }
 }
@@ -175,6 +182,7 @@ where
             wallet_transactions: HashMap::new(),
             sapling_located_trees: Vec::new(),
             orchard_located_trees: Vec::new(),
+            ironwood_located_trees: Vec::new(),
             // this path only collects nullifiers, so none of the timed phases run
             fetch_duration: Duration::ZERO,
             decryption_duration: Duration::ZERO,
@@ -241,27 +249,35 @@ where
     let WitnessData {
         sapling_initial_position,
         orchard_initial_position,
+        ironwood_initial_position,
         sapling_leaves_and_retentions,
         orchard_leaves_and_retentions,
+        ironwood_leaves_and_retentions,
     } = witness_data;
 
     let tree_started = Instant::now();
-    let (sapling_located_trees, orchard_located_trees) = tokio::task::spawn_blocking(move || {
-        (
-            witness::build_located_trees(
-                sapling_initial_position,
-                sapling_leaves_and_retentions,
-                max_batch_outputs / 8,
-            ),
-            witness::build_located_trees(
-                orchard_initial_position,
-                orchard_leaves_and_retentions,
-                max_batch_outputs / 8,
-            ),
-        )
-    })
-    .await
-    .expect("task panicked");
+    let (sapling_located_trees, orchard_located_trees, ironwood_located_trees) =
+        tokio::task::spawn_blocking(move || {
+            (
+                witness::build_located_trees(
+                    sapling_initial_position,
+                    sapling_leaves_and_retentions,
+                    max_batch_outputs / 8,
+                ),
+                witness::build_located_trees(
+                    orchard_initial_position,
+                    orchard_leaves_and_retentions,
+                    max_batch_outputs / 8,
+                ),
+                witness::build_located_trees(
+                    ironwood_initial_position,
+                    ironwood_leaves_and_retentions,
+                    max_batch_outputs / 8,
+                ),
+            )
+        })
+        .await
+        .expect("task panicked");
     let tree_duration = tree_started.elapsed();
 
     Ok(ScanResults {
@@ -271,6 +287,7 @@ where
         wallet_transactions,
         sapling_located_trees,
         orchard_located_trees,
+        ironwood_located_trees,
         fetch_duration,
         decryption_duration,
         tree_duration,
@@ -315,6 +332,30 @@ fn collect_nullifiers(
         .into_iter()
         .for_each(|nullifier| {
             nullifier_map.orchard.insert(
+                nullifier,
+                ScanTarget {
+                    block_height,
+                    txid: get_compact_tx_txid(transaction),
+                    narrow_scan_area: false,
+                },
+            );
+        });
+    transaction
+        .ironwood_actions
+        .iter()
+        .map(|action| {
+            orchard::note::Nullifier::from_bytes(
+                action.nullifier.as_slice().try_into().map_err(|_| {
+                    ScanError::InvalidOrchardNullifierLength(action.nullifier.len())
+                })?,
+            )
+            .into_option()
+            .ok_or(ScanError::InvalidOrchardNullifier)
+        })
+        .collect::<Result<Vec<orchard::note::Nullifier>, ScanError>>()?
+        .into_iter()
+        .for_each(|nullifier| {
+            nullifier_map.ironwood.insert(
                 nullifier,
                 ScanTarget {
                     block_height,

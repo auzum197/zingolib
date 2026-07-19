@@ -11,7 +11,7 @@ use pepper_sync::sync::{ScanPriority, ScanRange};
 use pepper_sync::wallet::NoteInterface;
 use zcash_primitives::transaction::fees::zip317;
 use zcash_protocol::consensus::{BlockHeight, Parameters as _};
-use zcash_protocol::{ShieldedProtocol, TxId};
+use zcash_protocol::{ShieldedPool, TxId};
 
 use super::LightWallet;
 use super::error::{CalculateTransactionError, KeyError};
@@ -81,7 +81,6 @@ impl LightWallet {
             &SpendingKeys::new(usk),
             zcash_client_backend::wallet::OvkPolicy::Sender,
             &proposal,
-            None,
         )
         .map_err(CalculateTransactionError::Calculation)
     }
@@ -100,14 +99,21 @@ impl LightWallet {
         let scan_ranges = self.sync_state.scan_ranges();
 
         match N::SHIELDED_PROTOCOL {
-            ShieldedProtocol::Orchard => check_note_shards_are_scanned(
+            ShieldedPool::Ironwood => check_note_shards_are_scanned(
+                note_height,
+                anchor_height,
+                birthday,
+                scan_ranges,
+                self.sync_state.ironwood_shard_ranges(),
+            ),
+            ShieldedPool::Orchard => check_note_shards_are_scanned(
                 note_height,
                 anchor_height,
                 birthday,
                 scan_ranges,
                 self.sync_state.orchard_shard_ranges(),
             ),
-            ShieldedProtocol::Sapling => check_note_shards_are_scanned(
+            ShieldedPool::Sapling => check_note_shards_are_scanned(
                 note_height,
                 anchor_height,
                 birthday,

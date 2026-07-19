@@ -61,6 +61,9 @@ async fn simple_sync() {
             total_orchard_balance: Some(100_000_000.try_into().unwrap()),
             confirmed_orchard_balance: Some(100_000_000.try_into().unwrap()),
             unconfirmed_orchard_balance: Some(0.try_into().unwrap()),
+            total_ironwood_balance: Some(0.try_into().unwrap()),
+            confirmed_ironwood_balance: Some(0.try_into().unwrap()),
+            unconfirmed_ironwood_balance: Some(0.try_into().unwrap()),
             total_transparent_balance: Some(0.try_into().unwrap()),
             confirmed_transparent_balance: Some(0.try_into().unwrap()),
             unconfirmed_transparent_balance: Some(0.try_into().unwrap())
@@ -106,6 +109,9 @@ async fn reorg_receipt_sync_generic() {
             total_orchard_balance: Some(100_000_000.try_into().unwrap()),
             confirmed_orchard_balance: Some(100_000_000.try_into().unwrap()),
             unconfirmed_orchard_balance: Some(0.try_into().unwrap()),
+            total_ironwood_balance: Some(0.try_into().unwrap()),
+            confirmed_ironwood_balance: Some(0.try_into().unwrap()),
+            unconfirmed_ironwood_balance: Some(0.try_into().unwrap()),
             total_transparent_balance: Some(0.try_into().unwrap()),
             confirmed_transparent_balance: Some(0.try_into().unwrap()),
             unconfirmed_transparent_balance: Some(0.try_into().unwrap())
@@ -127,6 +133,9 @@ async fn reorg_receipt_sync_generic() {
             total_orchard_balance: Some(0.try_into().unwrap()),
             confirmed_orchard_balance: Some(0.try_into().unwrap()),
             unconfirmed_orchard_balance: Some(0.try_into().unwrap()),
+            total_ironwood_balance: Some(0.try_into().unwrap()),
+            confirmed_ironwood_balance: Some(0.try_into().unwrap()),
+            unconfirmed_ironwood_balance: Some(0.try_into().unwrap()),
             total_transparent_balance: Some(0.try_into().unwrap()),
             confirmed_transparent_balance: Some(0.try_into().unwrap()),
             unconfirmed_transparent_balance: Some(0.try_into().unwrap())
@@ -185,6 +194,9 @@ async fn sent_transaction_reorged_into_mempool() {
             total_orchard_balance: Some(100_000_000.try_into().unwrap()),
             confirmed_orchard_balance: Some(100_000_000.try_into().unwrap()),
             unconfirmed_orchard_balance: Some(0.try_into().unwrap()),
+            total_ironwood_balance: Some(0.try_into().unwrap()),
+            confirmed_ironwood_balance: Some(0.try_into().unwrap()),
+            unconfirmed_ironwood_balance: Some(0.try_into().unwrap()),
             total_transparent_balance: Some(0.try_into().unwrap()),
             confirmed_transparent_balance: Some(0.try_into().unwrap()),
             unconfirmed_transparent_balance: Some(0.try_into().unwrap())

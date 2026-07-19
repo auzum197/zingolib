@@ -5,11 +5,11 @@ use shardtree::{ShardTree, error::ShardTreeError, store::ShardStore};
 use zcash_address::ZcashAddress;
 use zcash_client_backend::{
     data_api::{
-        Account, AccountBirthday, AccountPurpose, Balance, BlockMetadata, InputSource,
-        NullifierQuery, ORCHARD_SHARD_HEIGHT, ReceivedNotes, ReceivedTransactionOutput,
-        SAPLING_SHARD_HEIGHT, TargetValue, TransactionDataRequest, TransparentKeyOrigin,
-        TransparentOutputFilter, WalletCommitmentTrees, WalletRead, WalletSummary, WalletUtxo,
-        WalletWrite, Zip32Derivation,
+        Account, AccountBirthday, AccountPurpose, Balance, BlockMetadata, CoinbaseFilter,
+        InputSource, NullifierQuery, ORCHARD_SHARD_HEIGHT, ReceivedNotes,
+        ReceivedTransactionOutput, SAPLING_SHARD_HEIGHT, TargetValue, TransactionDataRequest,
+        TransparentKeyOrigin, WalletCommitmentTrees, WalletRead, WalletSummary, WalletWrite,
+        Zip32Derivation,
         chain::{ChainState, CommitmentTreeRoot},
         error::FindAccountForAddressError,
         wallet::{ConfirmationsPolicy, TargetHeight},
@@ -22,13 +22,14 @@ use zcash_primitives::{
     transaction::{Transaction, TxId},
 };
 use zcash_protocol::{
-    PoolType, ShieldedProtocol,
+    PoolType, ShieldedPool,
     consensus::{self, BlockHeight, Parameters},
     memo::Memo,
 };
 use zcash_transparent::address::TransparentAddress;
 use zcash_transparent::bundle::{OutPoint, TxOut};
 use zcash_transparent::keys::TransparentKeyScope;
+use zip32::AccountId;
 
 use super::{LightWallet, error::WalletError, output::OutputRef};
 use crate::wallet::output::RemainingNeeded;
@@ -36,8 +37,8 @@ use pepper_sync::{
     error::SyncError,
     keys::transparent::{self, TransparentScope},
     wallet::{
-        KeyIdInterface, NoteInterface, OrchardNote, OrchardShardStore, OutputId, OutputInterface,
-        SaplingNote, SaplingShardStore, traits::SyncWallet,
+        IronwoodNote, KeyIdInterface, NoteInterface, OrchardNote, OrchardShardStore, OutputId,
+        OutputInterface, SaplingNote, SaplingShardStore, traits::SyncWallet,
     },
 };
 use zingo_status::confirmation_status::ConfirmationStatus;
@@ -251,6 +252,13 @@ impl WalletRead for LightWallet {
         unimplemented!()
     }
 
+    fn get_ironwood_nullifiers(
+        &self,
+        _query: NullifierQuery,
+    ) -> Result<Vec<(Self::AccountId, orchard::note::Nullifier)>, Self::Error> {
+        unimplemented!()
+    }
+
     fn get_transparent_receivers(
         &self,
         account: Self::AccountId,
@@ -433,7 +441,7 @@ impl WalletWrite for LightWallet {
 
     fn put_received_transparent_utxo(
         &mut self,
-        _output: &WalletTransparentOutput,
+        _output: &WalletTransparentOutput<AccountId>,
     ) -> Result<Self::UtxoRef, Self::Error> {
         unimplemented!()
     }
@@ -502,10 +510,6 @@ impl WalletWrite for LightWallet {
         unimplemented!()
     }
 
-    fn rewind_to_height(&mut self, _max_height: BlockHeight) -> Result<BlockHeight, Self::Error> {
-        unimplemented!()
-    }
-
     fn reserve_next_n_ephemeral_addresses(
         &mut self,
         account_id: Self::AccountId,
@@ -541,6 +545,15 @@ impl WalletWrite for LightWallet {
         _request: zcash_client_backend::data_api::TransactionsInvolvingAddress,
         _as_of_height: BlockHeight,
     ) -> Result<(), Self::Error> {
+        unimplemented!()
+    }
+
+    fn rewind_to_chain_state(
+        &mut self,
+        _chain_state: ChainState,
+        _reset_account_birthdays: std::collections::HashSet<Self::AccountId>,
+    ) -> Result<(), zcash_client_backend::data_api::error::RewindError<Self::AccountId, Self::Error>>
+    {
         unimplemented!()
     }
 }
@@ -625,7 +638,7 @@ impl InputSource for LightWallet {
     fn get_spendable_note(
         &self,
         _txid: &TxId,
-        _protocol: ShieldedProtocol,
+        _protocol: ShieldedPool,
         _index: u32,
         _target_height: TargetHeight,
     ) -> Result<
@@ -644,7 +657,7 @@ impl InputSource for LightWallet {
         &self,
         account: Self::AccountId,
         target_value: TargetValue,
-        sources: &[ShieldedProtocol],
+        sources: &[ShieldedPool],
         _target_height: TargetHeight,
         confirmations_policy: ConfirmationsPolicy,
         exclude: &[Self::NoteRef],
@@ -665,16 +678,70 @@ impl InputSource for LightWallet {
             .map(|note_id| OutputId::new(note_id.txid(), note_id.output_index()))
             .collect::<Vec<_>>();
 
-        let (selected_sapling_notes, selected_orchard_notes) = match target_value {
-            TargetValue::AtLeast(at_least_value) => {
-                let mut remaining_value_needed = RemainingNeeded::Positive(at_least_value);
+        let mut exclude_ironwood = exclude
+            .iter()
+            .filter(|&note_id| note_id.pool_type() == PoolType::IRONWOOD)
+            .map(|note_id| OutputId::new(note_id.txid(), note_id.output_index()))
+            .collect::<Vec<_>>();
 
-                // prioritises selecting spendable notes that are guaranteed to be unspent first
-                let mut selected_sapling_notes = Vec::new();
-                let mut selected_orchard_notes = Vec::new();
-                for include_potentially_spent_notes in [false, true] {
-                    // prioritise note selection for the given `sources`
-                    if sources.contains(&ShieldedProtocol::Sapling) {
+        let (selected_sapling_notes, selected_orchard_notes, selected_ironwood_notes) =
+            match target_value {
+                TargetValue::AtLeast(at_least_value) => {
+                    let mut remaining_value_needed = RemainingNeeded::Positive(at_least_value);
+
+                    // prioritises selecting spendable notes that are guaranteed to be unspent first
+                    let mut selected_sapling_notes = Vec::new();
+                    let mut selected_orchard_notes = Vec::new();
+                    let mut selected_ironwood_notes = Vec::new();
+
+                    for include_potentially_spent_notes in [false, true] {
+                        // prioritise note selection for the given `sources`
+                        if sources.contains(&ShieldedPool::Sapling) {
+                            let notes = self
+                                .select_spendable_notes_by_pool::<SaplingNote>(
+                                    &mut remaining_value_needed,
+                                    anchor_height,
+                                    &exclude_sapling,
+                                    account,
+                                    include_potentially_spent_notes,
+                                )?
+                                .into_iter()
+                                .cloned()
+                                .collect::<Vec<_>>();
+                            exclude_sapling.extend(notes.iter().map(OutputInterface::output_id));
+                            selected_sapling_notes.extend(notes);
+                        }
+                        if sources.contains(&ShieldedPool::Orchard) {
+                            let notes = self
+                                .select_spendable_notes_by_pool::<OrchardNote>(
+                                    &mut remaining_value_needed,
+                                    anchor_height,
+                                    &exclude_orchard,
+                                    account,
+                                    include_potentially_spent_notes,
+                                )?
+                                .into_iter()
+                                .cloned()
+                                .collect::<Vec<_>>();
+                            exclude_orchard.extend(notes.iter().map(OutputInterface::output_id));
+                            selected_orchard_notes.extend(notes);
+                        }
+                        if sources.contains(&ShieldedPool::Ironwood) {
+                            let notes = self
+                                .select_spendable_notes_by_pool::<IronwoodNote>(
+                                    &mut remaining_value_needed,
+                                    anchor_height,
+                                    &exclude_ironwood,
+                                    account,
+                                    include_potentially_spent_notes,
+                                )?
+                                .into_iter()
+                                .cloned()
+                                .collect::<Vec<_>>();
+                            exclude_ironwood.extend(notes.iter().map(OutputInterface::output_id));
+                            selected_ironwood_notes.extend(notes);
+                        }
+
                         let notes = self
                             .select_spendable_notes_by_pool::<SaplingNote>(
                                 &mut remaining_value_needed,
@@ -688,8 +755,7 @@ impl InputSource for LightWallet {
                             .collect::<Vec<_>>();
                         exclude_sapling.extend(notes.iter().map(OutputInterface::output_id));
                         selected_sapling_notes.extend(notes);
-                    }
-                    if sources.contains(&ShieldedProtocol::Orchard) {
+
                         let notes = self
                             .select_spendable_notes_by_pool::<OrchardNote>(
                                 &mut remaining_value_needed,
@@ -703,11 +769,36 @@ impl InputSource for LightWallet {
                             .collect::<Vec<_>>();
                         exclude_orchard.extend(notes.iter().map(OutputInterface::output_id));
                         selected_orchard_notes.extend(notes);
-                    }
 
-                    let notes = self
-                        .select_spendable_notes_by_pool::<SaplingNote>(
-                            &mut remaining_value_needed,
+                        let notes = self
+                            .select_spendable_notes_by_pool::<IronwoodNote>(
+                                &mut remaining_value_needed,
+                                anchor_height,
+                                &exclude_ironwood,
+                                account,
+                                include_potentially_spent_notes,
+                            )?
+                            .into_iter()
+                            .cloned()
+                            .collect::<Vec<_>>();
+                        exclude_ironwood.extend(notes.iter().map(OutputInterface::output_id));
+                        selected_ironwood_notes.extend(notes);
+                    }
+                    (
+                        selected_sapling_notes,
+                        selected_orchard_notes,
+                        selected_ironwood_notes,
+                    )
+                }
+                TargetValue::AllFunds(max_spend_mode) => {
+                    // FIXME: this is not the criteria for `MaxSpendMode::Everything`. this should return an error if sync is not complete in this case.
+                    let include_potentially_spent_notes = matches!(
+                        max_spend_mode,
+                        zcash_client_backend::data_api::MaxSpendMode::Everything
+                    );
+                    (
+                        // FIXME: note filters implemented in `spendable_notes_by_pool` have been missed here such as filtering dust
+                        self.spendable_notes::<SaplingNote>(
                             anchor_height,
                             &exclude_sapling,
                             account,
@@ -715,13 +806,8 @@ impl InputSource for LightWallet {
                         )?
                         .into_iter()
                         .cloned()
-                        .collect::<Vec<_>>();
-                    exclude_sapling.extend(notes.iter().map(OutputInterface::output_id));
-                    selected_sapling_notes.extend(notes);
-
-                    let notes = self
-                        .select_spendable_notes_by_pool::<OrchardNote>(
-                            &mut remaining_value_needed,
+                        .collect::<Vec<_>>(),
+                        self.spendable_notes::<OrchardNote>(
                             anchor_height,
                             &exclude_orchard,
                             account,
@@ -729,51 +815,29 @@ impl InputSource for LightWallet {
                         )?
                         .into_iter()
                         .cloned()
-                        .collect::<Vec<_>>();
-                    exclude_orchard.extend(notes.iter().map(OutputInterface::output_id));
-                    selected_orchard_notes.extend(notes);
+                        .collect::<Vec<_>>(),
+                        self.spendable_notes::<IronwoodNote>(
+                            anchor_height,
+                            &exclude_ironwood,
+                            account,
+                            include_potentially_spent_notes,
+                        )?
+                        .into_iter()
+                        .cloned()
+                        .collect::<Vec<_>>(),
+                    )
                 }
-                (selected_sapling_notes, selected_orchard_notes)
-            }
-            TargetValue::AllFunds(max_spend_mode) => {
-                // FIXME: this is not the criteria for `MaxSpendMode::Everything`. this should return an error if sync is not complete in this case.
-                let include_potentially_spent_notes = matches!(
-                    max_spend_mode,
-                    zcash_client_backend::data_api::MaxSpendMode::Everything
-                );
-                (
-                    // FIXME: note filters implemented in `spendable_notes_by_pool` have been missed here such as filtering dust
-                    self.spendable_notes::<SaplingNote>(
-                        anchor_height,
-                        &exclude_sapling,
-                        account,
-                        include_potentially_spent_notes,
-                    )?
-                    .into_iter()
-                    .cloned()
-                    .collect::<Vec<_>>(),
-                    self.spendable_notes::<OrchardNote>(
-                        anchor_height,
-                        &exclude_orchard,
-                        account,
-                        include_potentially_spent_notes,
-                    )?
-                    .into_iter()
-                    .cloned()
-                    .collect::<Vec<_>>(),
-                )
-            }
-        };
+            };
 
         /* TODO: Priority
         if selected
             .iter()
-            .filter(|n| n.0.protocol() == ShieldedProtocol::Sapling)
+            .filter(|n| n.0.protocol() == ShieldedPool::Sapling)
             .count()
             == 1
             || selected
                 .iter()
-                .filter(|n| n.0.protocol() == ShieldedProtocol::Orchard)
+                .filter(|n| n.0.protocol() == ShieldedPool::Orchard)
                 .count()
                 == 1
         {
@@ -842,9 +906,33 @@ impl InputSource for LightWallet {
             })
             .collect::<Vec<_>>();
 
+        let ironwood_received_notes = selected_ironwood_notes
+            .iter()
+            .map(|note| {
+                ReceivedNote::from_parts(
+                    OutputRef::new(
+                        OutputId::new(note.output_id().txid(), note.output_id().output_index()),
+                        PoolType::IRONWOOD,
+                    ),
+                    note.output_id().txid(),
+                    note.output_id()
+                        .output_index()
+                        .try_into()
+                        .expect("shielded notes are always valid u16"),
+                    *note.note(),
+                    note.key_id().scope,
+                    note.position()
+                        .expect("note selection should filter on notes with positions"),
+                    None, // mined_height. TODO: How should we use this here?
+                    None, // max_shielding_input_height. TODO: How should we use this here?
+                )
+            })
+            .collect::<Vec<_>>();
+
         Ok(ReceivedNotes::new(
             sapling_recieved_notes,
             orchard_recieved_notes,
+            ironwood_received_notes,
         ))
     }
 
@@ -862,7 +950,7 @@ impl InputSource for LightWallet {
         &self,
         _outpoint: &OutPoint,
         _target_height: TargetHeight,
-    ) -> Result<Option<WalletUtxo>, Self::Error> {
+    ) -> Result<Option<WalletTransparentOutput<Self::AccountId>>, Self::Error> {
         unimplemented!()
     }
 
@@ -871,8 +959,8 @@ impl InputSource for LightWallet {
         address: &TransparentAddress,
         target_height: TargetHeight,
         confirmations_policy: ConfirmationsPolicy,
-        _output_filter: TransparentOutputFilter,
-    ) -> Result<Vec<WalletUtxo>, Self::Error> {
+        _output_filter: CoinbaseFilter,
+    ) -> Result<Vec<WalletTransparentOutput<Self::AccountId>>, Self::Error> {
         let address = transparent::encode_address(&self.chain_type, *address);
 
         // TODO: add recipient key scope metadata
@@ -897,8 +985,10 @@ impl InputSource for LightWallet {
                             .get_confirmed_height()
                             .expect("output must be confirmed in this scope"),
                     ),
+                    None,
+                    None,
+                    None,
                 )
-                .map(|transparent_output| WalletUtxo::new(transparent_output, None))
             })
             .collect())
     }
@@ -906,7 +996,7 @@ impl InputSource for LightWallet {
     fn select_unspent_notes(
         &self,
         _account: Self::AccountId,
-        _sources: &[ShieldedProtocol],
+        _sources: &[ShieldedPool],
         _target_height: TargetHeight,
         _exclude: &[Self::NoteRef],
     ) -> Result<ReceivedNotes<Self::NoteRef>, Self::Error> {

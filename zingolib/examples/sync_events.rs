@@ -531,13 +531,19 @@ async fn handle_event(event: SequencedSyncEvent, view: &mut View, lc: &LightClie
             tip,
             total_sapling_outputs,
             total_orchard_outputs,
+            total_ironwood_outputs,
             already_scanned_sapling_outputs,
             already_scanned_orchard_outputs,
+            already_scanned_ironwood_outputs,
             ..
         } => {
-            view.outputs_total = u64::from(total_sapling_outputs + total_orchard_outputs);
-            view.outputs_scanned =
-                u64::from(already_scanned_sapling_outputs + already_scanned_orchard_outputs);
+            view.outputs_total =
+                u64::from(total_sapling_outputs + total_orchard_outputs + total_ironwood_outputs);
+            view.outputs_scanned = u64::from(
+                already_scanned_sapling_outputs
+                    + already_scanned_orchard_outputs
+                    + already_scanned_ironwood_outputs,
+            );
             view.timing_log.clear();
             view.progress_log.clear();
             view.progress_log
@@ -546,10 +552,11 @@ async fn handle_event(event: SequencedSyncEvent, view: &mut View, lc: &LightClie
                 "session started: birthday {birthday}, sync start {sync_start_height}, tip {tip}"
             ));
             view.line(&format!(
-                "outputs in window: {} (sapling {} | orchard {}), {} already scanned",
+                "outputs in window: {} (sapling {} | orchard {} | ironwood {}), {} already scanned",
                 group(view.outputs_total),
                 group(u64::from(total_sapling_outputs)),
                 group(u64::from(total_orchard_outputs)),
+                group(u64::from(total_ironwood_outputs)),
                 group(view.outputs_scanned),
             ));
         }
@@ -558,11 +565,12 @@ async fn handle_event(event: SequencedSyncEvent, view: &mut View, lc: &LightClie
             priority,
             sapling_outputs,
             orchard_outputs,
+            ironwood_outputs,
         } => {
             view.batch_started(InFlightBatch {
                 range: u32::from(range.start)..u32::from(range.end),
                 priority: format!("{priority:?}"),
-                outputs: u64::from(sapling_outputs + orchard_outputs),
+                outputs: u64::from(sapling_outputs + orchard_outputs + ironwood_outputs),
                 started: Instant::now(),
                 phase: Phase::Scanning,
             });
@@ -581,9 +589,10 @@ async fn handle_event(event: SequencedSyncEvent, view: &mut View, lc: &LightClie
             priority,
             sapling_outputs,
             orchard_outputs,
+            ironwood_outputs,
             timing,
         } => {
-            let outputs = u64::from(sapling_outputs + orchard_outputs);
+            let outputs = u64::from(sapling_outputs + orchard_outputs + ironwood_outputs);
             let range = u32::from(range.start)..u32::from(range.end);
             if view.batch_committed(&range, outputs, timing) {
                 // the batch's own line now re-renders as DONE in place
@@ -630,8 +639,11 @@ async fn handle_event(event: SequencedSyncEvent, view: &mut View, lc: &LightClie
 async fn reconcile(view: &mut View, lc: &LightClient, skipped: u64) {
     let wallet = lc.wallet().read().await;
     if let Ok(status) = pepper_sync::sync_status(&*wallet).await {
-        view.outputs_scanned =
-            u64::from(status.total_sapling_outputs_scanned + status.total_orchard_outputs_scanned);
+        view.outputs_scanned = u64::from(
+            status.total_sapling_outputs_scanned
+                + status.total_orchard_outputs_scanned
+                + status.total_ironwood_outputs_scanned,
+        );
         // skipped commits left no measured samples: drop the windows and rebuild them from the
         // next batches that commit
         view.timing_log.clear();

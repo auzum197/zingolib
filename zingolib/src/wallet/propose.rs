@@ -1,12 +1,15 @@
 //! creating proposals from wallet data
 
 use zcash_client_backend::{
-    data_api::wallet::{ConfirmationsPolicy, input_selection::GreedyInputSelector},
+    data_api::wallet::{
+        ConfirmationsPolicy,
+        input_selection::{GreedyInputSelector, SpendPolicy},
+    },
     fees::{DustAction, DustOutputPolicy},
     zip321::TransactionRequest,
 };
 use zcash_protocol::{
-    ShieldedProtocol,
+    ShieldedPool,
     consensus::{BlockHeight, Parameters},
     memo::{Memo, MemoBytes},
     value::Zatoshis,
@@ -34,7 +37,7 @@ impl LightWallet {
         let change_strategy = zcash_client_backend::fees::zip317::SingleOutputChangeStrategy::new(
             zcash_primitives::transaction::fees::zip317::FeeRule::standard(),
             Some(memo),
-            ShieldedProtocol::Orchard,
+            ShieldedPool::Orchard,
             DustOutputPolicy::new(DustAction::AllowDustChange, None),
         );
         let chain_type = self.chain_type;
@@ -57,6 +60,7 @@ impl LightWallet {
             request,
             // TODO: replace wallet min_confirmations field with confirmation policy to unify for all proposals
             ConfirmationsPolicy::new_symmetrical(self.wallet_settings.min_confirmations, false),
+            &SpendPolicy::default(),
             None,
         )
         .map_err(ProposeSendError::Proposal)
@@ -78,7 +82,7 @@ impl LightWallet {
         let change_strategy = zcash_client_backend::fees::zip317::SingleOutputChangeStrategy::new(
             zcash_primitives::transaction::fees::zip317::FeeRule::standard(),
             None,
-            ShieldedProtocol::Orchard,
+            ShieldedPool::Orchard,
             DustOutputPolicy::new(DustAction::AllowDustChange, None),
         );
         let chain_type = self.chain_type;
@@ -115,7 +119,7 @@ impl LightWallet {
             account_id,
             // TODO: replace wallet min_confirmations field with confirmation policy to unify for all proposals
             ConfirmationsPolicy::new_symmetrical(self.wallet_settings.min_confirmations, false),
-            zcash_client_backend::data_api::TransparentOutputFilter::All,
+            zcash_client_backend::data_api::CoinbaseFilter::AllTransparentOutputs,
         )
         .map_err(ProposeShieldError::Component)?;
 
@@ -249,7 +253,7 @@ impl LightWallet {
 
 #[cfg(test)]
 mod test {
-    use zcash_protocol::{PoolType, ShieldedProtocol};
+    use zcash_protocol::{PoolType, ShieldedPool};
 
     use crate::{
         testutils::lightclient::from_inputs::transaction_request_from_send_inputs,
@@ -267,7 +271,7 @@ mod test {
         .await;
         let mut wallet = client.wallet().write().await;
 
-        let pool = PoolType::Shielded(ShieldedProtocol::Orchard);
+        let pool = PoolType::Shielded(ShieldedPool::Orchard);
         let self_address = wallet.get_address(pool);
 
         let receivers = vec![(self_address.as_str(), 100_000, None)];
