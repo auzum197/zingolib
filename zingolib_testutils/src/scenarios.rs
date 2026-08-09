@@ -212,7 +212,9 @@ impl ClientBuilder {
     ) -> LightClient {
         let config = self
             .make_unique_data_dir_and_create_config(configured_activation_heights, wallet_config);
+        let indexer_uri = config.indexer_uri();
         let mut lightclient = LightClient::new(config, overwrite, None).await.unwrap();
+        lightclient.set_indexer_uri(indexer_uri).await.unwrap();
         lightclient
             .generate_unified_address(ReceiverSelection::sapling_only(), zip32::AccountId::ZERO)
             .await

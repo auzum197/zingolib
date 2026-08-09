@@ -266,6 +266,10 @@ async fn sent_transaction_reorged_into_mempool() {
         .set_wallet_config(WalletConfig::Read)
         .build();
     let mut loaded_client = LightClient::new(config, true, None).await.unwrap();
+    loaded_client
+        .set_indexer_uri(client_manager.server_id.clone())
+        .await
+        .unwrap();
 
     loaded_client.sync_and_await().await.unwrap();
     assert_eq!(

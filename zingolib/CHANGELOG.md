@@ -16,6 +16,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   bulk view.
 
 ### Changed
+- `lightclient::LightClient`:
+  - `indexer` field changed from `GrpcIndexer` to `Option<GrpcIndexer>`. Opening a wallet is now
+    network-free and an offline wallet holds no indexer instance: `new` no longer constructs a
+    `GrpcIndexer`. A client is built only when a server is explicitly configured via
+    `set_indexer_uri`.
+  - `indexer_uri` now returns `Option<&http::Uri>` (`None` until a server is configured).
+  - `sync` and the send/shield transmission path now return `LightClientError::NoIndexer` when no
+    indexer has been configured; `do_info` reports the absent indexer instead of dialing.
+- `lightclient::error::LightClientError`: added `NoIndexer` variant.
 
 ### Removed
 

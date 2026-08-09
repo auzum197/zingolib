@@ -662,10 +662,18 @@ pub(crate) fn startup(filled_template: &ConfigTemplate) -> std::io::Result<Comma
     let config = build_zingo_config(filled_template)?;
     let encryption = resolve_cli_encryption(filled_template, &config)?;
 
+    let server_uri = filled_template.server.clone();
     let mut lightclient = RT.block_on(async move {
-        LightClient::new(config, false, encryption)
+        let mut lightclient = LightClient::new(config, false, encryption)
             .await
-            .map_err(|e| std::io::Error::other(format!("Failed to create lightclient. {e}")))
+            .map_err(|e| std::io::Error::other(format!("Failed to create lightclient. {e}")))?;
+        // Opening the wallet is network-free; explicitly connect the indexer to the configured
+        // server. The connection is lazy, so this does not dial or require reachability.
+        lightclient
+            .set_indexer_uri(server_uri)
+            .await
+            .map_err(|e| std::io::Error::other(format!("Failed to set indexer URI. {e}")))?;
+        Ok::<_, std::io::Error>(lightclient)
     })?;
 
     if matches!(filled_template.mode, ModeOfOperation::Interactive) {

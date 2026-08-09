@@ -1906,6 +1906,10 @@ mod slow {
                 })
                 .build();
             let mut watch_client = LightClient::new(zingo_config, false, None).await.unwrap();
+            watch_client
+                .set_indexer_uri(client_builder.server_id.clone())
+                .await
+                .unwrap();
             // assert empty wallet before rescan
             let balance = watch_client
                 .account_balance(zip32::AccountId::ZERO)
@@ -4617,6 +4621,10 @@ mod testnet_test {
                 .build();
 
             let mut lightclient = LightClient::new(config, true, None).await.unwrap();
+            lightclient
+                .set_indexer_uri((DEFAULT_INDEXER_URI_TESTNET).parse::<http::Uri>().unwrap())
+                .await
+                .unwrap();
             lightclient.save_task().await;
             lightclient.sync().await.unwrap();
             let mut interval = tokio::time::interval(std::time::Duration::from_millis(100));
