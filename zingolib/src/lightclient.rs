@@ -439,4 +439,81 @@ mod tests {
             lc.unified_addresses_json().await[0]["encoded_address"]
         );
     }
+
+    /// An indexer URI that parses but can never be reached: 192.0.2.0/24 is the
+    /// TEST-NET-1 documentation range (RFC 5737), guaranteed not to route, and
+    /// port 1 is not a real service. If `LightClient::new` connected eagerly,
+    /// opening the wallet would hang or error here; with a lazy gRPC channel the
+    /// connection is deferred to the first RPC, so opening must succeed offline.
+    const UNREACHABLE_INDEXER_URI: &str = "http://192.0.2.1:1";
+
+    #[tokio::test]
+    async fn open_wallet_succeeds_with_unreachable_indexer() {
+        let temp_dir = TempDir::new().unwrap();
+        let config = ClientConfig::builder()
+            .set_chain_type(ChainType::Regtest(ActivationHeights::default()))
+            .set_wallet_dir(temp_dir.path().to_path_buf())
+            .set_indexer_uri(UNREACHABLE_INDEXER_URI.parse().unwrap())
+            .set_wallet_config(WalletConfig::MnemonicPhrase {
+                mnemonic_phrase: CHIMNEY_BETTER_SEED.to_string(),
+                no_of_accounts: 1.try_into().unwrap(),
+                birthday: 1,
+                wallet_settings: default_test_wallet_settings(),
+            })
+            .build();
+
+        // Opening must not require the network: this returns Ok even though the
+        // indexer is unreachable.
+        LightClient::new(config, false, None)
+            .await
+            .expect("opening a wallet must not require a reachable indexer");
+    }
+
+    async fn test_lightclient(temp_dir: &TempDir) -> LightClient {
+        let config = ClientConfig::builder()
+            .set_chain_type(ChainType::Regtest(ActivationHeights::default()))
+            .set_wallet_dir(temp_dir.path().to_path_buf())
+            .set_indexer_uri(UNREACHABLE_INDEXER_URI.parse().unwrap())
+            .set_wallet_config(WalletConfig::MnemonicPhrase {
+                mnemonic_phrase: CHIMNEY_BETTER_SEED.to_string(),
+                no_of_accounts: 1.try_into().unwrap(),
+                birthday: 1,
+                wallet_settings: default_test_wallet_settings(),
+            })
+            .build();
+        LightClient::new(config, false, None).await.unwrap()
+    }
+
+    #[tokio::test]
+    async fn set_indexer_uri_to_unreachable_server_succeeds() {
+        let temp_dir = TempDir::new().unwrap();
+        let mut lc = test_lightclient(&temp_dir).await;
+
+        // Reachability is no longer validated at construction time; pointing at an
+        // unreachable server succeeds and the error (if any) surfaces on the first
+        // RPC instead. Callers that need to confirm a server must probe explicitly.
+        lc.set_indexer_uri("http://192.0.2.2:1".parse().unwrap())
+            .await
+            .expect("set_indexer_uri must not require a reachable server");
+
+        assert_eq!(
+            lc.indexer_uri(),
+            &"http://192.0.2.2:1".parse::<http::Uri>().unwrap()
+        );
+    }
+
+    #[tokio::test]
+    async fn set_indexer_uri_rejects_wrong_scheme() {
+        let temp_dir = TempDir::new().unwrap();
+        let mut lc = test_lightclient(&temp_dir).await;
+
+        // URI *shape* is still validated even though reachability is not: a
+        // non-gRPC scheme is rejected at construction, not deferred to an RPC.
+        let err = lc
+            .set_indexer_uri("ftp://example.com".parse().unwrap())
+            .await
+            .expect_err("a non-http(s) scheme must be rejected");
+
+        assert!(matches!(err, zingo_netutils::GetClientError::InvalidScheme));
+    }
 }
