@@ -543,6 +543,7 @@ fn determine_block_range(
                     if consensus_parameters
                         .activation_height(consensus::NetworkUpgrade::Nu6_3)
                         .is_none_or(|activation| block_height < activation)
+                        || sync_state.ironwood_shard_ranges.is_empty()
                     {
                         shielded_protocol = ShieldedPool::Orchard;
                     } else {

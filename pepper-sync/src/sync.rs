@@ -1832,17 +1832,26 @@ where
 
     let sapling_subtree_roots = sapling_subtree_roots?;
     let orchard_subtree_roots = orchard_subtree_roots?;
-    // Ironwood subtree roots are requested only where NU6.3 exists, and a
-    // server that cannot serve them is tolerated: the shard ranges remain
+    // Ironwood subtree roots are requested only where NU6.3 exists. A server
+    // that rejects the unknown pool is tolerated: the shard ranges remain
     // empty and scan prioritisation falls back to the whole-pool range.
     let ironwood_subtree_roots = if consensus_parameters
         .activation_height(consensus::NetworkUpgrade::Nu6_3)
         .is_some()
     {
-        ironwood_subtree_roots.unwrap_or_else(|e| {
-            tracing::debug!("server does not serve ironwood subtree roots: {e}");
-            Vec::new()
-        })
+        match ironwood_subtree_roots {
+            Ok(roots) => roots,
+            Err(ServerError::RequestFailed(status))
+                if matches!(
+                    status.code(),
+                    tonic::Code::Unimplemented | tonic::Code::InvalidArgument
+                ) =>
+            {
+                tracing::warn!("server does not serve ironwood subtree roots: {status}");
+                Vec::new()
+            }
+            Err(e) => return Err(e.into()),
+        }
     } else {
         Vec::new()
     };

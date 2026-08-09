@@ -592,6 +592,13 @@ impl LightWallet {
             Err(BalanceError::KeyError(KeyError::NoViewCapability)) => Ok(Zatoshis::ZERO),
             Err(e) => Err(e),
         }?;
+        let ironwood_balance = match self
+            .spendable_balance::<IronwoodNote>(account_id, include_potentially_spent_notes)
+        {
+            Ok(zats) => Ok(zats),
+            Err(BalanceError::KeyError(KeyError::NoViewCapability)) => Ok(Zatoshis::ZERO),
+            Err(e) => Err(e),
+        }?;
         let sapling_balance = match self
             .spendable_balance::<SaplingNote>(account_id, include_potentially_spent_notes)
         {
@@ -600,7 +607,9 @@ impl LightWallet {
             Err(e) => Err(e),
         }?;
 
-        (orchard_balance + sapling_balance).ok_or(BalanceError::Overflow)
+        (orchard_balance + ironwood_balance)
+            .and_then(|shielded| shielded + sapling_balance)
+            .ok_or(BalanceError::Overflow)
     }
 }
 

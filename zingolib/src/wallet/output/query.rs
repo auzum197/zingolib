@@ -212,4 +212,9 @@ impl OutputQuery {
     pub fn orchard(&self) -> bool {
         self.pools.orchard
     }
+    /// will the query include ironwood notes?
+    #[must_use]
+    pub fn ironwood(&self) -> bool {
+        self.pools.ironwood
+    }
 }

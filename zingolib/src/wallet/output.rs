@@ -204,6 +204,13 @@ impl LightWallet {
                 }
             }
         }
+        if query.ironwood() {
+            for output in transaction.ironwood_notes() {
+                if self.query_output_spend_status(query.spend_status, output) {
+                    sum += output.value();
+                }
+            }
+        }
         sum
     }
 
@@ -270,6 +277,19 @@ impl LightWallet {
         {
             return Err(WalletError::CheckpointNotFound {
                 shielded_protocol: ShieldedPool::Sapling,
+                height: anchor_height,
+            });
+        }
+        if self
+            .shard_trees
+            .ironwood
+            .store()
+            .get_checkpoint(&anchor_height)
+            .expect("infallible")
+            .is_none()
+        {
+            return Err(WalletError::CheckpointNotFound {
+                shielded_protocol: ShieldedPool::Ironwood,
                 height: anchor_height,
             });
         }

@@ -335,12 +335,13 @@ pub(crate) fn scan_transaction(
             .map(|action| (IronwoodDomain::for_action(action), action.clone()))
             .collect();
 
-        // The decrypted-note-data lookup is deliberately lenient here, unlike
-        // the sapling and orchard passes: an ironwood output can decrypt in a
-        // confirmed transaction the compact scan never saw (a server that
-        // does not serve ironwood actions yet), so a missing entry falls back
-        // to deriving the nullifier from the full viewing key and leaving the
-        // position unset until a compact scan supplies it.
+        // The decrypted-note-data lookup tolerates one asymmetry with the
+        // sapling and orchard passes: a confirmed ironwood output can decrypt
+        // here without the compact scan ever seeing it, when the server does
+        // not serve ironwood actions. In that case (no ironwood entries
+        // anywhere in the scanned range) the nullifier is derived from the
+        // full viewing key and the position stays unset until a compact scan
+        // supplies it.
         scan_incoming_notes::<
             IronwoodDomain,
             Action<Signature<SpendAuth>>,
@@ -354,17 +355,21 @@ pub(crate) fn scan_transaction(
             &ironwood_actions,
             None,
         )?;
-        for note in &mut ironwood_notes {
-            if let Some((nullifier, position)) = decrypted_note_data
-                .and_then(|d| d.ironwood_nullifiers_and_positions.get(&note.output_id))
-            {
-                note.nullifier = Some(*nullifier);
-                note.position = Some(*position);
-            } else if let Some(fvk) = ufvks
-                .get(&note.key_id.account_id)
-                .and_then(zcash_keys::keys::UnifiedFullViewingKey::orchard)
-            {
-                note.nullifier = Some(note.note.nullifier(fvk));
+        if let Some(data) = decrypted_note_data {
+            for note in &mut ironwood_notes {
+                if let Some((nullifier, position)) =
+                    data.ironwood_nullifiers_and_positions.get(&note.output_id)
+                {
+                    note.nullifier = Some(*nullifier);
+                    note.position = Some(*position);
+                } else if !data.ironwood_nullifiers_and_positions.is_empty() {
+                    return Err(ScanError::DecryptedNoteDataNotFound(note.output_id));
+                } else if let Some(fvk) = ufvks
+                    .get(&note.key_id.account_id)
+                    .and_then(zcash_keys::keys::UnifiedFullViewingKey::orchard)
+                {
+                    note.nullifier = Some(note.note.nullifier(fvk));
+                }
             }
         }
 
