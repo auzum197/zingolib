@@ -1493,16 +1493,19 @@ impl From<MemoryShardStore<MerkleHashOrchard, BlockHeight>> for IronwoodShardSto
 /// Constructs an empty store of the implementing type. Lets generic
 /// (de)serialization code build a placeholder store without knowing whether the
 /// concrete store is a bare [`MemoryShardStore`] or a pool-specific newtype.
+#[cfg(feature = "wallet_essentials")]
 pub(crate) trait EmptyShardStore {
     fn empty_store() -> Self;
 }
 
+#[cfg(feature = "wallet_essentials")]
 impl<H, C: Ord> EmptyShardStore for MemoryShardStore<H, C> {
     fn empty_store() -> Self {
         MemoryShardStore::empty()
     }
 }
 
+#[cfg(feature = "wallet_essentials")]
 impl EmptyShardStore for IronwoodShardStore {
     fn empty_store() -> Self {
         IronwoodShardStore::empty()
