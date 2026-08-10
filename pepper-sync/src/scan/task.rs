@@ -278,12 +278,13 @@ where
             // nullifier refetch batches announce nothing, mirroring the commit side where
             // refetch ranges emit no `RangeScanned`
             if batch.scan_range.priority() != ScanPriority::ScannedWithoutMapping {
-                let (sapling_outputs, orchard_outputs) = batch.output_counts();
+                let (sapling_outputs, orchard_outputs, ironwood_outputs) = batch.output_counts();
                 self.events.emit(SyncEvent::BatchScanStarted {
                     range: batch.scan_range.block_range().clone(),
                     priority: batch.scan_range.priority(),
                     sapling_outputs,
                     orchard_outputs,
+                    ironwood_outputs,
                 });
             }
             worker.add_scan_task(batch);
@@ -373,8 +374,10 @@ where
                 let mut retry_height = scan_task.scan_range.block_range().start;
                 let mut sapling_output_count = 0;
                 let mut orchard_output_count = 0;
+                let mut ironwood_output_count = 0;
                 let mut sapling_nullifier_count = 0;
                 let mut orchard_nullifier_count = 0;
+                let mut ironwood_nullifier_count = 0;
                 let mut first_batch = true;
 
                 let mut block_stream = {
@@ -478,6 +481,10 @@ where
                             .vtx
                             .iter()
                             .fold(0, |acc, transaction| acc + transaction.actions.len());
+                        ironwood_nullifier_count +=
+                            compact_block.vtx.iter().fold(0, |acc, transaction| {
+                                acc + transaction.ironwood_actions.len()
+                            });
                     } else {
                         if let Some(block) = previous_task_last_block.as_ref()
                             && scan_task.start_seam_block.is_none()
@@ -523,10 +530,18 @@ where
                             .vtx
                             .iter()
                             .fold(0, |acc, transaction| acc + transaction.actions.len());
+                        ironwood_output_count +=
+                            compact_block.vtx.iter().fold(0, |acc, transaction| {
+                                acc + transaction.ironwood_actions.len()
+                            });
                     }
 
-                    if sapling_output_count + orchard_output_count > max_batch_outputs
-                        || sapling_nullifier_count + orchard_nullifier_count > MAX_BATCH_NULLIFIERS
+                    if sapling_output_count + orchard_output_count + ironwood_output_count
+                        > max_batch_outputs
+                        || sapling_nullifier_count
+                            + orchard_nullifier_count
+                            + ironwood_nullifier_count
+                            > MAX_BATCH_NULLIFIERS
                     {
                         let (full_batch, new_batch) = scan_task
                             .clone()
@@ -542,8 +557,10 @@ where
                         scan_task = new_batch;
                         sapling_output_count = 0;
                         orchard_output_count = 0;
+                        ironwood_output_count = 0;
                         sapling_nullifier_count = 0;
                         orchard_nullifier_count = 0;
+                        ironwood_nullifier_count = 0;
                     }
 
                     retry_height = get_compact_block_height(&compact_block) + 1;
@@ -777,23 +794,27 @@ pub(crate) struct ScanTask {
 }
 
 impl ScanTask {
-    /// Returns the (sapling, orchard) note commitment counts across the task's compact blocks.
+    /// Returns the (sapling, orchard, ironwood) note commitment counts across the task's compact
+    /// blocks.
     ///
     /// Matches the quantities a consumer later receives on the pairing
     /// [`crate::events::SyncEvent::RangeScanned`], which sums tree-size deltas over the same
     /// blocks.
-    fn output_counts(&self) -> (u32, u32) {
-        self.compact_blocks.iter().fold((0u32, 0u32), |acc, block| {
-            block
-                .vtx
-                .iter()
-                .fold(acc, |(sapling, orchard), transaction| {
-                    (
-                        sapling + transaction.outputs.len() as u32,
-                        orchard + transaction.actions.len() as u32,
-                    )
-                })
-        })
+    fn output_counts(&self) -> (u32, u32, u32) {
+        self.compact_blocks
+            .iter()
+            .fold((0u32, 0u32, 0u32), |acc, block| {
+                block
+                    .vtx
+                    .iter()
+                    .fold(acc, |(sapling, orchard, ironwood), transaction| {
+                        (
+                            sapling + transaction.outputs.len() as u32,
+                            orchard + transaction.actions.len() as u32,
+                            ironwood + transaction.ironwood_actions.len() as u32,
+                        )
+                    })
+            })
     }
 
     pub(crate) fn from_parts(
@@ -910,11 +931,16 @@ mod tests {
 
     use super::ScanTask;
 
-    fn compact_block(sapling_outputs: usize, orchard_actions: usize) -> CompactBlock {
+    fn compact_block(
+        sapling_outputs: usize,
+        orchard_actions: usize,
+        ironwood_actions: usize,
+    ) -> CompactBlock {
         CompactBlock {
             vtx: vec![CompactTx {
                 outputs: vec![CompactSaplingOutput::default(); sapling_outputs],
                 actions: vec![CompactOrchardAction::default(); orchard_actions],
+                ironwood_actions: vec![CompactOrchardAction::default(); ironwood_actions],
                 ..Default::default()
             }],
             ..Default::default()
@@ -934,11 +960,11 @@ mod tests {
             HashMap::new(),
         );
         scan_task.compact_blocks = vec![
-            compact_block(2, 1),
-            compact_block(0, 0),
-            compact_block(3, 5),
+            compact_block(2, 1, 4),
+            compact_block(0, 0, 0),
+            compact_block(3, 5, 3),
         ];
 
-        assert_eq!(scan_task.output_counts(), (5, 6));
+        assert_eq!(scan_task.output_counts(), (5, 6, 7));
     }
 }

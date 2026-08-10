@@ -9,11 +9,11 @@ use zip32::DiversifierIndex;
 use orchard::tree::MerkleHashOrchard;
 use shardtree::ShardTree;
 use shardtree::store::memory::MemoryShardStore;
-use shardtree::store::{Checkpoint, ShardStore, TreeState};
+use shardtree::store::{Checkpoint, TreeState};
 use zcash_keys::keys::UnifiedFullViewingKey;
 use zcash_primitives::transaction::TxId;
 use zcash_protocol::consensus::BlockHeight;
-use zcash_protocol::{PoolType, ShieldedProtocol};
+use zcash_protocol::{PoolType, ShieldedPool};
 use zip32::AccountId;
 
 use crate::error::{ServerError, SyncError};
@@ -23,7 +23,7 @@ use crate::wallet::{
     NullifierMap, OutputId, ShardTrees, SyncState, WalletBlock, WalletTransaction,
 };
 use crate::witness::LocatedTreeData;
-use crate::{Orchard, Sapling, SyncDomain, client, set_transactions_failed};
+use crate::{Ironwood, Orchard, Sapling, SyncDomain, client, set_transactions_failed};
 
 use super::{FetchRequest, ScanTarget, witness};
 
@@ -179,6 +179,9 @@ pub trait SyncNullifiers: SyncWallet {
         self.get_nullifiers_mut()?
             .orchard
             .append(&mut nullifiers.orchard);
+        self.get_nullifiers_mut()?
+            .ironwood
+            .append(&mut nullifiers.ironwood);
 
         Ok(())
     }
@@ -191,6 +194,9 @@ pub trait SyncNullifiers: SyncWallet {
             .retain(|_, scan_target| scan_target.block_height <= truncate_height);
         nullifier_map
             .orchard
+            .retain(|_, scan_target| scan_target.block_height <= truncate_height);
+        nullifier_map
+            .ironwood
             .retain(|_, scan_target| scan_target.block_height <= truncate_height);
 
         Ok(())
@@ -253,6 +259,7 @@ pub trait SyncShardTrees: SyncWallet {
         highest_scanned_height: BlockHeight,
         sapling_located_trees: Vec<LocatedTreeData<sapling_crypto::Node>>,
         orchard_located_trees: Vec<LocatedTreeData<MerkleHashOrchard>>,
+        ironwood_located_trees: Vec<LocatedTreeData<MerkleHashOrchard>>,
     ) -> impl std::future::Future<Output = Result<ShardTreeTiming, SyncError<Self::Error>>> + Send
     where
         Self: std::marker::Send,
@@ -296,6 +303,7 @@ pub trait SyncShardTrees: SyncWallet {
                 timing.frontiers += add_checkpoint::<
                     Sapling,
                     sapling_crypto::Node,
+                    _,
                     { sapling_crypto::NOTE_COMMITMENT_TREE_DEPTH },
                     { witness::SHARD_HEIGHT },
                 >(
@@ -308,6 +316,7 @@ pub trait SyncShardTrees: SyncWallet {
                 timing.frontiers += add_checkpoint::<
                     Orchard,
                     MerkleHashOrchard,
+                    _,
                     { orchard::NOTE_COMMITMENT_TREE_DEPTH as u8 },
                     { witness::SHARD_HEIGHT },
                 >(
@@ -315,6 +324,19 @@ pub trait SyncShardTrees: SyncWallet {
                     checkpoint_height,
                     &orchard_located_trees,
                     &mut shard_trees.orchard,
+                )
+                .await?;
+                timing.frontiers += add_checkpoint::<
+                    Ironwood,
+                    MerkleHashOrchard,
+                    _,
+                    { orchard::NOTE_COMMITMENT_TREE_DEPTH as u8 },
+                    { witness::SHARD_HEIGHT },
+                >(
+                    fetch_request_sender.clone(),
+                    checkpoint_height,
+                    &ironwood_located_trees,
+                    &mut shard_trees.ironwood,
                 )
                 .await?;
             }
@@ -326,6 +348,7 @@ pub trait SyncShardTrees: SyncWallet {
             let insert_started = Instant::now();
             insert_located_trees(&mut shard_trees.sapling, sapling_located_trees)?;
             insert_located_trees(&mut shard_trees.orchard, orchard_located_trees)?;
+            insert_located_trees(&mut shard_trees.ironwood, ironwood_located_trees)?;
             timing.insert_tree = insert_started.elapsed();
 
             Ok(timing)
@@ -346,6 +369,10 @@ pub trait SyncShardTrees: SyncWallet {
                 ShardTree::new(MemoryShardStore::empty(), MAX_REORG_ALLOWANCE as usize);
             shard_trees.orchard =
                 ShardTree::new(MemoryShardStore::empty(), MAX_REORG_ALLOWANCE as usize);
+            shard_trees.ironwood = ShardTree::new(
+                crate::wallet::IronwoodShardStore::empty(),
+                MAX_REORG_ALLOWANCE as usize,
+            );
         } else {
             if !self
                 .get_shard_trees_mut()
@@ -365,10 +392,22 @@ pub trait SyncShardTrees: SyncWallet {
                 .orchard
                 .truncate_to_checkpoint(&truncate_height)?
             {
-                tracing::error!("Sapling shard tree is broken! Beginning rescan.");
+                tracing::error!("Orchard shard tree is broken! Beginning rescan.");
                 return Err(SyncError::TruncationError(
                     truncate_height,
                     PoolType::ORCHARD,
+                ));
+            }
+            if !self
+                .get_shard_trees_mut()
+                .map_err(SyncError::WalletError)?
+                .ironwood
+                .truncate_to_checkpoint(&truncate_height)?
+            {
+                tracing::error!("Ironwood shard tree is broken! Beginning rescan.");
+                return Err(SyncError::TruncationError(
+                    truncate_height,
+                    PoolType::IRONWOOD,
                 ));
             }
         }
@@ -382,16 +421,17 @@ pub trait SyncShardTrees: SyncWallet {
 /// `insert_tree` call. This is the commit-phase insert shared by `update_shard_trees`, the
 /// benchmarks, and the tests, so all three exercise the same code and any change to the commit
 /// strategy applies everywhere at once.
-pub(crate) fn insert_located_trees<L, const DEPTH: u8, const SHARD_HEIGHT: u8>(
-    shard_tree: &mut shardtree::ShardTree<
-        shardtree::store::memory::MemoryShardStore<L, BlockHeight>,
-        DEPTH,
-        SHARD_HEIGHT,
-    >,
+pub(crate) fn insert_located_trees<L, S, const DEPTH: u8, const SHARD_HEIGHT: u8>(
+    shard_tree: &mut shardtree::ShardTree<S, DEPTH, SHARD_HEIGHT>,
     located_trees: Vec<LocatedTreeData<L>>,
 ) -> Result<(), shardtree::error::ShardTreeError<std::convert::Infallible>>
 where
     L: Clone + PartialEq + incrementalmerkletree::Hashable,
+    S: shardtree::store::ShardStore<
+            H = L,
+            CheckpointId = BlockHeight,
+            Error = std::convert::Infallible,
+        >,
 {
     for tree in located_trees {
         shard_tree.insert_tree(tree.subtree, tree.checkpoints)?;
@@ -402,18 +442,19 @@ where
 /// Adds a checkpoint at `checkpoint_height`. Returns the wall-clock time spent on an awaited
 /// `get_frontiers` fetch (zero when the checkpoint resolves without a network round trip), for
 /// commit-phase instrumentation.
-async fn add_checkpoint<D, L, const DEPTH: u8, const SHARD_HEIGHT: u8>(
+async fn add_checkpoint<D, L, S, const DEPTH: u8, const SHARD_HEIGHT: u8>(
     fetch_request_sender: mpsc::UnboundedSender<FetchRequest>,
     checkpoint_height: BlockHeight,
     located_trees: &[LocatedTreeData<L>],
-    shard_tree: &mut shardtree::ShardTree<
-        shardtree::store::memory::MemoryShardStore<L, BlockHeight>,
-        DEPTH,
-        SHARD_HEIGHT,
-    >,
+    shard_tree: &mut shardtree::ShardTree<S, DEPTH, SHARD_HEIGHT>,
 ) -> Result<Duration, ServerError>
 where
     L: Clone + PartialEq + incrementalmerkletree::Hashable,
+    S: shardtree::store::ShardStore<
+            H = L,
+            CheckpointId = BlockHeight,
+            Error = std::convert::Infallible,
+        >,
     D: SyncDomain,
 {
     let mut frontier_fetch = Duration::ZERO;
@@ -443,8 +484,9 @@ where
                 client::get_frontiers(fetch_request_sender.clone(), checkpoint_height).await?;
             frontier_fetch = fetch_started.elapsed();
             let tree_size = match D::SHIELDED_PROTOCOL {
-                ShieldedProtocol::Sapling => frontiers.final_sapling_tree().tree_size(),
-                ShieldedProtocol::Orchard => frontiers.final_orchard_tree().tree_size(),
+                ShieldedPool::Sapling => frontiers.final_sapling_tree().tree_size(),
+                ShieldedPool::Orchard => frontiers.final_orchard_tree().tree_size(),
+                ShieldedPool::Ironwood => frontiers.final_ironwood_tree().tree_size(),
             };
             if tree_size == 0 {
                 TreeState::Empty

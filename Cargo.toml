@@ -15,11 +15,11 @@ resolver = "2"
 [workspace.dependencies]
 ### Workspace
 pepper-sync = { path = "pepper-sync" } # NOTE: for development between releases
-# zingo-memo = { path = "zingo-memo" } # NOTE: for development between releases
-zingo-memo = "0.1.1"
+zingo-memo = { path = "zingo-memo" } # NOTE: for development between releases
+# zingo-memo = "0.1.1"
 zingo-price = { path = "zingo-price" }
-# zingo-status = { path = "zingo-status" } # NOTE: for development between releases
-zingo-status = "0.2.1"
+zingo-status = { path = "zingo-status" } # NOTE: for development between releases
+# zingo-status = "0.2.1"
 zingolib = { path = "zingolib" }
 
 ### Tests and Integration Tests
@@ -28,8 +28,11 @@ portpicker = "0.1"
 proptest = "1.6.0"
 tempfile = "3"
 test-log = "0.2"
-zcash_local_net = { git = "https://github.com/zingolabs/infrastructure.git", tag = "zcash_local_net_v0.6.0" }
-zingo_test_vectors = { git = "https://github.com/zingolabs/infrastructure.git", tag = "zcash_local_net_v0.6.0" }
+zcash_local_net = { git = "https://github.com/zingolabs/infrastructure.git", rev = "537f84d3d81b228c06ae82365f306ff364e164da", features = [
+    "legacy-stack",
+] }
+zingo-consensus = { git = "https://github.com/zingolabs/infrastructure.git", rev = "537f84d3d81b228c06ae82365f306ff364e164da" }
+zingo_test_vectors = { git = "https://github.com/zingolabs/infrastructure.git", rev = "537f84d3d81b228c06ae82365f306ff364e164da" }
 
 ### Documentation
 indoc = "2"
@@ -41,31 +44,35 @@ tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 
 ### Zingo-common
+# The `rebuild-proto` feature regenerates the bindings from the patched crate's
+# proto files (see [patch.crates-io]), which carry the Ironwood fields the
+# checked-in generated code lacks. Requires `protoc`.
+lightwallet-protocol = { version = "0.3.0", features = ["rebuild-proto"] }
 zingo-netutils = { version = "5.0.1", features = ["globally-public-transparent"] }
-zingo_common_components = "0.3.1"
+zingo_common_components = "0.4.0"
 
 ### Zcash
 incrementalmerkletree = "0.8.2"
-orchard = "0.14.0"
+orchard = "0.15.0"
 sapling-crypto = "0.7.0"
-shardtree = "0.6.2"
-zcash_address = "0.12.0"
-zcash_client_backend = { version = "0.23.0", features = [
+shardtree = "0.7.1"
+zcash_address = "0.13.0"
+zcash_client_backend = { version = "0.24.0-rc.1", features = [
     "lightwalletd-tonic",
     "orchard",
     "transparent-inputs",
 ] }
 zcash_encoding = "0.4.0"
-zcash_keys = { version = "0.14.0", features = [
+zcash_keys = { version = "0.15.0", features = [
     "transparent-inputs",
     "sapling",
     "orchard",
 ] }
-zcash_note_encryption = "0.4.1"
-zcash_primitives = "0.28.0"
-zcash_proofs = "0.28.0"
-zcash_protocol = "0.9.0" # public API (TODO: remove from public API)
-zcash_transparent = "0.8.0"
+zcash_note_encryption = "0.4.2"
+zcash_primitives = "0.29.0"
+zcash_proofs = "0.29.0"
+zcash_protocol = "0.10.0" # public API (TODO: remove from public API)
+zcash_transparent = "0.9.0"
 
 ### Blockchain Protocol
 bip0039 = { version = "0.14", features = ["rand"] }
@@ -135,6 +142,12 @@ rust-embed = "8"
 opt-level = 3
 
 [patch.crates-io]
+# Ironwood (NU6.3) proto fields (CompactTx.ironwoodActions, TreeState.ironwoodTree,
+# ShieldedProtocol.ironwood, ChainMetadata.ironwoodCommitmentTreeSize). The rev is
+# lightwallet-protocol-rust main after the Ironwood protos merged; the crate version
+# is still 0.3.0. The generated code on that rev predates the proto change, so the
+# consumer must enable its `rebuild-proto` feature (requires `protoc`).
+lightwallet-protocol = { git = "https://github.com/zingolabs/lightwallet-protocol-rust", rev = "9bdfdc77eb283f2a3d26c27100cc2ac90148cd93" }
 time = { git = "https://github.com/time-rs/time", tag = "v0.3.47" }
 # Lazy gRPC connect so opening a wallet works offline (auzum197/zingo-common#1, merged to dev).
 zingo-netutils = { git = "https://github.com/auzum197/zingo-common", branch = "dev" }

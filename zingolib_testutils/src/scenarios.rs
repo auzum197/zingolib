@@ -17,7 +17,7 @@ use std::path::PathBuf;
 
 use portpicker::Port;
 use tempfile::TempDir;
-use zcash_local_net::PoolType;
+use zcash_protocol::PoolType;
 
 use zcash_local_net::LocalNet;
 use zcash_local_net::ProcessId;
@@ -29,6 +29,65 @@ use zcash_local_net::validator::{Validator, ValidatorConfig};
 use network_combo::DefaultIndexer;
 use network_combo::DefaultValidator;
 use zingo_common_components::protocol::ActivationHeights;
+
+/// Bridges [`zingo_common_components::protocol::ActivationHeights`] (the type
+/// carried by zingolib's `ChainType::Regtest`) to the identically-shaped
+/// [`zingo_consensus::ActivationHeights`] the `zcash_local_net` validators now
+/// expect. The two are distinct crates with the same per-upgrade fields.
+fn to_consensus_activation_heights(
+    heights: &ActivationHeights,
+) -> zingo_consensus::ActivationHeights {
+    zingo_consensus::ActivationHeights::builder()
+        .set_overwinter(heights.overwinter())
+        .set_sapling(heights.sapling())
+        .set_blossom(heights.blossom())
+        .set_heartwood(heights.heartwood())
+        .set_canopy(heights.canopy())
+        .set_nu5(heights.nu5())
+        .set_nu6(heights.nu6())
+        .set_nu6_1(heights.nu6_1())
+        .set_nu6_2(heights.nu6_2())
+        .set_nu6_3(heights.nu6_3())
+        .set_nu7(heights.nu7())
+        .build()
+}
+
+/// Maps the shielded/transparent [`PoolType`] a scenario mines to onto the
+/// validator's [`zingo_consensus::MinerPool`]. Ironwood is Orchard-shaped and
+/// not a distinct miner target, so it mines to Orchard.
+fn pool_type_to_miner_pool(pool: PoolType) -> zingo_consensus::MinerPool {
+    match pool {
+        PoolType::Transparent => zingo_consensus::MinerPool::Transparent,
+        PoolType::Shielded(zcash_protocol::ShieldedPool::Sapling) => {
+            zingo_consensus::MinerPool::Sapling
+        }
+        PoolType::Shielded(
+            zcash_protocol::ShieldedPool::Orchard | zcash_protocol::ShieldedPool::Ironwood,
+        ) => zingo_consensus::MinerPool::Orchard,
+    }
+}
+
+/// The reverse of `to_consensus_activation_heights`: the validators report
+/// their schedule as [`zingo_consensus::ActivationHeights`], but zingolib's
+/// `ChainType::Regtest` and the client builders consume
+/// [`zingo_common_components::protocol::ActivationHeights`].
+pub fn from_consensus_activation_heights(
+    heights: zingo_consensus::ActivationHeights,
+) -> ActivationHeights {
+    ActivationHeights::builder()
+        .set_overwinter(heights.overwinter())
+        .set_sapling(heights.sapling())
+        .set_blossom(heights.blossom())
+        .set_heartwood(heights.heartwood())
+        .set_canopy(heights.canopy())
+        .set_nu5(heights.nu5())
+        .set_nu6(heights.nu6())
+        .set_nu6_1(heights.nu6_1())
+        .set_nu6_2(heights.nu6_2())
+        .set_nu6_3(heights.nu6_3())
+        .set_nu7(heights.nu7())
+        .build()
+}
 use zingo_test_vectors::{FUND_OFFLOAD_ORCHARD_ONLY, seeds};
 use zingolib::config::WalletConfig;
 use zingolib::config::{ChainType, ClientConfig};
@@ -93,7 +152,11 @@ where
     <I as Process>::Config: Send + IndexerConfig + Default,
 {
     let mut validator_config = <V as Process>::Config::default();
-    validator_config.set_test_parameters(mine_to_pool, configured_activation_heights, chain_cache);
+    validator_config.set_test_parameters(
+        pool_type_to_miner_pool(mine_to_pool),
+        to_consensus_activation_heights(&configured_activation_heights),
+        chain_cache,
+    );
     let mut indexer_config = <I as Process>::Config::default();
     indexer_config.set_listen_port(indexer_listen_port);
     LocalNet::launch_from_two_configs(validator_config, indexer_config)
@@ -501,7 +564,10 @@ pub async fn funded_orchard_mobileclient(value: u64) -> LocalNet<DefaultValidato
         tempfile::tempdir().unwrap(),
     );
     let mut faucet = client_builder
-        .build_faucet(true, local_net.validator().get_activation_heights().await)
+        .build_faucet(
+            true,
+            from_consensus_activation_heights(local_net.validator().get_activation_heights().await),
+        )
         .await;
     let recipient = client_builder
         .build_client(
@@ -512,7 +578,7 @@ pub async fn funded_orchard_mobileclient(value: u64) -> LocalNet<DefaultValidato
                 wallet_settings: default_test_wallet_settings(),
             },
             true,
-            local_net.validator().get_activation_heights().await,
+            from_consensus_activation_heights(local_net.validator().get_activation_heights().await),
         )
         .await;
     faucet.sync_and_await().await.unwrap();
@@ -537,7 +603,10 @@ pub async fn funded_orchard_with_3_txs_mobileclient(
         tempfile::tempdir().unwrap(),
     );
     let mut faucet = client_builder
-        .build_faucet(true, local_net.validator().get_activation_heights().await)
+        .build_faucet(
+            true,
+            from_consensus_activation_heights(local_net.validator().get_activation_heights().await),
+        )
         .await;
     let mut recipient = client_builder
         .build_client(
@@ -548,7 +617,7 @@ pub async fn funded_orchard_with_3_txs_mobileclient(
                 wallet_settings: default_test_wallet_settings(),
             },
             true,
-            local_net.validator().get_activation_heights().await,
+            from_consensus_activation_heights(local_net.validator().get_activation_heights().await),
         )
         .await;
     increase_height_and_wait_for_client(&local_net, &mut faucet, 1)
@@ -602,7 +671,10 @@ pub async fn funded_transparent_mobileclient(
         tempfile::tempdir().unwrap(),
     );
     let mut faucet = client_builder
-        .build_faucet(true, local_net.validator().get_activation_heights().await)
+        .build_faucet(
+            true,
+            from_consensus_activation_heights(local_net.validator().get_activation_heights().await),
+        )
         .await;
     let mut recipient = client_builder
         .build_client(
@@ -613,7 +685,7 @@ pub async fn funded_transparent_mobileclient(
                 wallet_settings: default_test_wallet_settings(),
             },
             true,
-            local_net.validator().get_activation_heights().await,
+            from_consensus_activation_heights(local_net.validator().get_activation_heights().await),
         )
         .await;
     increase_height_and_wait_for_client(&local_net, &mut faucet, 1)
@@ -650,7 +722,10 @@ pub async fn funded_orchard_sapling_transparent_shielded_mobileclient(
         tempfile::tempdir().unwrap(),
     );
     let mut faucet = client_builder
-        .build_faucet(true, local_net.validator().get_activation_heights().await)
+        .build_faucet(
+            true,
+            from_consensus_activation_heights(local_net.validator().get_activation_heights().await),
+        )
         .await;
     let mut recipient = client_builder
         .build_client(
@@ -661,7 +736,7 @@ pub async fn funded_orchard_sapling_transparent_shielded_mobileclient(
                 wallet_settings: default_test_wallet_settings(),
             },
             true,
-            local_net.validator().get_activation_heights().await,
+            from_consensus_activation_heights(local_net.validator().get_activation_heights().await),
         )
         .await;
     increase_height_and_wait_for_client(&local_net, &mut faucet, 1)
