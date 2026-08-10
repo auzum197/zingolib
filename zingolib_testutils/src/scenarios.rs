@@ -67,7 +67,7 @@ fn pool_type_to_miner_pool(pool: PoolType) -> zingo_consensus::MinerPool {
     }
 }
 
-/// The reverse of [`to_consensus_activation_heights`]: the validators report
+/// The reverse of `to_consensus_activation_heights`: the validators report
 /// their schedule as [`zingo_consensus::ActivationHeights`], but zingolib's
 /// `ChainType::Regtest` and the client builders consume
 /// [`zingo_common_components::protocol::ActivationHeights`].
