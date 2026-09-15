@@ -175,7 +175,7 @@ impl LightWallet {
                 }
             }
         }
-        let uas_bytes = match zingo_memo::create_wallet_internal_memo_version_1(
+        let uas_bytes = match zingolib_memo::create_wallet_internal_memo_version_1(
             &self.chain_type,
             recipient_uas.as_slice(),
             refund_address_indexes.as_slice(),

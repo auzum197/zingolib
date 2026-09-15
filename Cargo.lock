@@ -1991,10 +1991,10 @@ dependencies = [
  "zcash_protocol",
  "zcash_transparent",
  "zingo-netutils",
- "zingo-status",
  "zingo_common_components",
  "zingo_test_vectors",
  "zingolib",
+ "zingolib-status",
  "zingolib_testutils",
  "zip32",
 ]
@@ -2371,9 +2371,9 @@ dependencies = [
  "zcash_primitives",
  "zcash_protocol",
  "zcash_transparent",
- "zingo-memo",
  "zingo-netutils",
- "zingo-status",
+ "zingolib-memo",
+ "zingolib-status",
  "zip32",
 ]
 
@@ -4972,17 +4972,6 @@ version = "0.1.0"
 source = "git+https://github.com/zingolabs/infrastructure.git?rev=537f84d3d81b228c06ae82365f306ff364e164da#537f84d3d81b228c06ae82365f306ff364e164da"
 
 [[package]]
-name = "zingo-memo"
-version = "0.1.1"
-dependencies = [
- "rand 0.8.7",
- "zcash_address",
- "zcash_encoding",
- "zcash_keys",
- "zcash_protocol",
-]
-
-[[package]]
 name = "zingo-netutils"
 version = "5.0.1"
 source = "git+https://github.com/auzum197/zingo-common?branch=dev#0cc4060b0ef3e649a1083e2ae37e0addbb194cba"
@@ -4993,27 +4982,6 @@ dependencies = [
  "tokio-rustls",
  "tokio-stream",
  "tonic",
-]
-
-[[package]]
-name = "zingo-price"
-version = "0.1.0"
-dependencies = [
- "byteorder",
- "reqwest",
- "rust_decimal",
- "serde",
- "serde_json",
- "thiserror 2.0.19",
- "zcash_encoding",
-]
-
-[[package]]
-name = "zingo-status"
-version = "0.2.1"
-dependencies = [
- "byteorder",
- "zcash_protocol",
 ]
 
 [[package]]
@@ -5077,13 +5045,45 @@ dependencies = [
  "zcash_protocol",
  "zcash_transparent",
  "zeroize",
- "zingo-memo",
  "zingo-netutils",
- "zingo-price",
- "zingo-status",
  "zingo_common_components",
  "zingo_test_vectors",
+ "zingolib-memo",
+ "zingolib-price",
+ "zingolib-status",
  "zip32",
+]
+
+[[package]]
+name = "zingolib-memo"
+version = "0.1.1"
+dependencies = [
+ "rand 0.8.7",
+ "zcash_address",
+ "zcash_encoding",
+ "zcash_keys",
+ "zcash_protocol",
+]
+
+[[package]]
+name = "zingolib-price"
+version = "0.1.0"
+dependencies = [
+ "byteorder",
+ "reqwest",
+ "rust_decimal",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.19",
+ "zcash_encoding",
+]
+
+[[package]]
+name = "zingolib-status"
+version = "0.2.1"
+dependencies = [
+ "byteorder",
+ "zcash_protocol",
 ]
 
 [[package]]

@@ -20,7 +20,7 @@ use zcash_transparent::keys::NonHardenedChildIndex;
 
 use zingo_common_components::protocol::ActivationHeights;
 use zingo_netutils::lightwallet_protocol::TreeState;
-use zingo_price::PriceList;
+use zingolib_price::PriceList;
 
 use secrecy::SecretString;
 

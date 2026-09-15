@@ -10,7 +10,7 @@ use zcash_protocol::consensus::BlockHeight;
 use zcash_protocol::value::Zatoshis;
 
 use zingo_netutils::Indexer as _;
-use zingo_status::confirmation_status::ConfirmationStatus;
+use zingolib_status::confirmation_status::ConfirmationStatus;
 
 use crate::lightclient::DEFAULT_REQUEST_TIMEOUT;
 use crate::lightclient::LightClient;

@@ -28,8 +28,8 @@ use zcash_protocol::{
 use zcash_transparent::bundle::{
     Authorization as TransparentAuthorization, Bundle as TransparentBundle, TxIn,
 };
-use zingo_memo::ParsedMemo;
-use zingo_status::confirmation_status::ConfirmationStatus;
+use zingolib_memo::ParsedMemo;
+use zingolib_status::confirmation_status::ConfirmationStatus;
 use zip32::AccountId;
 
 use crate::{
@@ -604,7 +604,7 @@ fn parse_encoded_memos<N, Nf: Copy, P>(wallet_notes: &[WalletNote<N, Nf, P>]) ->
         .iter()
         .filter_map(|note| {
             if let Memo::Arbitrary(ref encoded_memo_bytes) = note.memo {
-                match zingo_memo::parse_zingo_memo(*encoded_memo_bytes.as_ref()) {
+                match zingolib_memo::parse_zingolib_memo(*encoded_memo_bytes.as_ref()) {
                     Ok(encoded_memo) => Some(encoded_memo),
                     Err(e) => {
                         tracing::error!("Failed to decode memo data. {e}");

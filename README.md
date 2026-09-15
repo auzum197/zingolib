@@ -60,7 +60,7 @@ The task builds the image if needed, symlinks the image-provided `lightwalletd`,
 Extra nextest flags can be forwarded after the task name, and the default filter can be changed with `ZINGOLIB_NEXTEST_FILTER`.
 
 ```
-makers container-test -p zingo-memo
+makers container-test -p zingolib-memo
 ZINGOLIB_NEXTEST_FILTER='package(zingolib) & not test(slow)' makers container-test
 makers rerun
 ```

@@ -195,8 +195,8 @@ impl LightWallet {
 mod tests {
     use pepper_sync::wallet::WalletTransaction;
     use zcash_primitives::transaction::TxId;
-    use zingo_status::confirmation_status::ConfirmationStatus;
     use zingo_test_vectors::seeds::HOSPITAL_MUSEUM_SEED;
+    use zingolib_status::confirmation_status::ConfirmationStatus;
 
     use crate::{
         config::{ChainType, WalletConfig},

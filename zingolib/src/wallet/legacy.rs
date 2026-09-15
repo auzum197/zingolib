@@ -23,7 +23,7 @@ use zcash_protocol::{
     memo::{Memo, MemoBytes},
 };
 use zingo_netutils::lightwallet_protocol::CompactBlock;
-use zingo_status::confirmation_status::ConfirmationStatus;
+use zingolib_status::confirmation_status::ConfirmationStatus;
 
 use super::{keys::legacy::WalletCapability, traits::ReadableWriteable};
 
@@ -226,7 +226,7 @@ impl TransactionRecordsById {
 #[allow(dead_code)]
 pub struct TransactionRecord {
     /// the relationship of the transaction to the blockchain. can be either Broadcast (to mempool}, or Confirmed.
-    pub status: zingo_status::confirmation_status::ConfirmationStatus,
+    pub status: zingolib_status::confirmation_status::ConfirmationStatus,
     /// Timestamp of Tx. Added in v4
     pub datetime: u64,
     /// Txid of this transaction. It's duplicated here (It is also the Key in the `HashMap` that points to this

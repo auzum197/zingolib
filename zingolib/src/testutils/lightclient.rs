@@ -109,7 +109,7 @@ pub mod from_inputs {
 pub async fn lookup_statuses(
     client: &LightClient,
     txids: nonempty::NonEmpty<TxId>,
-) -> nonempty::NonEmpty<Option<zingo_status::confirmation_status::ConfirmationStatus>> {
+) -> nonempty::NonEmpty<Option<zingolib_status::confirmation_status::ConfirmationStatus>> {
     let wallet = client.wallet().read().await;
 
     txids.map(|txid| {

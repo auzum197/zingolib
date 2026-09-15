@@ -96,7 +96,7 @@ pub fn create_wallet_internal_memo_version_1(
 }
 
 /// Attempts to parse the 511 bytes of a zingo memo
-pub fn parse_zingo_memo(memo: [u8; 511]) -> io::Result<ParsedMemo> {
+pub fn parse_zingolib_memo(memo: [u8; 511]) -> io::Result<ParsedMemo> {
     let mut reader: &[u8] = &memo;
     match CompactSize::read(&mut reader)? {
         0 => Ok(ParsedMemo::Version0 {
@@ -230,7 +230,7 @@ mod tests {
         (ua, serialized_ua)
     }
     #[test]
-    fn parse_zingo_memo_version_n() {
+    fn parse_zingolib_memo_version_n() {
         for test_vector in zingomemo_vectors::UA_TEST_VECTORS {
             let (ua, _serialized_ua) = get_serialiazed_ua(test_vector);
             // version0
@@ -238,7 +238,7 @@ mod tests {
             let version0_bytes =
                 create_wallet_internal_memo_version_0(&MAIN_NETWORK, std::slice::from_ref(&ua))
                     .unwrap();
-            let success_parse = parse_zingo_memo(version0_bytes).expect("To succeed in parse.");
+            let success_parse = parse_zingolib_memo(version0_bytes).expect("To succeed in parse.");
             if let ParsedMemo::Version0 { uas } = success_parse {
                 assert_eq!(uas[0], ua);
             }
@@ -250,7 +250,7 @@ mod tests {
                 &random_rejection_indexes,
             )
             .expect("To create version 1 bytes");
-            let success_parse = parse_zingo_memo(version1_bytes).expect("To succeed in parse.");
+            let success_parse = parse_zingolib_memo(version1_bytes).expect("To succeed in parse.");
             if let ParsedMemo::Version1 {
                 uas,
                 rejection_address_indexes,

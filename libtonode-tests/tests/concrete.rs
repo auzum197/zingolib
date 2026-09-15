@@ -145,7 +145,6 @@ mod fast {
     use zcash_protocol::{PoolType, ShieldedPool, value::Zatoshis};
     use zcash_transparent::keys::NonHardenedChildIndex;
     use zingo_common_components::protocol::ActivationHeights;
-    use zingo_status::confirmation_status::ConfirmationStatus;
     use zingolib::{
         ZENNIES_FOR_ZINGO_REGTEST_ADDRESS,
         config::WalletConfig,
@@ -159,6 +158,7 @@ mod fast {
             summary::data::{SelfSendValueTransfer, SentValueTransfer, ValueTransferKind},
         },
     };
+    use zingolib_status::confirmation_status::ConfirmationStatus;
     use zingolib_testutils::scenarios::increase_height_and_wait_for_client;
     use zip32::AccountId;
 
@@ -1502,7 +1502,6 @@ mod slow {
     use zcash_protocol::value::Zatoshis;
     use zcash_protocol::{PoolType, ShieldedPool};
     use zingo_common_components::protocol::ActivationHeights;
-    use zingo_status::confirmation_status::ConfirmationStatus;
     use zingo_test_vectors::TEST_TXID;
     use zingolib::config::{ChainType, ClientConfig, WalletConfig};
     use zingolib::lightclient::LightClient;
@@ -1522,6 +1521,7 @@ mod slow {
     use zingolib::wallet::summary::data::{
         BasicNoteSummary, OutgoingNoteSummary, SendType, TransactionKind, TransactionSummary,
     };
+    use zingolib_status::confirmation_status::ConfirmationStatus;
     use zingolib_testutils::scenarios::increase_height_and_wait_for_client;
     use zip32::AccountId;
 

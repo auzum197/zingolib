@@ -41,7 +41,7 @@ use pepper_sync::{
         OutputInterface, SaplingNote, SaplingShardStore, traits::SyncWallet,
     },
 };
-use zingo_status::confirmation_status::ConfirmationStatus;
+use zingolib_status::confirmation_status::ConfirmationStatus;
 
 pub struct ZingoAccount(zip32::AccountId, UnifiedFullViewingKey);
 

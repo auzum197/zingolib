@@ -3,9 +3,9 @@ members = [
     "darkside-tests",
     "libtonode-tests",
     "pepper-sync",
-    "zingo-memo",
-    "zingo-price",
-    "zingo-status",
+    "zingolib-memo",
+    "zingolib-price",
+    "zingolib-status",
     "zingolib",
     "zingolib_testutils",
 ]
@@ -14,11 +14,9 @@ resolver = "2"
 [workspace.dependencies]
 ### Workspace
 pepper-sync = { path = "pepper-sync" } # NOTE: for development between releases
-zingo-memo = { path = "zingo-memo" } # NOTE: for development between releases
-# zingo-memo = "0.1.1"
-zingo-price = { path = "zingo-price" }
-zingo-status = { path = "zingo-status" } # NOTE: for development between releases
-# zingo-status = "0.2.1"
+zingolib-memo = { path = "zingolib-memo" }
+zingolib-price = { path = "zingolib-price" }
+zingolib-status = { path = "zingolib-status" }
 zingolib = { path = "zingolib" }
 
 ### Tests and Integration Tests

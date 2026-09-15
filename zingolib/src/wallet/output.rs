@@ -18,7 +18,7 @@ use pepper_sync::wallet::TransparentCoin;
 use pepper_sync::wallet::WalletTransaction;
 use query::OutputQuery;
 use query::OutputSpendStatusQuery;
-use zingo_status::confirmation_status::ConfirmationStatus;
+use zingolib_status::confirmation_status::ConfirmationStatus;
 
 pub mod query;
 
@@ -557,8 +557,8 @@ pub mod tests {
 
     use super::query::{OutputPoolQuery, OutputSpendStatusQuery};
 
-    use zingo_status::confirmation_status::ConfirmationStatus::Confirmed;
-    use zingo_status::confirmation_status::ConfirmationStatus::Mempool;
+    use zingolib_status::confirmation_status::ConfirmationStatus::Confirmed;
+    use zingolib_status::confirmation_status::ConfirmationStatus::Mempool;
 
     #[test]
     fn note_queries() {

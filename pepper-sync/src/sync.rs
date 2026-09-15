@@ -19,7 +19,7 @@ use zingo_netutils::lightwallet_protocol::RawTransaction;
 use zingo_netutils::{Indexer, TransparentIndexer};
 use zip32::AccountId;
 
-use zingo_status::confirmation_status::ConfirmationStatus;
+use zingolib_status::confirmation_status::ConfirmationStatus;
 
 use crate::client::{self, FetchRequest};
 use crate::config::{PerformanceLevel, SyncConfig};
@@ -2048,7 +2048,7 @@ mod test {
         use zcash_primitives::transaction::{TransactionData, TxId, TxVersion};
         use zcash_protocol::consensus::{BlockHeight, BranchId};
         use zcash_protocol::local_consensus::LocalNetwork;
-        use zingo_status::confirmation_status::ConfirmationStatus;
+        use zingolib_status::confirmation_status::ConfirmationStatus;
 
         use crate::config::PerformanceLevel;
         use crate::events::SyncEvent;

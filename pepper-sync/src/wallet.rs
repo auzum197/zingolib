@@ -32,7 +32,7 @@ use zcash_transparent::address::Script;
 use zcash_transparent::bundle::OutPoint;
 
 use zingo_netutils::lightwallet_protocol::CompactBlock;
-use zingo_status::confirmation_status::ConfirmationStatus;
+use zingolib_status::confirmation_status::ConfirmationStatus;
 
 use crate::{
     client::FetchRequest,

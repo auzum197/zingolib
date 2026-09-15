@@ -35,7 +35,7 @@ zcash_primitives = { workspace = true }
 zcash_protocol = { workspace = true }
 zcash_transparent = { workspace = true }
 zingo-netutils = { workspace = true }
-zingo-status = { workspace = true }
+zingolib-status = { workspace = true }
 zingo_test_vectors = { workspace = true }
 zingo_common_components = { workspace = true }
 zip32 = { workspace = true }

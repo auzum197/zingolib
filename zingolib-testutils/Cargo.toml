@@ -1,5 +1,5 @@
 [package]
-name = "zingo-testutils"
+name = "zingolib-testutils"
 version = "0.1.0"
 edition = "2024"
 
@@ -13,7 +13,7 @@ default = ["grpc-proxy"]
 zingolib = { workspace = true, features = ["testutils"] }
 zingo-netutils = { workspace = true }
 zingo-testvectors = { workspace = true }
-zingo-status = { workspace = true }
+zingolib-status = { workspace = true }
 
 zcash_client_backend = { workspace = true, features = [
     "lightwalletd-tonic-transport",

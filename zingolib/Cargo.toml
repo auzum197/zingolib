@@ -61,10 +61,10 @@ zcash_primitives = { workspace = true }
 zcash_proofs = { workspace = true, features = ["download-params"] }
 zcash_protocol = { workspace = true }
 zcash_transparent = { workspace = true }
-zingo-memo = { workspace = true }
+zingolib-memo = { workspace = true }
 zingo-netutils = { workspace = true }
-zingo-price = { workspace = true }
-zingo-status = { workspace = true }
+zingolib-price = { workspace = true }
+zingolib-status = { workspace = true }
 zingo_common_components = { workspace = true }
 zingo_test_vectors = { workspace = true, optional = true }
 zip32.workspace = true
