@@ -1,0 +1,36 @@
+[package]
+name = "zingolib-tui"
+description = "Watch-only terminal wallet for Zcash, built on zingolib."
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+
+[[bin]]
+name = "zingolib-tui"
+path = "src/main.rs"
+
+[dependencies]
+zingolib = { workspace = true }
+pepper-sync = { workspace = true }
+zingolib-status = { workspace = true }
+zingo_common_components = { workspace = true }
+zip32 = { workspace = true }
+zcash_protocol = { workspace = true }
+
+ratatui = { workspace = true }
+crossterm = { workspace = true }
+qrcode = { workspace = true }
+
+clap = { workspace = true, features = ["derive"] }
+chrono = { workspace = true }
+dirs = { workspace = true }
+http = { workspace = true }
+tokio = { workspace = true, features = ["full"] }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+
+[dev-dependencies]
+darkside-tests = { path = "../darkside-tests" }
+zingolib_testutils = { path = "../zingolib_testutils" }
+zcash_keys = { workspace = true }
+tempfile = { workspace = true }

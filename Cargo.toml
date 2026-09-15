@@ -8,6 +8,7 @@ members = [
     "zingolib-status",
     "zingolib",
     "zingolib_testutils",
+    "zingolib-tui",
 ]
 resolver = "2"
 
@@ -130,6 +131,11 @@ clap = "4"
 dirs = "6"
 memuse = "0.2"
 rand = "0.8"
+
+### Terminal UI
+ratatui = "0.30"
+crossterm = "0.29"
+qrcode = { version = "0.14", default-features = false }
 
 ### Misc / not-yet-grouped
 rust-embed = "8"
