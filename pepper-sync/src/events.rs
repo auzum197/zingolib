@@ -27,7 +27,7 @@ use zcash_primitives::transaction::TxId;
 use zcash_protocol::consensus::BlockHeight;
 use zingolib_status::confirmation_status::ConfirmationStatus;
 
-use crate::sync::ScanPriority;
+use crate::sync::{ScanPriority, ScanRange};
 
 /// Wall-clock cost of the commit phase, split into its sub-phases for tuning. The sub-phases
 /// are the named suspects in commit-phase performance work. `other` is the remainder of the
@@ -131,6 +131,12 @@ pub enum SyncEvent {
         already_scanned_ironwood_outputs: u32,
         /// Blocks scanned in previous sessions.
         already_scanned_blocks: u32,
+    },
+    /// A complete snapshot of the scheduler's current chain ranges. This is advisory and is
+    /// replaced by the next snapshot after a lagged stream or a later scheduler change.
+    ScanPlanUpdated {
+        /// Non-overlapping chain ranges with their current scheduler priorities.
+        ranges: Vec<ScanRange>,
     },
     /// A batch was handed to a scan worker. Carries the exact output counts of the batch, so
     /// consumers can render an accurate in-flight progress bar against their measured
@@ -415,6 +421,22 @@ mod tests {
         assert!(matches!(
             rx.try_recv().expect("retained event").event,
             SyncEvent::BatchCommitStarted { range: r } if r == range
+        ));
+    }
+
+    #[test]
+    fn scan_plan_event_retains_scheduler_ranges() {
+        let (emitter, mut rx) = SyncEmitter::new(16);
+        let ranges = vec![ScanRange::from_parts(
+            height(100)..height(200),
+            ScanPriority::ChainTip,
+        )];
+        emitter.emit(SyncEvent::ScanPlanUpdated {
+            ranges: ranges.clone(),
+        });
+        assert!(matches!(
+            rx.try_recv().expect("retained event").event,
+            SyncEvent::ScanPlanUpdated { ranges: received } if received == ranges
         ));
     }
 }

@@ -25,6 +25,7 @@ use std::time::{Duration, Instant};
 
 use pepper_sync::config::{PerformanceLevel, SyncConfig};
 use pepper_sync::events::{ScanTiming, SequencedSyncEvent, SyncEvent};
+use pepper_sync::sync::ScanPriority;
 use tokio::sync::broadcast::error::RecvError;
 
 use zingolib::config::{
@@ -558,6 +559,21 @@ async fn handle_event(event: SequencedSyncEvent, view: &mut View, lc: &LightClie
                 group(u64::from(total_orchard_outputs)),
                 group(u64::from(total_ironwood_outputs)),
                 group(view.outputs_scanned),
+            ));
+        }
+        SyncEvent::ScanPlanUpdated { ranges } => {
+            let pending = ranges
+                .iter()
+                .filter(|range| {
+                    !matches!(
+                        range.priority(),
+                        ScanPriority::Scanned | ScanPriority::ScannedWithoutMapping
+                    )
+                })
+                .count();
+            view.line(&format!(
+                "scheduler: {} ranges, {pending} pending",
+                ranges.len()
             ));
         }
         SyncEvent::BatchScanStarted {

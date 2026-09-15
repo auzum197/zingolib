@@ -394,6 +394,7 @@ where
     let birthday = sync_state
         .wallet_birthday()
         .expect("scan ranges must be non-empty after initialisation");
+    let initial_scan_plan = sync_state.scan_ranges().to_vec();
     let initial_sync_state = &sync_state.initial_sync_state;
     let wallet_tree_bounds = &initial_sync_state.wallet_tree_bounds;
     events.emit(SyncEvent::SessionStarted {
@@ -411,6 +412,9 @@ where
         already_scanned_ironwood_outputs: initial_sync_state.previously_scanned_ironwood_outputs,
         already_scanned_blocks: initial_sync_state.previously_scanned_blocks,
     });
+    events.emit(SyncEvent::ScanPlanUpdated {
+        ranges: initial_scan_plan.clone(),
+    });
     emit_tip_if_advanced(&events, &tip_cell, chain_height);
 
     drop(wallet_guard);
@@ -424,6 +428,7 @@ where
         ufvks.clone(),
         events.clone(),
     );
+    scanner.set_scan_plan(initial_scan_plan);
     scanner.launch(config.performance_level);
 
     // TODO: implement an option for continuous scanning where it doesnt exit when complete
@@ -520,7 +525,11 @@ where
                     },
                 }
 
-                scanner.update(&mut *wallet.write().await, shutdown_mempool.clone(), nullifier_map_limit_exceeded).await?;
+                let mut wallet_guard = wallet.write().await;
+                scanner.update(&mut *wallet_guard, shutdown_mempool.clone(), nullifier_map_limit_exceeded).await?;
+                scanner
+                    .emit_scan_plan_if_changed(&*wallet_guard)
+                    .map_err(SyncError::WalletError)?;
 
                 if matches!(scanner.state, ScannerState::Shutdown) {
                     // wait for mempool monitor to receive mempool transactions

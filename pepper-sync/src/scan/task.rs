@@ -70,6 +70,7 @@ pub(crate) struct Scanner<P> {
     consensus_parameters: P,
     ufvks: HashMap<AccountId, UnifiedFullViewingKey>,
     events: SyncEmitter,
+    last_scan_plan: Vec<ScanRange>,
 }
 
 impl<P> Scanner<P>
@@ -95,7 +96,24 @@ where
             consensus_parameters,
             ufvks,
             events,
+            last_scan_plan: Vec::new(),
         }
+    }
+
+    pub(crate) fn set_scan_plan(&mut self, ranges: Vec<ScanRange>) {
+        self.last_scan_plan = ranges;
+    }
+
+    pub(crate) fn emit_scan_plan_if_changed<W>(&mut self, wallet: &W) -> Result<(), W::Error>
+    where
+        W: SyncWallet,
+    {
+        let ranges = wallet.get_sync_state()?.scan_ranges().to_vec();
+        if ranges != self.last_scan_plan {
+            self.last_scan_plan = ranges.clone();
+            self.events.emit(SyncEvent::ScanPlanUpdated { ranges });
+        }
+        Ok(())
     }
 
     pub(crate) fn launch(&mut self, performance_level: PerformanceLevel) {
