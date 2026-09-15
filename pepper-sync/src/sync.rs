@@ -88,31 +88,6 @@ impl std::fmt::Display for SyncStatus {
     }
 }
 
-impl From<SyncStatus> for json::JsonValue {
-    fn from(value: SyncStatus) -> Self {
-        let scan_ranges: Vec<json::JsonValue> = value
-            .scan_ranges
-            .iter()
-            .map(|range| {
-                json::object! {
-                    "priority" => format!("{:?}", range.priority()),
-                    "start_block" => range.block_range().start.to_string(),
-                    "end_block" => (range.block_range().end - 1).to_string(),
-                }
-            })
-            .collect();
-
-        json::object! {
-            "scan_ranges" => scan_ranges,
-            "sync_start_height" => u32::from(value.sync_start_height),
-            "total_blocks_scanned" => value.total_blocks_scanned,
-            "total_sapling_outputs_scanned" => value.total_sapling_outputs_scanned,
-            "total_orchard_outputs_scanned" => value.total_orchard_outputs_scanned,
-            "total_ironwood_outputs_scanned" => value.total_ironwood_outputs_scanned,
-        }
-    }
-}
-
 /// Returned when [`crate::sync::sync`] successfully completes.
 #[derive(Debug, Clone)]
 #[allow(missing_docs)]
@@ -145,19 +120,6 @@ impl std::fmt::Display for SyncResult {
             self.orchard_outputs_scanned,
             self.ironwood_outputs_scanned,
         )
-    }
-}
-
-impl From<SyncResult> for json::JsonValue {
-    fn from(value: SyncResult) -> Self {
-        json::object! {
-            "sync_start_height" => u32::from(value.sync_start_height),
-            "sync_end_height" => u32::from(value.sync_end_height),
-            "blocks_scanned" => value.blocks_scanned,
-            "sapling_outputs_scanned" => value.sapling_outputs_scanned,
-            "orchard_outputs_scanned" => value.orchard_outputs_scanned,
-            "ironwood_outputs_scanned" => value.ironwood_outputs_scanned,
-        }
     }
 }
 

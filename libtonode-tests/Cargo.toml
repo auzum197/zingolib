@@ -24,7 +24,6 @@ test-log.workspace = true
 bip0039.workspace = true
 incrementalmerkletree.workspace = true
 itertools = { workspace = true }
-json = { workspace = true }
 pepper-sync = { workspace = true }
 shardtree.workspace = true
 tokio = { workspace = true, features = ["full"] }

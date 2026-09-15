@@ -29,7 +29,6 @@ futures = { workspace = true }
 hex = { workspace = true }
 http.workspace = true
 incrementalmerkletree = { workspace = true }
-json = { workspace = true }
 jubjub = { workspace = true }
 log = { workspace = true }
 nonempty.workspace = true

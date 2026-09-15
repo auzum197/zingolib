@@ -11,33 +11,24 @@ pub async fn get_base_address(client: &LightClient, pooltype: PoolType) -> Strin
     match pooltype {
         // Ironwood shares the Orchard receiver in a unified address.
         PoolType::Shielded(ShieldedPool::Orchard | ShieldedPool::Ironwood) => {
-            assert!(
-                client.unified_addresses_json().await[0]["has_orchard"]
-                    .as_bool()
-                    .unwrap()
-            );
-            client.unified_addresses_json().await[0]["encoded_address"]
-                .clone()
-                .to_string()
+            let addresses = client.unified_addresses().await;
+            let address = addresses.values().next().unwrap();
+            assert!(address.has_orchard());
+            address.encode(&client.chain_type())
         }
         PoolType::Shielded(ShieldedPool::Sapling) => {
-            assert!(
-                !client.unified_addresses_json().await[1]["has_orchard"]
-                    .as_bool()
-                    .unwrap()
-            );
-            assert!(
-                client.unified_addresses_json().await[1]["has_sapling"]
-                    .as_bool()
-                    .unwrap()
-            );
-            client.unified_addresses_json().await[1]["encoded_address"]
-                .clone()
-                .to_string()
+            let addresses = client.unified_addresses().await;
+            let address = addresses.values().nth(1).unwrap();
+            assert!(!address.has_orchard());
+            assert!(address.has_sapling());
+            address.encode(&client.chain_type())
         }
-        PoolType::Transparent => client.transparent_addresses_json().await[0]["encoded_address"]
-            .clone()
-            .to_string(),
+        PoolType::Transparent => client
+            .transparent_addresses()
+            .await
+            .into_values()
+            .next()
+            .unwrap(),
     }
 }
 /// Get the total fees paid by a given client (assumes 1 capability per client).

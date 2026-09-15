@@ -1,5 +1,4 @@
 #![forbid(unsafe_code)]
-use json::JsonValue;
 
 use zcash_address::unified::Fvk;
 use zcash_primitives::transaction::fees::zip317::MINIMUM_FEE;
@@ -1184,10 +1183,15 @@ mod fast {
             .generate_unified_address(ReceiverSelection::all_shielded(), zip32::AccountId::ZERO)
             .await
             .unwrap();
-        let addresses = recipient.unified_addresses_json().await;
+        let addresses: Vec<String> = recipient
+            .unified_addresses()
+            .await
+            .into_values()
+            .map(|address| address.encode(&recipient.chain_type()))
+            .collect();
         let address_5000_nonememo_tuples = addresses
-            .members()
-            .map(|ua| (ua["encoded_address"].as_str().unwrap(), 10_000, None))
+            .iter()
+            .map(|address| (address.as_str(), 10_000, None))
             .collect::<Vec<(&str, u64, Option<&str>)>>();
         from_inputs::quick_send(&mut faucet, address_5000_nonememo_tuples)
             .await
@@ -1560,10 +1564,7 @@ mod slow {
                 .await
                 .unwrap()
         );
-        tracing::info!(
-            "{}",
-            JsonValue::from(recipient.value_transfers(true).await.unwrap()).pretty(4)
-        );
+        tracing::info!("{}", recipient.value_transfers(true).await.unwrap());
     }
     #[tokio::test]
     async fn zero_value_change() {
@@ -2069,10 +2070,7 @@ mod slow {
                 .unwrap()
         );
         tracing::info!("{}", recipient.transaction_summaries(false).await.unwrap());
-        tracing::info!(
-            "{}",
-            JsonValue::from(recipient.value_transfers(true).await.unwrap()).pretty(2)
-        );
+        tracing::info!("{}", recipient.value_transfers(true).await.unwrap());
         recipient.rescan_and_await().await.unwrap();
         tracing::info!(
             "{}",
@@ -2082,10 +2080,7 @@ mod slow {
                 .unwrap()
         );
         tracing::info!("{}", recipient.transaction_summaries(false).await.unwrap());
-        tracing::info!(
-            "{}",
-            JsonValue::from(recipient.value_transfers(true).await.unwrap()).pretty(2)
-        );
+        tracing::info!("{}", recipient.value_transfers(true).await.unwrap());
         // TODO: Add asserts!
     }
     #[tokio::test]
@@ -2125,11 +2120,9 @@ mod slow {
                 })
         }));
         assert_eq!(
-            transactions,
-            rescanned_transactions,
-            "Pre-Rescan: {}\n\n\nPost-Rescan: {}\n\n\n",
-            json::stringify_pretty(transactions.clone(), 4),
-            json::stringify_pretty(rescanned_transactions.clone(), 4)
+            transactions, rescanned_transactions,
+            "Pre-Rescan: {:#?}\n\n\nPost-Rescan: {:#?}\n\n\n",
+            transactions, rescanned_transactions
         );
     }
     #[tokio::test]
@@ -2527,10 +2520,7 @@ TransactionSummary {
         faucet.sync_and_await().await.unwrap();
         let faucet_orch = three_blocks_reward + orch_change + u64::from(MINIMUM_FEE);
 
-        tracing::info!(
-            "{}",
-            JsonValue::from(faucet.value_transfers(true).await.unwrap()).pretty(4)
-        );
+        tracing::info!("{}", faucet.value_transfers(true).await.unwrap());
         tracing::info!(
             "{}",
             &faucet
@@ -2722,10 +2712,7 @@ TransactionSummary {
         increase_height_and_wait_for_client(&local_net, &mut recipient, 1)
             .await
             .unwrap();
-        tracing::info!(
-            "{}",
-            json::stringify_pretty(recipient.transaction_summaries(false).await.unwrap(), 4)
-        );
+        tracing::info!("{}", recipient.transaction_summaries(false).await.unwrap());
         let mut txids = recipient
             .transaction_summaries(false)
             .await
@@ -3858,9 +3845,8 @@ TransactionSummary {
         faucet.sync_and_await().await.unwrap();
 
         assert_eq!(
-            JsonValue::from(faucet.do_total_memobytes_to_address().await.unwrap())[&base_uaddress]
-                .pretty(4),
-            "2".to_string()
+            faucet.do_total_memobytes_to_address().await.unwrap().0[&base_uaddress],
+            2
         );
 
         from_inputs::quick_send(&mut faucet, vec![(&base_uaddress, 1_000u64, Some("aaaa"))])
@@ -3870,9 +3856,8 @@ TransactionSummary {
         faucet.sync_and_await().await.unwrap();
 
         assert_eq!(
-            JsonValue::from(faucet.do_total_memobytes_to_address().await.unwrap())[&base_uaddress]
-                .pretty(4),
-            "6".to_string()
+            faucet.do_total_memobytes_to_address().await.unwrap().0[&base_uaddress],
+            6
         );
     }
 

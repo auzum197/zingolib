@@ -1916,12 +1916,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "json"
-version = "0.12.4"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "078e285eafdfb6c4b434e0d31e8cfcb5115b651496faca5749b88fafd4f23bfd"
-
-[[package]]
 name = "jubjub"
 version = "0.10.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1982,7 +1976,6 @@ dependencies = [
  "http",
  "incrementalmerkletree",
  "itertools 0.14.0",
- "json",
  "pepper-sync",
  "proptest",
  "rustls 0.23.42",
@@ -2357,7 +2350,6 @@ dependencies = [
  "futures",
  "hex",
  "incrementalmerkletree",
- "json",
  "jubjub",
  "lightwallet-protocol",
  "memuse",
@@ -5056,7 +5048,6 @@ dependencies = [
  "hex",
  "http",
  "incrementalmerkletree",
- "json",
  "jubjub",
  "log",
  "nonempty",

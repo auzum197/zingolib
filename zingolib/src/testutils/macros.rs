@@ -1,7 +1,6 @@
 //! TODO
 
-/// Note that `do_addresses` returns an array, each element is a JSON representation
-/// of a UA.  Legacy addresses can be extracted from the receivers, per:
+/// Legacy addresses can be extracted from the receivers, per:
 /// <https://zips.z.cash/zip-0316>
 // TODO: is this needed as a macro?
 // TODO: change unified to orchard as both are unified with orchard-only or sapling-only receiver selections
@@ -10,36 +9,24 @@ macro_rules! get_base_address_macro {
     ($client:expr, $address_protocol:expr) => {
         match $address_protocol {
             "unified" => {
-                assert_eq!(
-                    $client.unified_addresses_json().await[0]["has_orchard"]
-                        .as_bool()
-                        .unwrap(),
-                    true
-                );
-                $client.unified_addresses_json().await[0]["encoded_address"]
-                    .clone()
-                    .to_string()
+                let addresses = $client.unified_addresses().await;
+                let address = addresses.values().next().unwrap();
+                assert!(address.has_orchard());
+                address.encode(&$client.chain_type())
             }
             "sapling" => {
-                assert_eq!(
-                    $client.unified_addresses_json().await[1]["has_orchard"]
-                        .as_bool()
-                        .unwrap(),
-                    false
-                );
-                assert_eq!(
-                    $client.unified_addresses_json().await[1]["has_sapling"]
-                        .as_bool()
-                        .unwrap(),
-                    true
-                );
-                $client.unified_addresses_json().await[1]["encoded_address"]
-                    .clone()
-                    .to_string()
+                let addresses = $client.unified_addresses().await;
+                let address = addresses.values().nth(1).unwrap();
+                assert!(!address.has_orchard());
+                assert!(address.has_sapling());
+                address.encode(&$client.chain_type())
             }
-            "transparent" => $client.transparent_addresses_json().await[0]["encoded_address"]
-                .clone()
-                .to_string(),
+            "transparent" => $client
+                .transparent_addresses()
+                .await
+                .into_values()
+                .next()
+                .unwrap(),
             _ => "ERROR".to_string(),
         }
     };

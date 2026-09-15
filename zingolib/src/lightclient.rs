@@ -1,6 +1,7 @@
 //! TODO: Add Mod Description Here!
 
 use std::{
+    collections::BTreeMap,
     fs::File,
     io::BufReader,
     path::{Path, PathBuf},
@@ -11,7 +12,6 @@ use std::{
     time::Duration,
 };
 
-use json::JsonValue;
 use tokio::{sync::RwLock, task::JoinHandle};
 
 use bip0039::Mnemonic;
@@ -232,23 +232,20 @@ impl LightClient {
     }
 
     /// Returns server information.
-    // TODO: return concrete struct with from json impl
     pub async fn do_info(&mut self) -> String {
         match self.indexer.get_lightd_info(DEFAULT_REQUEST_TIMEOUT).await {
-            Ok(i) => {
-                let o = json::object! {
-                    "version" => i.version,
-                    "git_commit" => i.git_commit,
-                    "server_uri" => self.indexer.uri().to_string(),
-                    "vendor" => i.vendor,
-                    "taddr_support" => i.taddr_support,
-                    "chain_name" => i.chain_name,
-                    "sapling_activation_height" => i.sapling_activation_height,
-                    "consensus_branch_id" => i.consensus_branch_id,
-                    "latest_block_height" => i.block_height
-                };
-                o.pretty(2)
-            }
+            Ok(i) => format!(
+                "version: {}\ngit commit: {}\nserver URI: {}\nvendor: {}\ntransparent address support: {}\nchain: {}\nSapling activation height: {}\nconsensus branch ID: {}\nlatest block height: {}",
+                i.version,
+                i.git_commit,
+                self.indexer.uri(),
+                i.vendor,
+                i.taddr_support,
+                i.chain_name,
+                i.sapling_activation_height,
+                i.consensus_branch_id,
+                i.block_height,
+            ),
             Err(e) => format!("{e:?}"),
         }
     }
@@ -277,14 +274,14 @@ impl LightClient {
             .generate_transparent_address(account_id, enforce_no_gap)
     }
 
-    /// Wrapper for [`crate::wallet::LightWallet::unified_addresses_json`].
-    pub async fn unified_addresses_json(&self) -> JsonValue {
-        self.wallet().read().await.unified_addresses_json()
+    /// Returns the wallet's unified addresses and their derivation identifiers.
+    pub async fn unified_addresses(&self) -> BTreeMap<UnifiedAddressId, UnifiedAddress> {
+        self.wallet().read().await.unified_addresses().clone()
     }
 
-    /// Wrapper for [`crate::wallet::LightWallet::transparent_addresses_json`].
-    pub async fn transparent_addresses_json(&self) -> JsonValue {
-        self.wallet().read().await.transparent_addresses_json()
+    /// Returns the wallet's transparent addresses and their derivation identifiers.
+    pub async fn transparent_addresses(&self) -> BTreeMap<TransparentAddressId, String> {
+        self.wallet().read().await.transparent_addresses().clone()
     }
 
     /// Wrapper for [`crate::wallet::LightWallet::account_balance`].
@@ -429,14 +426,19 @@ mod tests {
         ));
 
         // The first transparent address and unified address should be derived
+        let transparent_addresses = lc.transparent_addresses().await;
         assert_eq!(
-            "tmYd5GP6JxUxTUcz98NLPumEotvaMPaXytz".to_string(),
-            lc.transparent_addresses_json().await[0]["encoded_address"]
+            "tmYd5GP6JxUxTUcz98NLPumEotvaMPaXytz",
+            transparent_addresses.values().next().unwrap()
         );
+        let unified_addresses = lc.unified_addresses().await;
         assert_eq!(
-            "uregtest15en5x5cnsc7ye3wfy0prnh3ut34ns9w40htunlh9htfl6k5p004ja5gprxfz8fygjeax07a8489wzjk8gsx65thcp6d3ku8umgaka6f0"
-                .to_string(),
-            lc.unified_addresses_json().await[0]["encoded_address"]
+            "uregtest15en5x5cnsc7ye3wfy0prnh3ut34ns9w40htunlh9htfl6k5p004ja5gprxfz8fygjeax07a8489wzjk8gsx65thcp6d3ku8umgaka6f0",
+            unified_addresses
+                .values()
+                .next()
+                .unwrap()
+                .encode(&lc.chain_type())
         );
     }
 }
