@@ -1,4 +1,5 @@
 use zcash_primitives::transaction::TxId;
+use zcash_protocol::PoolType;
 use zcash_protocol::value::Zatoshis;
 
 use pepper_sync::wallet::{
@@ -184,10 +185,127 @@ impl LightWallet {
                             .is_some_and(|unified_address| unified_address == *zfz_address)
                 })
         {
-            Ok(TransactionKind::Sent(SendType::SendToSelf))
+            // every output went back to the wallet: it is a move if value landed in a pool the
+            // transaction did not spend from, named after the pool that gained the most
+            match self
+                .pools_moved_into(transaction)?
+                .into_iter()
+                .max_by_key(|(_, value)| *value)
+            {
+                Some((to, _)) => Ok(TransactionKind::Sent(SendType::PoolMove { to })),
+                None => Ok(TransactionKind::Sent(SendType::SendToSelf)),
+            }
         } else {
             Ok(TransactionKind::Sent(SendType::Send))
         }
+    }
+
+    /// The pools `transaction` spent the wallet's funds from.
+    pub(crate) fn source_pools(
+        &self,
+        transaction: &WalletTransaction,
+    ) -> Result<Vec<PoolType>, SpendError> {
+        let mut pools = Vec::new();
+        if !self
+            .find_spends::<TransparentCoin>(transaction, false)?
+            .is_empty()
+        {
+            pools.push(PoolType::TRANSPARENT);
+        }
+        if !self
+            .find_spends::<SaplingNote>(transaction, false)?
+            .is_empty()
+        {
+            pools.push(PoolType::SAPLING);
+        }
+        if !self
+            .find_spends::<OrchardNote>(transaction, false)?
+            .is_empty()
+        {
+            pools.push(PoolType::ORCHARD);
+        }
+        if !self
+            .find_spends::<IronwoodNote>(transaction, false)?
+            .is_empty()
+        {
+            pools.push(PoolType::IRONWOOD);
+        }
+        Ok(pools)
+    }
+
+    /// The pools `transaction` moved the wallet's value into, each with the value it gained.
+    pub(crate) fn pools_moved_into(
+        &self,
+        transaction: &WalletTransaction,
+    ) -> Result<Vec<(PoolType, u64)>, SpendError> {
+        let received = [
+            (
+                PoolType::TRANSPARENT,
+                transaction.total_output_value::<TransparentCoin>(),
+            ),
+            (
+                PoolType::SAPLING,
+                transaction.total_output_value::<SaplingNote>(),
+            ),
+            (
+                PoolType::ORCHARD,
+                transaction.total_output_value::<OrchardNote>(),
+            ),
+            (
+                PoolType::IRONWOOD,
+                transaction.total_output_value::<IronwoodNote>(),
+            ),
+        ];
+        Ok(pools_gaining_value(
+            &self.source_pools(transaction)?,
+            &received,
+        ))
+    }
+}
+
+/// The pools that received value without being spent from. A zero-value output is padding and
+/// moves nothing, so it does not count.
+pub(crate) fn pools_gaining_value(
+    sources: &[PoolType],
+    received: &[(PoolType, u64)],
+) -> Vec<(PoolType, u64)> {
+    received
+        .iter()
+        .copied()
+        .filter(|(pool, value)| *value > 0 && !sources.contains(pool))
+        .collect()
+}
+
+#[cfg(test)]
+mod pool_tests {
+    use super::pools_gaining_value;
+    use zcash_protocol::PoolType;
+
+    #[test]
+    fn orchard_into_ironwood_is_a_move_and_the_zero_padding_is_not() {
+        // the shape of a real mainnet transaction: 0.0102 ZEC of Orchard spent, 0.01 ZEC to
+        // the wallet's own Ironwood address, and a zero-value Orchard output as padding
+        let received = [(PoolType::ORCHARD, 0), (PoolType::IRONWOOD, 1_000_000)];
+        assert_eq!(
+            pools_gaining_value(&[PoolType::ORCHARD], &received),
+            vec![(PoolType::IRONWOOD, 1_000_000)]
+        );
+    }
+
+    #[test]
+    fn staying_in_the_spent_pool_moves_nothing() {
+        let received = [(PoolType::IRONWOOD, 500), (PoolType::SAPLING, 0)];
+        assert!(pools_gaining_value(&[PoolType::IRONWOOD], &received).is_empty());
+    }
+
+    #[test]
+    fn change_back_to_a_spent_pool_is_not_a_move() {
+        // partial move: sapling spent, some lands in Ironwood, the rest returns to Sapling
+        let received = [(PoolType::SAPLING, 600), (PoolType::IRONWOOD, 400)];
+        assert_eq!(
+            pools_gaining_value(&[PoolType::SAPLING], &received),
+            vec![(PoolType::IRONWOOD, 400)]
+        );
     }
 }
 

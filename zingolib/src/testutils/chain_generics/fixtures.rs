@@ -15,12 +15,12 @@ use crate::testutils::timestamped_test_log;
 use crate::wallet::output::query::OutputPoolQuery;
 use crate::wallet::output::query::OutputQuery;
 use crate::wallet::output::query::OutputSpendStatusQuery;
-use crate::wallet::summary::data::SelfSendValueTransfer;
-use crate::wallet::summary::data::SentValueTransfer;
-use crate::wallet::summary::data::ValueTransferKind;
+use crate::wallet::summary::data::SelfSendWalletEvent;
+use crate::wallet::summary::data::SentWalletEvent;
+use crate::wallet::summary::data::WalletEventKind;
 
-/// Fixture for testing various vt transactions
-pub async fn create_various_value_transfers<CC>()
+/// Fixture for testing transactions that produce several wallet event kinds.
+pub async fn create_various_wallet_events<CC>()
 where
     CC: ConductChain,
 {
@@ -60,41 +60,43 @@ where
     .await
     .unwrap();
 
-    assert_eq!(sender.value_transfers(true).await.unwrap().len(), 3);
+    // received funding, the send to the recipient, the memo to the sender's own sapling
+    // address, and the 17k to its own transparent address, which used to be dropped
+    assert_eq!(sender.wallet_events(true).await.unwrap().len(), 4);
 
     assert!(
         sender
-            .value_transfers(false)
+            .wallet_events(false)
             .await
             .unwrap()
             .iter()
-            .any(|vt| { vt.kind == ValueTransferKind::Received })
+            .any(|event| { event.kind == WalletEventKind::Received })
     );
 
     assert!(
         sender
-            .value_transfers(false)
+            .wallet_events(false)
             .await
             .unwrap()
             .iter()
-            .any(|vt| { vt.kind == ValueTransferKind::Sent(SentValueTransfer::Send) })
+            .any(|event| { event.kind == WalletEventKind::Sent(SentWalletEvent::Send) })
     );
 
     assert!(
         sender
-            .value_transfers(false)
+            .wallet_events(false)
             .await
             .unwrap()
             .iter()
-            .any(|vt| {
-                vt.kind
-                    == ValueTransferKind::Sent(SentValueTransfer::SendToSelf(
-                        SelfSendValueTransfer::MemoToSelf,
+            .any(|event| {
+                event.kind
+                    == WalletEventKind::Sent(SentWalletEvent::SendToSelf(
+                        SelfSendWalletEvent::MemoToSelf,
                     ))
             })
     );
 
-    assert_eq!(recipient.value_transfers(true).await.unwrap().len(), 1);
+    assert_eq!(recipient.wallet_events(true).await.unwrap().len(), 1);
 
     tracing::debug!("TEST 2");
     with_assertions::assure_propose_send_bump_sync_all_recipients(
@@ -107,19 +109,24 @@ where
     .await
     .unwrap();
 
-    assert_eq!(sender.value_transfers(true).await.unwrap().len(), 4);
+    assert_eq!(sender.wallet_events(true).await.unwrap().len(), 5);
     assert_eq!(
-        sender.value_transfers(true).await.unwrap()[0].kind,
-        ValueTransferKind::Sent(SentValueTransfer::SendToSelf(SelfSendValueTransfer::Basic))
+        sender.wallet_events(true).await.unwrap()[0].kind,
+        WalletEventKind::Sent(SentWalletEvent::SendToSelf(SelfSendWalletEvent::Basic))
+    );
+    assert_eq!(
+        sender.wallet_events(true).await.unwrap()[0].value,
+        send_value_self,
+        "a send to self reports what it sent, not zero"
     );
 
     with_assertions::assure_propose_shield_bump_sync(&mut environment, &mut sender, false)
         .await
         .unwrap();
-    assert_eq!(sender.value_transfers(true).await.unwrap().len(), 5);
+    assert_eq!(sender.wallet_events(true).await.unwrap().len(), 6);
     assert_eq!(
-        sender.value_transfers(true).await.unwrap()[0].kind,
-        ValueTransferKind::Sent(SentValueTransfer::SendToSelf(SelfSendValueTransfer::Shield))
+        sender.wallet_events(true).await.unwrap()[0].kind,
+        WalletEventKind::Sent(SentWalletEvent::SendToSelf(SelfSendWalletEvent::Shield))
     );
 }
 

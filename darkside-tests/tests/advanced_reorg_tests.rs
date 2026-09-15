@@ -15,12 +15,12 @@ use tokio::time::sleep;
 use zcash_local_net::indexer::Indexer;
 use zcash_protocol::consensus::BlockHeight;
 use zingo_common_components::protocol::ActivationHeights;
-use zingolib::wallet::summary::data::SentValueTransfer;
+use zingolib::wallet::summary::data::SentWalletEvent;
 use zingolib::{
     config::WalletConfig,
     testutils::{port_to_localhost_uri, tempfile::TempDir},
 };
-use zingolib::{testutils::default_test_wallet_settings, wallet::summary::data::ValueTransferKind};
+use zingolib::{testutils::default_test_wallet_settings, wallet::summary::data::WalletEventKind};
 use zingolib::{
     testutils::{lightclient::from_inputs, paths::get_cargo_manifest_dir},
     wallet::balance::AccountBalance,
@@ -73,11 +73,11 @@ async fn reorg_changes_incoming_tx_height() {
         }
     );
 
-    let before_reorg_transactions = light_client.value_transfers(true).await.unwrap();
+    let before_reorg_events = light_client.wallet_events(true).await.unwrap();
 
-    assert_eq!(before_reorg_transactions.len(), 1);
+    assert_eq!(before_reorg_events.len(), 1);
     assert_eq!(
-        before_reorg_transactions[0].blockheight,
+        before_reorg_events[0].blockheight,
         BlockHeight::from_u32(203)
     );
 
@@ -114,11 +114,11 @@ async fn reorg_changes_incoming_tx_height() {
         }
     );
 
-    let after_reorg_transactions = light_client.value_transfers(true).await.unwrap();
+    let after_reorg_events = light_client.wallet_events(true).await.unwrap();
 
-    assert_eq!(after_reorg_transactions.len(), 1);
+    assert_eq!(after_reorg_events.len(), 1);
     assert_eq!(
-        after_reorg_transactions[0].blockheight,
+        after_reorg_events[0].blockheight,
         BlockHeight::from_u32(206)
     );
 }
@@ -259,11 +259,11 @@ async fn reorg_changes_incoming_tx_index() {
         }
     );
 
-    let before_reorg_transactions = light_client.value_transfers(true).await.unwrap();
+    let before_reorg_events = light_client.wallet_events(true).await.unwrap();
 
-    assert_eq!(before_reorg_transactions.len(), 1);
+    assert_eq!(before_reorg_events.len(), 1);
     assert_eq!(
-        before_reorg_transactions[0].blockheight,
+        before_reorg_events[0].blockheight,
         BlockHeight::from_u32(203)
     );
 
@@ -300,11 +300,11 @@ async fn reorg_changes_incoming_tx_index() {
         }
     );
 
-    let after_reorg_transactions = light_client.value_transfers(true).await.unwrap();
+    let after_reorg_events = light_client.wallet_events(true).await.unwrap();
 
-    assert_eq!(after_reorg_transactions.len(), 1);
+    assert_eq!(after_reorg_events.len(), 1);
     assert_eq!(
-        after_reorg_transactions[0].blockheight,
+        after_reorg_events[0].blockheight,
         BlockHeight::from_u32(203)
     );
 }
@@ -446,11 +446,11 @@ async fn reorg_expires_incoming_tx() {
         }
     );
 
-    let before_reorg_transactions = light_client.value_transfers(true).await.unwrap();
+    let before_reorg_events = light_client.wallet_events(true).await.unwrap();
 
-    assert_eq!(before_reorg_transactions.len(), 1);
+    assert_eq!(before_reorg_events.len(), 1);
     assert_eq!(
-        before_reorg_transactions[0].blockheight,
+        before_reorg_events[0].blockheight,
         BlockHeight::from_u32(203)
     );
 
@@ -487,9 +487,9 @@ async fn reorg_expires_incoming_tx() {
         }
     );
 
-    let after_reorg_transactions = light_client.value_transfers(true).await.unwrap();
+    let after_reorg_events = light_client.wallet_events(true).await.unwrap();
 
-    assert_eq!(after_reorg_transactions.len(), 0);
+    assert_eq!(after_reorg_events.len(), 0);
 }
 
 async fn prepare_expires_incoming_tx_before_reorg(uri: http::Uri) -> Result<(), String> {
@@ -638,11 +638,11 @@ async fn reorg_changes_outgoing_tx_height() {
         }
     );
 
-    let before_reorg_transactions = light_client.value_transfers(true).await.unwrap();
+    let before_reorg_events = light_client.wallet_events(true).await.unwrap();
 
-    assert_eq!(before_reorg_transactions.len(), 1);
+    assert_eq!(before_reorg_events.len(), 1);
     assert_eq!(
-        before_reorg_transactions[0].blockheight,
+        before_reorg_events[0].blockheight,
         BlockHeight::from_u32(203)
     );
 
@@ -699,16 +699,16 @@ async fn reorg_changes_outgoing_tx_height() {
     // check that the outgoing transaction has the correct height before
     // the reorg is triggered
 
-    tracing::info!("{:?}", light_client.value_transfers(true).await);
+    tracing::info!("{:?}", light_client.wallet_events(true).await);
 
     assert_eq!(
         light_client
-            .value_transfers(true)
+            .wallet_events(true)
             .await
             .unwrap()
             .iter()
             .find_map(|v| match v.kind {
-                ValueTransferKind::Sent(SentValueTransfer::Send) => {
+                WalletEventKind::Sent(SentWalletEvent::Send) => {
                     if let Some(addr) = v.recipient_address.as_ref() {
                         if addr == recipient_string && v.value == 100_000 {
                             Some(v.blockheight)
@@ -773,22 +773,22 @@ async fn reorg_changes_outgoing_tx_height() {
         expected_after_reorg_balance
     );
 
-    let after_reorg_transactions = light_client.value_transfers(true).await.unwrap();
+    let after_reorg_events = light_client.wallet_events(true).await.unwrap();
 
-    assert_eq!(after_reorg_transactions.len(), 3);
+    assert_eq!(after_reorg_events.len(), 3);
 
-    tracing::info!("{:?}", light_client.value_transfers(true).await);
+    tracing::info!("{:?}", light_client.wallet_events(true).await);
 
     // FIXME: This test is broken because if this issue
     // https://github.com/zingolabs/zingolib/issues/622
     // verify that the reorged transaction is in the new height
     // assert_eq!(
     //     light_client
-    //         .list_value_transfers(true)
+    //         .wallet_events(true)
     //         .await
     //         .into_iter()
     //         .find_map(|v| match v.kind {
-    //             ValueTransferKind::Sent { to_address, amount } => {
+    //             WalletEventKind::Sent { to_address, amount } => {
     //                 if to_address.to_string() == recipient_string && amount == 100000 {
     //                     Some(v.block_height)
     //                 } else {
@@ -910,11 +910,11 @@ async fn reorg_expires_outgoing_tx_height() {
         expected_initial_balance
     );
 
-    let before_reorg_transactions = light_client.value_transfers(true).await.unwrap();
+    let before_reorg_events = light_client.wallet_events(true).await.unwrap();
 
-    assert_eq!(before_reorg_transactions.len(), 1);
+    assert_eq!(before_reorg_events.len(), 1);
     assert_eq!(
-        before_reorg_transactions[0].blockheight,
+        before_reorg_events[0].blockheight,
         BlockHeight::from_u32(203)
     );
 
@@ -964,15 +964,15 @@ async fn reorg_expires_outgoing_tx_height() {
     // check that the outgoing transaction has the correct height before
     // the reorg is triggered
 
-    tracing::info!("{:?}", light_client.value_transfers(true).await.unwrap());
+    tracing::info!("{:?}", light_client.wallet_events(true).await.unwrap());
 
     let send_height = light_client
-        .value_transfers(true)
+        .wallet_events(true)
         .await
         .unwrap()
         .iter()
         .find_map(|v| match v.kind {
-            ValueTransferKind::Sent(SentValueTransfer::Send) => {
+            WalletEventKind::Sent(SentWalletEvent::Send) => {
                 if let Some(addr) = v.recipient_address.as_ref() {
                     if addr == recipient_string && v.value == 100_000 {
                         Some(v.blockheight)
@@ -1017,22 +1017,22 @@ async fn reorg_expires_outgoing_tx_height() {
         expected_initial_balance
     );
 
-    let after_reorg_transactions = light_client.value_transfers(true).await.unwrap();
+    let after_reorg_events = light_client.wallet_events(true).await.unwrap();
 
-    assert_eq!(after_reorg_transactions.len(), 1);
+    assert_eq!(after_reorg_events.len(), 1);
 
-    tracing::info!("{:?}", light_client.value_transfers(true).await);
+    tracing::info!("{:?}", light_client.wallet_events(true).await);
 
     // FIXME: This test is broken because if this issue
     // https://github.com/zingolabs/zingolib/issues/622
     // verify that the reorged transaction is in the new height
     // assert_eq!(
     //     light_client
-    //         .list_value_transfers(true)
+    //         .wallet_events(true)
     //         .await
     //         .into_iter()
     //         .find_map(|v| match v.kind {
-    //             ValueTransferKind::Sent { to_address, amount } => {
+    //             WalletEventKind::Sent { to_address, amount } => {
     //                 if to_address.to_string() == recipient_string && amount == 100000 {
     //                     Some(v.block_height)
     //                 } else {
@@ -1120,11 +1120,11 @@ async fn reorg_changes_outgoing_tx_index() {
         }
     );
 
-    let before_reorg_transactions = light_client.value_transfers(true).await.unwrap();
+    let before_reorg_events = light_client.wallet_events(true).await.unwrap();
 
-    assert_eq!(before_reorg_transactions.len(), 1);
+    assert_eq!(before_reorg_events.len(), 1);
     assert_eq!(
-        before_reorg_transactions[0].blockheight,
+        before_reorg_events[0].blockheight,
         BlockHeight::from_u32(203)
     );
 
@@ -1183,12 +1183,12 @@ async fn reorg_changes_outgoing_tx_index() {
 
     assert_eq!(
         light_client
-            .value_transfers(true)
+            .wallet_events(true)
             .await
             .unwrap()
             .iter()
             .find_map(|v| match v.kind {
-                ValueTransferKind::Sent(SentValueTransfer::Send) => {
+                WalletEventKind::Sent(SentWalletEvent::Send) => {
                     if let Some(addr) = v.recipient_address.as_ref() {
                         if addr == recipient_string && v.value == 100_000 {
                             Some(v.blockheight)
@@ -1206,8 +1206,8 @@ async fn reorg_changes_outgoing_tx_index() {
         Some(BlockHeight::from(sent_tx_height as u32))
     );
 
-    tracing::info!("pre re-org value transfers:");
-    tracing::info!("{}", light_client.value_transfers(true).await.unwrap());
+    tracing::info!("pre re-org wallet events:");
+    tracing::info!("{}", light_client.wallet_events(true).await.unwrap());
     tracing::info!("pre re-org tx summaries:");
     tracing::info!(
         "{}",
@@ -1262,10 +1262,10 @@ async fn reorg_changes_outgoing_tx_index() {
         expected_after_reorg_balance
     );
 
-    let after_reorg_transactions = light_client.value_transfers(true).await.unwrap();
+    let after_reorg_events = light_client.wallet_events(true).await.unwrap();
 
-    tracing::info!("post re-org value transfers:");
-    tracing::info!("{after_reorg_transactions}");
+    tracing::info!("post re-org wallet events:");
+    tracing::info!("{after_reorg_events}");
     tracing::info!("post re-org tx summaries:");
     tracing::info!(
         "{}",
@@ -1273,18 +1273,18 @@ async fn reorg_changes_outgoing_tx_index() {
     );
 
     // FIXME: assertion is wrong as re-org transaction has lost its outgoing tx data. darkside bug?
-    // assert_eq!(after_reorg_transactions.0.len(), 3);
+    // assert_eq!(after_reorg_events.0.len(), 3);
 
     // FIXME: This test is broken because if this issue
     // https://github.com/zingolabs/zingolib/issues/622
     // verify that the reorged transaction is in the new height
     // assert_eq!(
     //     light_client
-    //         .list_value_transfers(true)
+    //         .wallet_events(true)
     //         .await
     //         .into_iter()
     //         .find_map(|v| match v.kind {
-    //             ValueTransferKind::Sent { to_address, amount } => {
+    //             WalletEventKind::Sent { to_address, amount } => {
     //                 if to_address.to_string() == recipient_string && amount == 100000 {
     //                     Some(v.block_height)
     //                 } else {

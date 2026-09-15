@@ -628,7 +628,7 @@ async fn handle_event(event: SequencedSyncEvent, view: &mut View, lc: &LightClie
         SyncEvent::TxDiscovered { txid, status } => {
             view.txs_found += 1;
             // the event is a hint: query the wallet for the committed transaction. Summaries
-            // share the code path of the `transactions`/`value_transfers` views, so the kind
+            // share the code path of the `transactions`/`wallet_events` views, so the kind
             // and amount match them (change outputs are not reported as received).
             let summary = lc.transaction_summary(txid).await.ok().flatten();
             let mut text = format!("tx {txid} [{status} {}]", status.get_height());

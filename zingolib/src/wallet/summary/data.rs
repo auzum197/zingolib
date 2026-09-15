@@ -54,6 +54,7 @@ impl std::fmt::Display for TransactionKind {
             TransactionKind::Sent(SendType::Send) => write!(f, "sent"),
             TransactionKind::Sent(SendType::Shield) => write!(f, "shield"),
             TransactionKind::Sent(SendType::SendToSelf) => write!(f, "send-to-self"),
+            TransactionKind::Sent(SendType::PoolMove { .. }) => write!(f, "pool-move"),
         }
     }
 }
@@ -65,34 +66,40 @@ pub enum SendType {
     Send,
     /// Transaction is only sending funds from transparent pool to the creator's shielded pool.
     Shield,
-    /// Transaction is only sending funds to the creator's address(es) and is not a shield.
+    /// Transaction is only sending funds to the creator's address(es), within the pools it spent
+    /// from, and is not a shield.
     SendToSelf,
+    /// Transaction is only sending funds to the creator's address(es), and moves value into a
+    /// pool it did not spend from. After NU6.3 this is how Orchard funds reach Ironwood, since a
+    /// payment to an Orchard receiver is built as an Ironwood output.
+    PoolMove {
+        /// The pool that gained the most value.
+        to: zcash_protocol::PoolType,
+    },
 }
 
-/// Value transfer kind.
+/// Wallet event kind.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub enum ValueTransferKind {
-    /// Sent value transfer.
-    Sent(SentValueTransfer),
-    /// Received value transfer.
+pub enum WalletEventKind {
+    /// Sent wallet event.
+    Sent(SentWalletEvent),
+    /// Received wallet event.
     Received,
 }
 
-/// Sent value transfer kind.
+/// Sent wallet event kind.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub enum SentValueTransfer {
+pub enum SentWalletEvent {
     /// Transferring funds to an address that is not derived by the wallet.
     Send,
     /// Transferring funds to an address that is derived by the wallet.
-    SendToSelf(SelfSendValueTransfer),
+    SendToSelf(SelfSendWalletEvent),
 }
 
-/// Send-to-self value transfer kind.
+/// Send-to-self wallet event kind.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub enum SelfSendValueTransfer {
-    /// No memo.
-    ///
-    /// Only occurs when there are no other value transfers created for a given transaction.
+pub enum SelfSendWalletEvent {
+    /// Sending funds to one of the wallet's own addresses, without a memo.
     Basic,
     /// Shielding transparent funds to a shielded pool.
     Shield,
@@ -101,19 +108,22 @@ pub enum SelfSendValueTransfer {
     /// Transferring funds from a shielded pool to one of the wallet's own refund (ephemeral) addresses as the
     /// first step in a TEX transaction.
     Refund,
+    /// Moving funds into one of the wallet's own pools that the transaction did not spend from.
+    PoolMove,
 }
 
-impl std::fmt::Display for ValueTransferKind {
+impl std::fmt::Display for WalletEventKind {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
         match self {
-            ValueTransferKind::Received => write!(f, "received"),
-            ValueTransferKind::Sent(sent) => match sent {
-                SentValueTransfer::Send => write!(f, "sent"),
-                SentValueTransfer::SendToSelf(selfsend) => match selfsend {
-                    SelfSendValueTransfer::Basic => write!(f, "send-to-self"),
-                    SelfSendValueTransfer::Shield => write!(f, "shield"),
-                    SelfSendValueTransfer::MemoToSelf => write!(f, "memo-to-self"),
-                    SelfSendValueTransfer::Refund => write!(f, "rejection"),
+            WalletEventKind::Received => write!(f, "received"),
+            WalletEventKind::Sent(sent) => match sent {
+                SentWalletEvent::Send => write!(f, "sent"),
+                SentWalletEvent::SendToSelf(selfsend) => match selfsend {
+                    SelfSendWalletEvent::Basic => write!(f, "send-to-self"),
+                    SelfSendWalletEvent::Shield => write!(f, "shield"),
+                    SelfSendWalletEvent::MemoToSelf => write!(f, "memo-to-self"),
+                    SelfSendWalletEvent::Refund => write!(f, "rejection"),
+                    SelfSendWalletEvent::PoolMove => write!(f, "pool-move"),
                 },
             },
         }
@@ -148,9 +158,9 @@ impl TransactionSummary {
             TransactionKind::Sent(SendType::Send) => {
                 self.fee.map(|fee| -((self.value + fee) as i64))
             }
-            TransactionKind::Sent(SendType::Shield | SendType::SendToSelf) => {
-                self.fee.map(|fee| -(fee as i64))
-            }
+            TransactionKind::Sent(
+                SendType::Shield | SendType::SendToSelf | SendType::PoolMove { .. },
+            ) => self.fee.map(|fee| -(fee as i64)),
             TransactionKind::Received => Some(self.value as i64),
         }
     }
@@ -311,26 +321,26 @@ impl std::fmt::Display for TransactionSummaries {
     }
 }
 
-/// A value transfer is a user-facing interpretation of transaction activity.
+/// A wallet event is a user-facing interpretation of transaction activity.
 /// A group of all notes sent to a specific address in a transaction.
 #[derive(Clone, PartialEq)]
-pub struct ValueTransfer {
+pub struct WalletEvent {
     pub txid: TxId,
     pub datetime: u32,
     pub status: ConfirmationStatus,
     pub blockheight: BlockHeight,
     pub transaction_fee: Option<u64>,
     pub zec_price: Option<f32>,
-    pub kind: ValueTransferKind,
+    pub kind: WalletEventKind,
     pub value: u64,
     pub recipient_address: Option<String>,
     pub pool_received: Option<String>,
     pub memos: Vec<String>,
 }
 
-impl std::fmt::Debug for ValueTransfer {
+impl std::fmt::Debug for WalletEvent {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("ValueTransfer")
+        f.debug_struct("WalletEvent")
             .field("txid", &self.txid)
             .field("datetime", &self.datetime)
             .field("status", &self.status)
@@ -346,7 +356,7 @@ impl std::fmt::Debug for ValueTransfer {
     }
 }
 
-impl std::fmt::Display for ValueTransfer {
+impl std::fmt::Display for WalletEvent {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let datetime = if let Some(dt) = DateTime::from_timestamp(i64::from(self.datetime), 0) {
             format!("{dt}")
@@ -407,50 +417,50 @@ impl std::fmt::Display for ValueTransfer {
     }
 }
 
-/// A wrapper struct for implementing display on a list of value transfers.
+/// A wrapper struct for implementing display on a list of wallet events.
 #[derive(PartialEq, Debug)]
-pub struct ValueTransfers(Vec<ValueTransfer>);
-impl<'a> std::iter::IntoIterator for &'a ValueTransfers {
-    type Item = &'a ValueTransfer;
-    type IntoIter = std::slice::Iter<'a, ValueTransfer>;
+pub struct WalletEvents(Vec<WalletEvent>);
+impl<'a> std::iter::IntoIterator for &'a WalletEvents {
+    type Item = &'a WalletEvent;
+    type IntoIter = std::slice::Iter<'a, WalletEvent>;
 
     fn into_iter(self) -> Self::IntoIter {
         self.iter()
     }
 }
-impl std::ops::Deref for ValueTransfers {
-    type Target = Vec<ValueTransfer>;
+impl std::ops::Deref for WalletEvents {
+    type Target = Vec<WalletEvent>;
 
     fn deref(&self) -> &Self::Target {
         &self.0
     }
 }
-impl std::ops::DerefMut for ValueTransfers {
+impl std::ops::DerefMut for WalletEvents {
     fn deref_mut(&mut self) -> &mut Self::Target {
         &mut self.0
     }
 }
 // Implement the Index trait
-impl std::ops::Index<usize> for ValueTransfers {
-    type Output = ValueTransfer; // The type of the value returned by the index
+impl std::ops::Index<usize> for WalletEvents {
+    type Output = WalletEvent; // The type of the value returned by the index
 
     fn index(&self, index: usize) -> &Self::Output {
         &self.0[index] // Forward the indexing operation to the underlying data structure
     }
 }
 
-impl ValueTransfers {
-    /// Creates a new `ValueTransfer`
+impl WalletEvents {
+    /// Creates a new `WalletEvents` collection.
     #[must_use]
-    pub fn new(value_transfers: Vec<ValueTransfer>) -> Self {
-        ValueTransfers(value_transfers)
+    pub fn new(wallet_events: Vec<WalletEvent>) -> Self {
+        WalletEvents(wallet_events)
     }
 }
 
-impl std::fmt::Display for ValueTransfers {
+impl std::fmt::Display for WalletEvents {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        for value_transfer in &self.0 {
-            write!(f, "\n{value_transfer}")?;
+        for wallet_event in &self.0 {
+            write!(f, "\n{wallet_event}")?;
         }
         Ok(())
     }
@@ -555,8 +565,8 @@ impl std::ops::Index<usize> for NoteSummaries {
 
 impl std::fmt::Display for NoteSummaries {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        for value_transfer in &self.0 {
-            write!(f, "\n{value_transfer}")?;
+        for wallet_event in &self.0 {
+            write!(f, "\n{wallet_event}")?;
         }
         Ok(())
     }
@@ -675,7 +685,7 @@ impl std::fmt::Display for CoinSummary {
 }
 
 /// Transparent coin summary.
-// TODO: add scope to distinguish "refund" scope value transfers
+// TODO: add scope to distinguish "refund" scope wallet events
 #[derive(Clone, PartialEq, Debug)]
 pub struct BasicCoinSummary {
     pub value: u64,

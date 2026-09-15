@@ -155,7 +155,7 @@ mod fast {
         },
         wallet::{
             keys::unified::{ReceiverSelection, UnifiedAddressId},
-            summary::data::{SelfSendValueTransfer, SentValueTransfer, ValueTransferKind},
+            summary::data::{SelfSendWalletEvent, SentWalletEvent, WalletEventKind},
         },
     };
     use zingolib_status::confirmation_status::ConfirmationStatus;
@@ -696,15 +696,13 @@ mod fast {
 
         recipient.send_stored_proposal(true).await.unwrap();
 
-        let value_transfers = &recipient.value_transfers(true).await.unwrap();
+        let wallet_events = &recipient.wallet_events(true).await.unwrap();
 
-        assert!(value_transfers.iter().any(|vt| vt.kind
-            == ValueTransferKind::Sent(SentValueTransfer::SendToSelf(
-                SelfSendValueTransfer::Basic
-            ))));
-        assert!(value_transfers.iter().any(|vt| vt.kind
-            == ValueTransferKind::Sent(SentValueTransfer::Send)
-            && vt.recipient_address == Some(ZENNIES_FOR_ZINGO_REGTEST_ADDRESS.to_string())));
+        assert!(wallet_events.iter().any(|event| event.kind
+            == WalletEventKind::Sent(SentWalletEvent::SendToSelf(SelfSendWalletEvent::Basic))));
+        assert!(wallet_events.iter().any(|event| event.kind
+            == WalletEventKind::Sent(SentWalletEvent::Send)
+            && event.recipient_address == Some(ZENNIES_FOR_ZINGO_REGTEST_ADDRESS.to_string())));
     }
 
     /// This tests checks that `messages_containing` returns an empty vector when empty memos are included.
@@ -908,20 +906,20 @@ mod fast {
             .unwrap();
 
         // Collect observations
-        let value_transfers_bob = &recipient
+        let wallet_events_bob = &recipient
             .messages_containing(Some(&bob.encode(&recipient.chain_type())))
             .await
             .unwrap();
-        let value_transfers_charlie = &recipient
+        let wallet_events_charlie = &recipient
             .messages_containing(Some(&charlie.encode(&recipient.chain_type())))
             .await
             .unwrap();
-        let all_vts = &recipient.value_transfers(true).await.unwrap();
+        let all_events = &recipient.wallet_events(true).await.unwrap();
         let all_messages = &recipient.messages_containing(None).await.unwrap();
 
         // Make assertions
-        assert_eq!(value_transfers_bob.len(), 3);
-        assert_eq!(value_transfers_charlie.len(), 2);
+        assert_eq!(wallet_events_bob.len(), 3);
+        assert_eq!(wallet_events_charlie.len(), 2);
 
         // Also asserting the order now (sorry juanky)
         // ALL MESSAGES (First one should be the oldest one)
@@ -930,18 +928,18 @@ mod fast {
                 .windows(2)
                 .all(|pair| { pair[0].blockheight <= pair[1].blockheight })
         );
-        // ALL VTS (First one should be the most recent one)
+        // ALL EVENTS (First one should be the most recent one)
         assert!(
-            all_vts
+            all_events
                 .windows(2)
                 .all(|pair| { pair[0].blockheight >= pair[1].blockheight })
         );
     }
 
-    /// Tests that value transfers are properly sorted by block height and index.
-    /// It also tests that retrieving the value transfers multiple times in a row returns the same results.
+    /// Tests that wallet events are properly sorted by block height and index.
+    /// It also tests that repeated retrievals return the same events.
     #[tokio::test]
-    async fn value_transfers() {
+    async fn wallet_events() {
         let mut environment = LibtonodeEnvironment::setup().await;
 
         let mut faucet = environment.create_faucet().await;
@@ -983,21 +981,21 @@ mod fast {
         environment.increase_chain_height().await;
         recipient.sync_and_await().await.unwrap();
 
-        let value_transfers = &recipient.value_transfers(true).await.unwrap();
-        let value_transfers1 = &recipient.value_transfers(true).await.unwrap();
-        let value_transfers2 = &recipient.value_transfers(true).await.unwrap();
-        let mut value_transfers3 = recipient.value_transfers(false).await.unwrap();
-        let mut value_transfers4 = recipient.value_transfers(false).await.unwrap();
+        let wallet_events = &recipient.wallet_events(true).await.unwrap();
+        let wallet_events1 = &recipient.wallet_events(true).await.unwrap();
+        let wallet_events2 = &recipient.wallet_events(true).await.unwrap();
+        let mut wallet_events3 = recipient.wallet_events(false).await.unwrap();
+        let mut wallet_events4 = recipient.wallet_events(false).await.unwrap();
 
-        assert_eq!(value_transfers[0].memos.len(), 4);
+        assert_eq!(wallet_events[0].memos.len(), 4);
 
-        value_transfers3.reverse();
-        value_transfers4.reverse();
+        wallet_events3.reverse();
+        wallet_events4.reverse();
 
-        assert_eq!(value_transfers, value_transfers1);
-        assert_eq!(value_transfers, value_transfers2);
-        assert_eq!(value_transfers, &value_transfers3);
-        assert_eq!(value_transfers, &value_transfers4);
+        assert_eq!(wallet_events, wallet_events1);
+        assert_eq!(wallet_events, wallet_events2);
+        assert_eq!(wallet_events, &wallet_events3);
+        assert_eq!(wallet_events, &wallet_events4);
     }
 
     pub mod tex {
@@ -1063,9 +1061,9 @@ mod fast {
             );
 
             // FIXME: add tex addresses to encoded memos
-            // let val_tranfers = sender.value_transfers(true).await.unwrap();
+            // let wallet_events = sender.wallet_events(true).await.unwrap();
             // assert_eq!(
-            //     val_tranfers[0].recipient_address().unwrap(),
+            //     wallet_events[0].recipient_address().unwrap(),
             //     tex_addr_from_first.encode()
             // );
         }
@@ -1564,7 +1562,7 @@ mod slow {
                 .await
                 .unwrap()
         );
-        tracing::info!("{}", recipient.value_transfers(true).await.unwrap());
+        tracing::info!("{}", recipient.wallet_events(true).await.unwrap());
     }
     #[tokio::test]
     async fn zero_value_change() {
@@ -2070,7 +2068,7 @@ mod slow {
                 .unwrap()
         );
         tracing::info!("{}", recipient.transaction_summaries(false).await.unwrap());
-        tracing::info!("{}", recipient.value_transfers(true).await.unwrap());
+        tracing::info!("{}", recipient.wallet_events(true).await.unwrap());
         recipient.rescan_and_await().await.unwrap();
         tracing::info!(
             "{}",
@@ -2080,7 +2078,7 @@ mod slow {
                 .unwrap()
         );
         tracing::info!("{}", recipient.transaction_summaries(false).await.unwrap());
-        tracing::info!("{}", recipient.value_transfers(true).await.unwrap());
+        tracing::info!("{}", recipient.wallet_events(true).await.unwrap());
         // TODO: Add asserts!
     }
     #[tokio::test]
@@ -2520,7 +2518,7 @@ TransactionSummary {
         faucet.sync_and_await().await.unwrap();
         let faucet_orch = three_blocks_reward + orch_change + u64::from(MINIMUM_FEE);
 
-        tracing::info!("{}", faucet.value_transfers(true).await.unwrap());
+        tracing::info!("{}", faucet.wallet_events(true).await.unwrap());
         tracing::info!(
             "{}",
             &faucet
@@ -3202,7 +3200,7 @@ TransactionSummary {
             assert_eq!(pre_rescan_summaries, post_rescan_summaries);
         }
         #[tokio::test]
-        async fn check_list_value_transfers_across_rescan() {
+        async fn check_wallet_events_across_rescan() {
             let inital_value = 100_000;
             let (ref local_net, faucet, mut recipient, _txid) =
                 scenarios::faucet_funded_recipient_default(inital_value).await;
@@ -3216,10 +3214,10 @@ TransactionSummary {
                 .await
                 .unwrap();
             let pre_rescan_transactions = recipient.transaction_summaries(false).await.unwrap();
-            let pre_rescan_summaries = recipient.value_transfers(true).await.unwrap();
+            let pre_rescan_summaries = recipient.wallet_events(true).await.unwrap();
             recipient.rescan_and_await().await.unwrap();
             let post_rescan_transactions = recipient.transaction_summaries(false).await.unwrap();
-            let post_rescan_summaries = recipient.value_transfers(true).await.unwrap();
+            let post_rescan_summaries = recipient.wallet_events(true).await.unwrap();
             assert_eq!(pre_rescan_transactions, post_rescan_transactions);
             assert_eq!(pre_rescan_summaries, post_rescan_summaries);
         }
@@ -3415,8 +3413,8 @@ TransactionSummary {
     // FIXME: add unified address discovery to pepper sync and add a test here
 
     #[tokio::test]
-    async fn list_value_transfers_check_fees() {
-        // Check that list_value_transfers behaves correctly given different fee scenarios
+    async fn wallet_events_check_fees() {
+        // Check wallet event fees across different transaction scenarios.
         let (local_net, mut client_builder) = scenarios::custom_clients_default().await;
         let mut faucet = client_builder
             .build_faucet(
