@@ -11,12 +11,12 @@ use zcash_protocol::consensus::{BlockHeight, Parameters};
 use zcash_transparent::keys::NonHardenedChildIndex;
 
 use pepper_sync::keys::transparent::{self, TransparentScope};
-use pepper_sync::wallet::{KeyIdInterface, ScanTarget, ShardTrees};
+use pepper_sync::wallet::{ScanTarget, ShardTrees};
 use pepper_sync::{
     keys::transparent::TransparentAddressId,
     wallet::{NullifierMap, OutputId, SyncState, WalletBlock, WalletTransaction},
 };
-use zingo_price::PriceList;
+use zingolib_price::PriceList;
 
 use crate::config::{ChainType, WalletConfig};
 use crate::data::proposal::ZingoProposal;
@@ -307,48 +307,10 @@ impl LightWallet {
         &self.unified_addresses
     }
 
-    /// Returns unified addresses in a JSON array.
-    #[must_use]
-    pub fn unified_addresses_json(&self) -> json::JsonValue {
-        json::JsonValue::Array(
-            self.unified_addresses
-                .iter()
-                .map(|(id, unified_address)| {
-                    json::object! {
-                        "account" => u32::from(id.account_id),
-                        "address_index" => id.address_index,
-                        "has_orchard" => unified_address.has_orchard(),
-                        "has_sapling" => unified_address.has_sapling(),
-                        "has_transparent" => unified_address.has_transparent(),
-                        "encoded_address" => unified_address.encode(&self.chain_type),
-                    }
-                })
-                .collect::<Vec<_>>(),
-        )
-    }
-
     /// Returns transparent addresses.
     #[must_use]
     pub fn transparent_addresses(&self) -> &BTreeMap<TransparentAddressId, String> {
         &self.transparent_addresses
-    }
-
-    /// Returns transparent addresses in a JSON array.
-    #[must_use]
-    pub fn transparent_addresses_json(&self) -> json::JsonValue {
-        json::JsonValue::Array(
-            self.transparent_addresses
-                .iter()
-                .map(|(id, transparent_address)| {
-                    json::object! {
-                        "account" => u32::from(id.account_id()),
-                        "address_index" => id.address_index().index(),
-                        "scope" => id.scope().to_string(),
-                        "encoded_address" => transparent_address.clone(),
-                    }
-                })
-                .collect::<Vec<_>>(),
-        )
     }
 
     /// Clears the proposal in the `send_proposal` field.

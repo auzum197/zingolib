@@ -17,7 +17,7 @@
 
 use std::ops::Range;
 use std::sync::{
-    Arc,
+    Arc, Mutex,
     atomic::{AtomicU64, Ordering},
 };
 use std::time::Duration;
@@ -25,9 +25,9 @@ use std::time::Duration;
 use tokio::sync::broadcast;
 use zcash_primitives::transaction::TxId;
 use zcash_protocol::consensus::BlockHeight;
-use zingo_status::confirmation_status::ConfirmationStatus;
+use zingolib_status::confirmation_status::ConfirmationStatus;
 
-use crate::sync::ScanPriority;
+use crate::sync::{ScanPriority, ScanRange};
 
 /// Wall-clock cost of the commit phase, split into its sub-phases for tuning. The sub-phases
 /// are the named suspects in commit-phase performance work. `other` is the remainder of the
@@ -121,12 +121,22 @@ pub enum SyncEvent {
         total_sapling_outputs: u32,
         /// Total orchard note commitments in the birthday..=tip window.
         total_orchard_outputs: u32,
+        /// Total ironwood note commitments in the birthday..=tip window.
+        total_ironwood_outputs: u32,
         /// Sapling outputs scanned in previous sessions.
         already_scanned_sapling_outputs: u32,
         /// Orchard outputs scanned in previous sessions.
         already_scanned_orchard_outputs: u32,
+        /// Ironwood outputs scanned in previous sessions.
+        already_scanned_ironwood_outputs: u32,
         /// Blocks scanned in previous sessions.
         already_scanned_blocks: u32,
+    },
+    /// A complete snapshot of the scheduler's current chain ranges. This is advisory and is
+    /// replaced by the next snapshot after a lagged stream or a later scheduler change.
+    ScanPlanUpdated {
+        /// Non-overlapping chain ranges with their current scheduler priorities.
+        ranges: Vec<ScanRange>,
     },
     /// A batch was handed to a scan worker. Carries the exact output counts of the batch, so
     /// consumers can render an accurate in-flight progress bar against their measured
@@ -145,6 +155,8 @@ pub enum SyncEvent {
         sapling_outputs: u32,
         /// Orchard note commitments in the batch.
         orchard_outputs: u32,
+        /// Ironwood note commitments in the batch.
+        ironwood_outputs: u32,
     },
     /// A batch finished scanning (fetch, decryption, and tree construction) and is now queued
     /// for the single-threaded commit stage. Because commits are serialized under the wallet
@@ -176,6 +188,8 @@ pub enum SyncEvent {
         sapling_outputs: u32,
         /// Orchard note commitments scanned in this range.
         orchard_outputs: u32,
+        /// Ironwood note commitments scanned in this range.
+        ironwood_outputs: u32,
         /// Wall-clock cost of processing this range, split into phases (fetch, decryption,
         /// tree construction, and commit). Paired with the output counts above its total yields
         /// a measured throughput. See [`ScanTiming`].
@@ -251,18 +265,20 @@ impl SyncEmitter {
 
 /// Emits [`SyncEvent::TipMoved`] only on a monotonic increase, deduped across the sync loop and
 /// the mempool monitor via a shared cell.
-pub(crate) fn emit_tip_if_advanced(emitter: &SyncEmitter, cell: &AtomicU64, observed: BlockHeight) {
+///
+/// The check-and-emit runs under the cell's lock so concurrent observers cannot interleave a
+/// higher tip's send between a lower tip's check and its send: the channel order matches the
+/// cell's monotonic order. The send itself is non-blocking, so the critical section is short.
+pub(crate) fn emit_tip_if_advanced(
+    emitter: &SyncEmitter,
+    cell: &Mutex<u64>,
+    observed: BlockHeight,
+) {
     let observed_raw = u64::from(u32::from(observed));
-    let mut current = cell.load(Ordering::Acquire);
-    while observed_raw > current {
-        match cell.compare_exchange_weak(current, observed_raw, Ordering::AcqRel, Ordering::Acquire)
-        {
-            Ok(_) => {
-                emitter.emit(SyncEvent::TipMoved { to: observed });
-                return;
-            }
-            Err(now) => current = now,
-        }
+    let mut current = cell.lock().expect("tip cell should not be poisoned");
+    if observed_raw > *current {
+        *current = observed_raw;
+        emitter.emit(SyncEvent::TipMoved { to: observed });
     }
 }
 
@@ -300,7 +316,7 @@ mod tests {
     #[test]
     fn tip_monotonic_and_deduped() {
         let (emitter, mut rx) = SyncEmitter::new(16);
-        let cell = AtomicU64::new(0);
+        let cell = Mutex::new(0);
         emit_tip_if_advanced(&emitter, &cell, height(100));
         emit_tip_if_advanced(&emitter, &cell, height(100));
         emit_tip_if_advanced(&emitter, &cell, height(99));
@@ -319,7 +335,7 @@ mod tests {
     #[test]
     fn tip_monotonic_under_concurrent_emitters() {
         let (emitter, mut rx) = SyncEmitter::new(1024);
-        let cell = Arc::new(AtomicU64::new(0));
+        let cell = Arc::new(Mutex::new(0));
         std::thread::scope(|scope| {
             for offset in 0..4 {
                 let emitter = emitter.clone();
@@ -375,6 +391,7 @@ mod tests {
             priority: ScanPriority::Historic,
             sapling_outputs: 4_096,
             orchard_outputs: 2_048,
+            ironwood_outputs: 1_024,
             timing,
         });
         match rx.try_recv().expect("retained event").event {
@@ -404,6 +421,22 @@ mod tests {
         assert!(matches!(
             rx.try_recv().expect("retained event").event,
             SyncEvent::BatchCommitStarted { range: r } if r == range
+        ));
+    }
+
+    #[test]
+    fn scan_plan_event_retains_scheduler_ranges() {
+        let (emitter, mut rx) = SyncEmitter::new(16);
+        let ranges = vec![ScanRange::from_parts(
+            height(100)..height(200),
+            ScanPriority::ChainTip,
+        )];
+        emitter.emit(SyncEvent::ScanPlanUpdated {
+            ranges: ranges.clone(),
+        });
+        assert!(matches!(
+            rx.try_recv().expect("retained event").event,
+            SyncEvent::ScanPlanUpdated { ranges: received } if received == ranges
         ));
     }
 }

@@ -10,7 +10,7 @@ use zcash_primitives::transaction::{TxId, fees::zip317};
 
 use zingo_netutils::Indexer as _;
 use zingo_netutils::lightwallet_protocol::RawTransaction;
-use zingo_status::confirmation_status::ConfirmationStatus;
+use zingolib_status::confirmation_status::ConfirmationStatus;
 
 use crate::data::proposal::ZingoProposal;
 use crate::lightclient::error::{LightClientError, SendError, TransmissionError};
@@ -271,7 +271,7 @@ mod test {
     /// waits up to five blocks for confirmation per transaction. see [`zingolib/src/testutils/chain_generics/live_chain.rs`]
     /// as of now, average block time is supposedly about 75 seconds
     mod testnet {
-        use zcash_protocol::{PoolType, ShieldedProtocol};
+        use zcash_protocol::{PoolType, ShieldedPool};
 
         use crate::testutils::lightclient::get_base_address;
 
@@ -288,7 +288,7 @@ mod test {
             let mut client = sync_example_wallet(case).await;
 
             let client_addr =
-                get_base_address(&client, PoolType::Shielded(ShieldedProtocol::Orchard)).await;
+                get_base_address(&client, PoolType::Shielded(ShieldedPool::Orchard)).await;
 
             with_assertions::assure_propose_send_bump_sync_all_recipients(
                 &mut NetworkedTestEnvironment::setup().await,
@@ -311,7 +311,7 @@ mod test {
             let mut client = sync_example_wallet(case).await;
 
             let client_addr =
-                get_base_address(&client, PoolType::Shielded(ShieldedProtocol::Sapling)).await;
+                get_base_address(&client, PoolType::Shielded(ShieldedPool::Sapling)).await;
 
             with_assertions::assure_propose_send_bump_sync_all_recipients(
                 &mut NetworkedTestEnvironment::setup().await,
@@ -364,7 +364,7 @@ mod test {
             let environment = &mut NetworkedTestEnvironment::setup().await;
 
             let client_addr =
-                get_base_address(&client, PoolType::Shielded(ShieldedProtocol::Orchard)).await;
+                get_base_address(&client, PoolType::Shielded(ShieldedPool::Orchard)).await;
             with_assertions::assure_propose_send_bump_sync_all_recipients(
                 &mut NetworkedTestEnvironment::setup().await,
                 &mut client,
@@ -376,7 +376,7 @@ mod test {
             .unwrap();
 
             let client_addr =
-                get_base_address(&client, PoolType::Shielded(ShieldedProtocol::Sapling)).await;
+                get_base_address(&client, PoolType::Shielded(ShieldedPool::Sapling)).await;
             with_assertions::assure_propose_send_bump_sync_all_recipients(
                 &mut NetworkedTestEnvironment::setup().await,
                 &mut client,

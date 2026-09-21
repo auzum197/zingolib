@@ -1,12 +1,11 @@
 //! Data structures for wallet summaries.
 
 use chrono::DateTime;
-use json::JsonValue;
 
 use zcash_protocol::{TxId, consensus::BlockHeight};
 
 use pepper_sync::keys::transparent::TransparentScope;
-use zingo_status::confirmation_status::ConfirmationStatus;
+use zingolib_status::confirmation_status::ConfirmationStatus;
 
 use crate::wallet::output::SpendStatus;
 
@@ -55,6 +54,7 @@ impl std::fmt::Display for TransactionKind {
             TransactionKind::Sent(SendType::Send) => write!(f, "sent"),
             TransactionKind::Sent(SendType::Shield) => write!(f, "shield"),
             TransactionKind::Sent(SendType::SendToSelf) => write!(f, "send-to-self"),
+            TransactionKind::Sent(SendType::PoolMove { .. }) => write!(f, "pool-move"),
         }
     }
 }
@@ -66,34 +66,40 @@ pub enum SendType {
     Send,
     /// Transaction is only sending funds from transparent pool to the creator's shielded pool.
     Shield,
-    /// Transaction is only sending funds to the creator's address(es) and is not a shield.
+    /// Transaction is only sending funds to the creator's address(es), within the pools it spent
+    /// from, and is not a shield.
     SendToSelf,
+    /// Transaction is only sending funds to the creator's address(es), and moves value into a
+    /// pool it did not spend from. After NU6.3 this is how Orchard funds reach Ironwood, since a
+    /// payment to an Orchard receiver is built as an Ironwood output.
+    PoolMove {
+        /// The pool that gained the most value.
+        to: zcash_protocol::PoolType,
+    },
 }
 
-/// Value transfer kind.
+/// Wallet event kind.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub enum ValueTransferKind {
-    /// Sent value transfer.
-    Sent(SentValueTransfer),
-    /// Received value transfer.
+pub enum WalletEventKind {
+    /// Sent wallet event.
+    Sent(SentWalletEvent),
+    /// Received wallet event.
     Received,
 }
 
-/// Sent value transfer kind.
+/// Sent wallet event kind.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub enum SentValueTransfer {
+pub enum SentWalletEvent {
     /// Transferring funds to an address that is not derived by the wallet.
     Send,
     /// Transferring funds to an address that is derived by the wallet.
-    SendToSelf(SelfSendValueTransfer),
+    SendToSelf(SelfSendWalletEvent),
 }
 
-/// Send-to-self value transfer kind.
+/// Send-to-self wallet event kind.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub enum SelfSendValueTransfer {
-    /// No memo.
-    ///
-    /// Only occurs when there are no other value transfers created for a given transaction.
+pub enum SelfSendWalletEvent {
+    /// Sending funds to one of the wallet's own addresses, without a memo.
     Basic,
     /// Shielding transparent funds to a shielded pool.
     Shield,
@@ -102,19 +108,22 @@ pub enum SelfSendValueTransfer {
     /// Transferring funds from a shielded pool to one of the wallet's own refund (ephemeral) addresses as the
     /// first step in a TEX transaction.
     Refund,
+    /// Moving funds into one of the wallet's own pools that the transaction did not spend from.
+    PoolMove,
 }
 
-impl std::fmt::Display for ValueTransferKind {
+impl std::fmt::Display for WalletEventKind {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
         match self {
-            ValueTransferKind::Received => write!(f, "received"),
-            ValueTransferKind::Sent(sent) => match sent {
-                SentValueTransfer::Send => write!(f, "sent"),
-                SentValueTransfer::SendToSelf(selfsend) => match selfsend {
-                    SelfSendValueTransfer::Basic => write!(f, "send-to-self"),
-                    SelfSendValueTransfer::Shield => write!(f, "shield"),
-                    SelfSendValueTransfer::MemoToSelf => write!(f, "memo-to-self"),
-                    SelfSendValueTransfer::Refund => write!(f, "rejection"),
+            WalletEventKind::Received => write!(f, "received"),
+            WalletEventKind::Sent(sent) => match sent {
+                SentWalletEvent::Send => write!(f, "sent"),
+                SentWalletEvent::SendToSelf(selfsend) => match selfsend {
+                    SelfSendWalletEvent::Basic => write!(f, "send-to-self"),
+                    SelfSendWalletEvent::Shield => write!(f, "shield"),
+                    SelfSendWalletEvent::MemoToSelf => write!(f, "memo-to-self"),
+                    SelfSendWalletEvent::Refund => write!(f, "rejection"),
+                    SelfSendWalletEvent::PoolMove => write!(f, "pool-move"),
                 },
             },
         }
@@ -132,9 +141,11 @@ pub struct TransactionSummary {
     pub value: u64,
     pub fee: Option<u64>,
     pub zec_price: Option<f32>,
+    pub ironwood_notes: Vec<BasicNoteSummary>,
     pub orchard_notes: Vec<BasicNoteSummary>,
     pub sapling_notes: Vec<BasicNoteSummary>,
     pub transparent_coins: Vec<BasicCoinSummary>,
+    pub outgoing_ironwood_notes: Vec<OutgoingNoteSummary>,
     pub outgoing_orchard_notes: Vec<OutgoingNoteSummary>,
     pub outgoing_sapling_notes: Vec<OutgoingNoteSummary>,
     pub outgoing_transparent_coins: Vec<OutgoingCoinSummary>,
@@ -147,9 +158,9 @@ impl TransactionSummary {
             TransactionKind::Sent(SendType::Send) => {
                 self.fee.map(|fee| -((self.value + fee) as i64))
             }
-            TransactionKind::Sent(SendType::Shield | SendType::SendToSelf) => {
-                self.fee.map(|fee| -(fee as i64))
-            }
+            TransactionKind::Sent(
+                SendType::Shield | SendType::SendToSelf | SendType::PoolMove { .. },
+            ) => self.fee.map(|fee| -(fee as i64)),
             TransactionKind::Received => Some(self.value as i64),
         }
     }
@@ -163,7 +174,9 @@ impl TransactionSummary {
         String,
         BasicNoteSummaries,
         BasicNoteSummaries,
+        BasicNoteSummaries,
         BasicCoinSummaries,
+        OutgoingNoteSummaries,
         OutgoingNoteSummaries,
         OutgoingNoteSummaries,
         OutgoingCoinSummaries,
@@ -183,9 +196,11 @@ impl TransactionSummary {
         } else {
             "not available".to_string()
         };
+        let ironwood_notes = BasicNoteSummaries(self.ironwood_notes.clone());
         let orchard_notes = BasicNoteSummaries(self.orchard_notes.clone());
         let sapling_notes = BasicNoteSummaries(self.sapling_notes.clone());
         let transparent_coins = BasicCoinSummaries(self.transparent_coins.clone());
+        let outgoing_ironwood_notes = OutgoingNoteSummaries(self.outgoing_ironwood_notes.clone());
         let outgoing_orchard_notes = OutgoingNoteSummaries(self.outgoing_orchard_notes.clone());
         let outgoing_sapling_notes = OutgoingNoteSummaries(self.outgoing_sapling_notes.clone());
         let outgoing_transparent_coins =
@@ -195,9 +210,11 @@ impl TransactionSummary {
             datetime,
             fee,
             zec_price,
+            ironwood_notes,
             orchard_notes,
             sapling_notes,
             transparent_coins,
+            outgoing_ironwood_notes,
             outgoing_orchard_notes,
             outgoing_sapling_notes,
             outgoing_transparent_coins,
@@ -211,9 +228,11 @@ impl std::fmt::Display for TransactionSummary {
             datetime,
             fee,
             zec_price,
+            ironwood_notes,
             orchard_notes,
             sapling_notes,
             transparent_coins,
+            outgoing_ironwood_notes,
             outgoing_orchard_notes,
             outgoing_sapling_notes,
             outgoing_transparent_coins,
@@ -229,9 +248,11 @@ impl std::fmt::Display for TransactionSummary {
     value: {}
     fee: {}
     zec price: {}
+    ironwood notes: {}
     orchard notes: {}
     sapling notes: {}
     transparent coins: {}
+    outgoing ironwood notes: {}
     outgoing orchard notes: {}
     outgoing sapling notes: {}
     outgoing transparent coins: {}
@@ -244,34 +265,15 @@ impl std::fmt::Display for TransactionSummary {
             self.value,
             fee,
             zec_price,
+            ironwood_notes,
             orchard_notes,
             sapling_notes,
             transparent_coins,
+            outgoing_ironwood_notes,
             outgoing_orchard_notes,
             outgoing_sapling_notes,
             outgoing_transparent_coins,
         )
-    }
-}
-
-impl From<TransactionSummary> for JsonValue {
-    fn from(transaction: TransactionSummary) -> Self {
-        json::object! {
-            "txid" => transaction.txid.to_string(),
-            "datetime" => transaction.datetime,
-            "status" => transaction.status.to_string(),
-            "blockheight" => u64::from(transaction.blockheight),
-            "kind" => transaction.kind.to_string(),
-            "value" => transaction.value,
-            "fee" => transaction.fee,
-            "zec_price" => transaction.zec_price,
-            "orchard_notes" => JsonValue::from(transaction.orchard_notes),
-            "sapling_notes" => JsonValue::from(transaction.sapling_notes),
-            "transparent_coins" => JsonValue::from(transaction.transparent_coins),
-            "outgoing_orchard_notes" => JsonValue::from(transaction.outgoing_orchard_notes),
-            "outgoing_sapling_notes" => JsonValue::from(transaction.outgoing_sapling_notes),
-            "outgoing_transparent_coins" => JsonValue::from(transaction.outgoing_transparent_coins),
-        }
     }
 }
 
@@ -319,39 +321,26 @@ impl std::fmt::Display for TransactionSummaries {
     }
 }
 
-impl From<TransactionSummaries> for JsonValue {
-    fn from(transaction_summaries: TransactionSummaries) -> Self {
-        let transaction_summaries: Vec<JsonValue> = transaction_summaries
-            .0
-            .into_iter()
-            .map(JsonValue::from)
-            .collect();
-        json::object! {
-            "transaction_summaries" => transaction_summaries
-        }
-    }
-}
-
-/// A value transfer is a note group abstraction.
+/// A wallet event is a user-facing interpretation of transaction activity.
 /// A group of all notes sent to a specific address in a transaction.
 #[derive(Clone, PartialEq)]
-pub struct ValueTransfer {
+pub struct WalletEvent {
     pub txid: TxId,
     pub datetime: u32,
     pub status: ConfirmationStatus,
     pub blockheight: BlockHeight,
     pub transaction_fee: Option<u64>,
     pub zec_price: Option<f32>,
-    pub kind: ValueTransferKind,
+    pub kind: WalletEventKind,
     pub value: u64,
     pub recipient_address: Option<String>,
     pub pool_received: Option<String>,
     pub memos: Vec<String>,
 }
 
-impl std::fmt::Debug for ValueTransfer {
+impl std::fmt::Debug for WalletEvent {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("ValueTransfer")
+        f.debug_struct("WalletEvent")
             .field("txid", &self.txid)
             .field("datetime", &self.datetime)
             .field("status", &self.status)
@@ -367,7 +356,7 @@ impl std::fmt::Debug for ValueTransfer {
     }
 }
 
-impl std::fmt::Display for ValueTransfer {
+impl std::fmt::Display for WalletEvent {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let datetime = if let Some(dt) = DateTime::from_timestamp(i64::from(self.datetime), 0) {
             format!("{dt}")
@@ -428,80 +417,52 @@ impl std::fmt::Display for ValueTransfer {
     }
 }
 
-impl From<ValueTransfer> for JsonValue {
-    fn from(value_transfer: ValueTransfer) -> Self {
-        json::object! {
-            "txid" => value_transfer.txid.to_string(),
-            "datetime" => value_transfer.datetime,
-            "status" => value_transfer.status.to_string(),
-            "blockheight" => u64::from(value_transfer.blockheight),
-            "transaction_fee" => value_transfer.transaction_fee,
-            "zec_price" => value_transfer.zec_price,
-            "kind" => value_transfer.kind.to_string(),
-            "value" => value_transfer.value,
-            "recipient_address" => value_transfer.recipient_address,
-            "pool_received" => value_transfer.pool_received,
-            "memos" => value_transfer.memos
-        }
-    }
-}
-
-/// A wrapper struct for implementing display and json on a vec of value transfers
+/// A wrapper struct for implementing display on a list of wallet events.
 #[derive(PartialEq, Debug)]
-pub struct ValueTransfers(Vec<ValueTransfer>);
-impl<'a> std::iter::IntoIterator for &'a ValueTransfers {
-    type Item = &'a ValueTransfer;
-    type IntoIter = std::slice::Iter<'a, ValueTransfer>;
+pub struct WalletEvents(Vec<WalletEvent>);
+impl<'a> std::iter::IntoIterator for &'a WalletEvents {
+    type Item = &'a WalletEvent;
+    type IntoIter = std::slice::Iter<'a, WalletEvent>;
 
     fn into_iter(self) -> Self::IntoIter {
         self.iter()
     }
 }
-impl std::ops::Deref for ValueTransfers {
-    type Target = Vec<ValueTransfer>;
+impl std::ops::Deref for WalletEvents {
+    type Target = Vec<WalletEvent>;
 
     fn deref(&self) -> &Self::Target {
         &self.0
     }
 }
-impl std::ops::DerefMut for ValueTransfers {
+impl std::ops::DerefMut for WalletEvents {
     fn deref_mut(&mut self) -> &mut Self::Target {
         &mut self.0
     }
 }
 // Implement the Index trait
-impl std::ops::Index<usize> for ValueTransfers {
-    type Output = ValueTransfer; // The type of the value returned by the index
+impl std::ops::Index<usize> for WalletEvents {
+    type Output = WalletEvent; // The type of the value returned by the index
 
     fn index(&self, index: usize) -> &Self::Output {
         &self.0[index] // Forward the indexing operation to the underlying data structure
     }
 }
 
-impl ValueTransfers {
-    /// Creates a new `ValueTransfer`
+impl WalletEvents {
+    /// Creates a new `WalletEvents` collection.
     #[must_use]
-    pub fn new(value_transfers: Vec<ValueTransfer>) -> Self {
-        ValueTransfers(value_transfers)
+    pub fn new(wallet_events: Vec<WalletEvent>) -> Self {
+        WalletEvents(wallet_events)
     }
 }
 
-impl std::fmt::Display for ValueTransfers {
+impl std::fmt::Display for WalletEvents {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        for value_transfer in &self.0 {
-            write!(f, "\n{value_transfer}")?;
+        for wallet_event in &self.0 {
+            write!(f, "\n{wallet_event}")?;
         }
         Ok(())
-    }
-}
-
-impl From<ValueTransfers> for JsonValue {
-    fn from(value_transfers: ValueTransfers) -> Self {
-        let value_transfers: Vec<JsonValue> =
-            value_transfers.0.into_iter().map(JsonValue::from).collect();
-        json::object! {
-            "value_transfers" => value_transfers
-        }
     }
 }
 
@@ -559,23 +520,7 @@ impl std::fmt::Display for NoteSummary {
     }
 }
 
-impl From<NoteSummary> for json::JsonValue {
-    fn from(note: NoteSummary) -> Self {
-        json::object! {
-            "value" => note.value,
-            "status" => format!("{} at block height {}", note.status, note.block_height),
-            "spend_status" => note.spend_status.to_string(),
-            "memo" => note.memo,
-            "time" => note.time,
-            "txid" => note.txid.to_string(),
-            "output_index" => note.output_index,
-            "account_id" => u32::from(note.account_id),
-            "scope" => note.scope.to_string(),
-        }
-    }
-}
-
-/// A wrapper struct for implementing display and json on a vec of note summaries
+/// A wrapper struct for implementing display on a vec of note summaries
 #[derive(Debug)]
 pub struct NoteSummaries(Vec<NoteSummary>);
 
@@ -620,24 +565,10 @@ impl std::ops::Index<usize> for NoteSummaries {
 
 impl std::fmt::Display for NoteSummaries {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        for value_transfer in &self.0 {
-            write!(f, "\n{value_transfer}")?;
+        for wallet_event in &self.0 {
+            write!(f, "\n{wallet_event}")?;
         }
         Ok(())
-    }
-}
-
-impl From<NoteSummaries> for json::JsonValue {
-    fn from(note_summaries: NoteSummaries) -> Self {
-        let note_summaries: Vec<json::JsonValue> = note_summaries
-            .0
-            .into_iter()
-            .map(json::JsonValue::from)
-            .collect();
-        json::object! {
-            "note_summaries" => note_summaries
-
-        }
     }
 }
 
@@ -685,17 +616,6 @@ impl std::fmt::Display for BasicNoteSummary {
         }}",
             self.value, self.spend_status, self.output_index, memo,
         )
-    }
-}
-
-impl From<BasicNoteSummary> for JsonValue {
-    fn from(note: BasicNoteSummary) -> Self {
-        json::object! {
-            "value" => note.value,
-            "spend_status" => note.spend_status.to_string(),
-            "output_index" => note.output_index,
-            "memo" => note.memo,
-        }
     }
 }
 
@@ -764,24 +684,8 @@ impl std::fmt::Display for CoinSummary {
     }
 }
 
-impl From<CoinSummary> for json::JsonValue {
-    fn from(coin: CoinSummary) -> Self {
-        json::object! {
-            "value" => coin.value,
-            "status" => format!("{} at block height {}", coin.status, coin.block_height),
-            "spend_status" => coin.spend_status.to_string(),
-            "time" => coin.time,
-            "txid" => coin.txid.to_string(),
-            "output_index" => coin.output_index,
-            "account_id" => u32::from(coin.account_id),
-            "scope" => coin.scope.to_string(),
-            "address_index" => coin.address_index
-        }
-    }
-}
-
 /// Transparent coin summary.
-// TODO: add scope to distinguish "refund" scope value transfers
+// TODO: add scope to distinguish "refund" scope wallet events
 #[derive(Clone, PartialEq, Debug)]
 pub struct BasicCoinSummary {
     pub value: u64,
@@ -814,16 +718,6 @@ impl std::fmt::Display for BasicCoinSummary {
         )
     }
 }
-impl From<BasicCoinSummary> for JsonValue {
-    fn from(note: BasicCoinSummary) -> Self {
-        json::object! {
-            "value" => note.value,
-            "spend_status" => note.spend_summary.to_string(),
-            "output_index" => note.output_index,
-        }
-    }
-}
-
 /// Wraps a vec of transparent coin summaries for the implementation of `std::fmt::Display`
 pub struct BasicCoinSummaries(Vec<BasicCoinSummary>);
 
@@ -878,20 +772,6 @@ impl std::fmt::Display for OutgoingNoteSummary {
     }
 }
 
-impl From<OutgoingNoteSummary> for JsonValue {
-    fn from(note: OutgoingNoteSummary) -> Self {
-        json::object! {
-            "value" => note.value,
-            "memo" => note.memo,
-            "recipient" => note.recipient,
-            "recipient_unified_address" => note.recipient_unified_address,
-            "output_index" => note.output_index,
-            "account_id" => u32::from(note.account_id),
-            "scope" => note.scope.to_string(),
-        }
-    }
-}
-
 /// Wraps a vec of orchard note summaries for the implementation of `std::fmt::Display`
 pub struct OutgoingNoteSummaries(Vec<OutgoingNoteSummary>);
 
@@ -926,16 +806,6 @@ impl std::fmt::Display for OutgoingCoinSummary {
     }
 }
 
-impl From<OutgoingCoinSummary> for JsonValue {
-    fn from(note: OutgoingCoinSummary) -> Self {
-        json::object! {
-            "value" => note.value,
-            "recipient" => note.recipient,
-            "output_index" => note.output_index,
-        }
-    }
-}
-
 /// Wraps a vec of orchard note summaries for the implementation of `std::fmt::Display`
 pub struct OutgoingCoinSummaries(Vec<OutgoingCoinSummary>);
 
@@ -959,37 +829,4 @@ pub mod finsight {
     /// TODO: Add Doc Comment Here!
     #[derive(Debug)]
     pub struct TotalMemoBytesToAddress(pub std::collections::HashMap<String, usize>);
-
-    impl From<TotalMemoBytesToAddress> for json::JsonValue {
-        fn from(value: TotalMemoBytesToAddress) -> Self {
-            let mut jsonified = json::object!();
-            let hm = value.0;
-            for (key, val) in &hm {
-                jsonified[key] = json::JsonValue::from(*val);
-            }
-            jsonified
-        }
-    }
-
-    impl From<TotalValueToAddress> for json::JsonValue {
-        fn from(value: TotalValueToAddress) -> Self {
-            let mut jsonified = json::object!();
-            let hm = value.0;
-            for (key, val) in &hm {
-                jsonified[key] = json::JsonValue::from(*val);
-            }
-            jsonified
-        }
-    }
-
-    impl From<TotalSendsToAddress> for json::JsonValue {
-        fn from(value: TotalSendsToAddress) -> Self {
-            let mut jsonified = json::object!();
-            let hm = value.0;
-            for (key, val) in &hm {
-                jsonified[key] = json::JsonValue::from(*val);
-            }
-            jsonified
-        }
-    }
 }

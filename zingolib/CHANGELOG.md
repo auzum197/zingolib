@@ -14,8 +14,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   summarize a single transaction by txid, returning `None` if the transaction is not in the wallet.
   Shares the construction path of `transaction_summaries`, so kind/value/fee always agree with the
   bulk view.
+- `wallet::summary::data::SendType::PoolMove { to }`: a transaction that only sends to the
+  wallet itself and moves value into a pool it did not spend from, with the pool that gained the
+  most. After NU6.3 this is how Orchard funds reach Ironwood. Displays as `pool-move`.
+- `wallet::summary::data::SelfSendWalletEvent::PoolMove`: the wallet event for value moved
+  into such a pool. Displays as `pool-move`.
+- `moved_to` in the JSON of a transaction summary: the destination pool of a pool move, or null.
 
 ### Changed
+- The wallet history API now uses wallet event terminology. `ValueTransfer`,
+  `ValueTransferKind`, `SentValueTransfer`, `SelfSendValueTransfer`, `ValueTransfers`, and
+  `value_transfers` are now `WalletEvent`, `WalletEventKind`, `SentWalletEvent`,
+  `SelfSendWalletEvent`, `WalletEvents`, and `wallet_events`.
+- `SendType::SendToSelf` now only covers sends to self within the pools the transaction spent
+  from. Sends to self that move value into another pool are `SendType::PoolMove`.
+- Wallet events for value sent to the wallet itself carry the real amount instead of zero, one
+  per pool, including those inside an ordinary send. Outputs to the wallet's own external
+  addresses count, and so does any output carrying a memo; plain change does not. A send to one
+  of the wallet's own transparent addresses inside a send, previously dropped, now has a value
+  wallet event.
+- `TransactionSummary::value` of a `SendToSelf` is the amount sent to self, measured the same way
+  as its wallet events, instead of zero. A `PoolMove` is worth the value moved.
+- An empty text memo, which is what a zero-filled memo field decodes to, is treated as no memo
+  in summaries and wallet events. It no longer turns a send to self into a memo to self.
 
 ### Removed
 

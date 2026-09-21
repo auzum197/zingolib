@@ -15,6 +15,8 @@ zingo_common_components.workspace = true
 
 # zingo infrastructure
 zcash_local_net.workspace = true
+zcash_protocol.workspace = true
+zingo-consensus.workspace = true
 zingo_test_vectors.workspace = true
 
 # utilties

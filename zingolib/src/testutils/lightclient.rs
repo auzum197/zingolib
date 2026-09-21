@@ -2,41 +2,33 @@
 //! (obviously) in a test environment.
 
 use zcash_primitives::transaction::TxId;
-use zcash_protocol::{PoolType, ShieldedProtocol};
+use zcash_protocol::{PoolType, ShieldedPool};
 
 use crate::lightclient::LightClient;
 
 /// gets the first address that will allow a sender to send to a specific pool, as a string
 pub async fn get_base_address(client: &LightClient, pooltype: PoolType) -> String {
     match pooltype {
-        PoolType::Shielded(ShieldedProtocol::Orchard) => {
-            assert!(
-                client.unified_addresses_json().await[0]["has_orchard"]
-                    .as_bool()
-                    .unwrap()
-            );
-            client.unified_addresses_json().await[0]["encoded_address"]
-                .clone()
-                .to_string()
+        // Ironwood shares the Orchard receiver in a unified address.
+        PoolType::Shielded(ShieldedPool::Orchard | ShieldedPool::Ironwood) => {
+            let addresses = client.unified_addresses().await;
+            let address = addresses.values().next().unwrap();
+            assert!(address.has_orchard());
+            address.encode(&client.chain_type())
         }
-        PoolType::Shielded(ShieldedProtocol::Sapling) => {
-            assert!(
-                !client.unified_addresses_json().await[1]["has_orchard"]
-                    .as_bool()
-                    .unwrap()
-            );
-            assert!(
-                client.unified_addresses_json().await[1]["has_sapling"]
-                    .as_bool()
-                    .unwrap()
-            );
-            client.unified_addresses_json().await[1]["encoded_address"]
-                .clone()
-                .to_string()
+        PoolType::Shielded(ShieldedPool::Sapling) => {
+            let addresses = client.unified_addresses().await;
+            let address = addresses.values().nth(1).unwrap();
+            assert!(!address.has_orchard());
+            assert!(address.has_sapling());
+            address.encode(&client.chain_type())
         }
-        PoolType::Transparent => client.transparent_addresses_json().await[0]["encoded_address"]
-            .clone()
-            .to_string(),
+        PoolType::Transparent => client
+            .transparent_addresses()
+            .await
+            .into_values()
+            .next()
+            .unwrap(),
     }
 }
 /// Get the total fees paid by a given client (assumes 1 capability per client).
@@ -117,7 +109,7 @@ pub mod from_inputs {
 pub async fn lookup_statuses(
     client: &LightClient,
     txids: nonempty::NonEmpty<TxId>,
-) -> nonempty::NonEmpty<Option<zingo_status::confirmation_status::ConfirmationStatus>> {
+) -> nonempty::NonEmpty<Option<zingolib_status::confirmation_status::ConfirmationStatus>> {
     let wallet = client.wallet().read().await;
 
     txids.map(|txid| {

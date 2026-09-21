@@ -55,10 +55,7 @@ async fn sync_mainnet_test() {
         interval.tick().await;
         {
             let wallet = lightclient.wallet().read().await;
-            tracing::info!(
-                "{}",
-                json::JsonValue::from(pepper_sync::sync_status(&*wallet).await.unwrap())
-            );
+            tracing::info!("{}", pepper_sync::sync_status(&*wallet).await.unwrap());
             tracing::info!("WALLET DEBUG:");
             tracing::info!("uas: {}", wallet.unified_addresses().len());
             tracing::info!("taddrs: {}", wallet.transparent_addresses().len());
@@ -299,7 +296,7 @@ async fn sync_test() {
     //     .unwrap();
 
     // tracing::info!("{}", recipient.transaction_summaries().await.unwrap());
-    tracing::info!("{}", recipient.value_transfers(false).await.unwrap());
+    tracing::info!("{}", recipient.wallet_events(false).await.unwrap());
     tracing::info!(
         "{}",
         recipient

@@ -1,5 +1,5 @@
 [package]
-name = "zingo-price"
+name = "zingolib-price"
 description = "Crate for fetching ZEC prices."
 authors = ["<zingo@zingolabs.org>"]
 version = "0.1.0"

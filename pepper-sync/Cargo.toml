@@ -22,8 +22,9 @@ test-features = []
 
 [dependencies]
 # Zingo
-zingo-memo.workspace = true
-zingo-status.workspace = true
+lightwallet-protocol.workspace = true
+zingolib-memo.workspace = true
+zingolib-status.workspace = true
 zingo-netutils.workspace = true
 
 # Zcash
@@ -69,9 +70,6 @@ rayon.workspace = true
 
 # Error handling
 thiserror.workspace = true
-
-# JSON
-json.workspace = true
 
 # Serialization
 byteorder = { workspace = true, optional = true }

@@ -25,6 +25,7 @@ use std::time::{Duration, Instant};
 
 use pepper_sync::config::{PerformanceLevel, SyncConfig};
 use pepper_sync::events::{ScanTiming, SequencedSyncEvent, SyncEvent};
+use pepper_sync::sync::ScanPriority;
 use tokio::sync::broadcast::error::RecvError;
 
 use zingolib::config::{
@@ -531,13 +532,19 @@ async fn handle_event(event: SequencedSyncEvent, view: &mut View, lc: &LightClie
             tip,
             total_sapling_outputs,
             total_orchard_outputs,
+            total_ironwood_outputs,
             already_scanned_sapling_outputs,
             already_scanned_orchard_outputs,
+            already_scanned_ironwood_outputs,
             ..
         } => {
-            view.outputs_total = u64::from(total_sapling_outputs + total_orchard_outputs);
-            view.outputs_scanned =
-                u64::from(already_scanned_sapling_outputs + already_scanned_orchard_outputs);
+            view.outputs_total =
+                u64::from(total_sapling_outputs + total_orchard_outputs + total_ironwood_outputs);
+            view.outputs_scanned = u64::from(
+                already_scanned_sapling_outputs
+                    + already_scanned_orchard_outputs
+                    + already_scanned_ironwood_outputs,
+            );
             view.timing_log.clear();
             view.progress_log.clear();
             view.progress_log
@@ -546,11 +553,27 @@ async fn handle_event(event: SequencedSyncEvent, view: &mut View, lc: &LightClie
                 "session started: birthday {birthday}, sync start {sync_start_height}, tip {tip}"
             ));
             view.line(&format!(
-                "outputs in window: {} (sapling {} | orchard {}), {} already scanned",
+                "outputs in window: {} (sapling {} | orchard {} | ironwood {}), {} already scanned",
                 group(view.outputs_total),
                 group(u64::from(total_sapling_outputs)),
                 group(u64::from(total_orchard_outputs)),
+                group(u64::from(total_ironwood_outputs)),
                 group(view.outputs_scanned),
+            ));
+        }
+        SyncEvent::ScanPlanUpdated { ranges } => {
+            let pending = ranges
+                .iter()
+                .filter(|range| {
+                    !matches!(
+                        range.priority(),
+                        ScanPriority::Scanned | ScanPriority::ScannedWithoutMapping
+                    )
+                })
+                .count();
+            view.line(&format!(
+                "scheduler: {} ranges, {pending} pending",
+                ranges.len()
             ));
         }
         SyncEvent::BatchScanStarted {
@@ -558,11 +581,12 @@ async fn handle_event(event: SequencedSyncEvent, view: &mut View, lc: &LightClie
             priority,
             sapling_outputs,
             orchard_outputs,
+            ironwood_outputs,
         } => {
             view.batch_started(InFlightBatch {
                 range: u32::from(range.start)..u32::from(range.end),
                 priority: format!("{priority:?}"),
-                outputs: u64::from(sapling_outputs + orchard_outputs),
+                outputs: u64::from(sapling_outputs + orchard_outputs + ironwood_outputs),
                 started: Instant::now(),
                 phase: Phase::Scanning,
             });
@@ -581,9 +605,10 @@ async fn handle_event(event: SequencedSyncEvent, view: &mut View, lc: &LightClie
             priority,
             sapling_outputs,
             orchard_outputs,
+            ironwood_outputs,
             timing,
         } => {
-            let outputs = u64::from(sapling_outputs + orchard_outputs);
+            let outputs = u64::from(sapling_outputs + orchard_outputs + ironwood_outputs);
             let range = u32::from(range.start)..u32::from(range.end);
             if view.batch_committed(&range, outputs, timing) {
                 // the batch's own line now re-renders as DONE in place
@@ -603,7 +628,7 @@ async fn handle_event(event: SequencedSyncEvent, view: &mut View, lc: &LightClie
         SyncEvent::TxDiscovered { txid, status } => {
             view.txs_found += 1;
             // the event is a hint: query the wallet for the committed transaction. Summaries
-            // share the code path of the `transactions`/`value_transfers` views, so the kind
+            // share the code path of the `transactions`/`wallet_events` views, so the kind
             // and amount match them (change outputs are not reported as received).
             let summary = lc.transaction_summary(txid).await.ok().flatten();
             let mut text = format!("tx {txid} [{status} {}]", status.get_height());
@@ -630,8 +655,11 @@ async fn handle_event(event: SequencedSyncEvent, view: &mut View, lc: &LightClie
 async fn reconcile(view: &mut View, lc: &LightClient, skipped: u64) {
     let wallet = lc.wallet().read().await;
     if let Ok(status) = pepper_sync::sync_status(&*wallet).await {
-        view.outputs_scanned =
-            u64::from(status.total_sapling_outputs_scanned + status.total_orchard_outputs_scanned);
+        view.outputs_scanned = u64::from(
+            status.total_sapling_outputs_scanned
+                + status.total_orchard_outputs_scanned
+                + status.total_ironwood_outputs_scanned,
+        );
         // skipped commits left no measured samples: drop the windows and rebuild them from the
         // next batches that commit
         view.timing_log.clear();

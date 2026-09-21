@@ -1,5 +1,5 @@
 [package]
-name = "zingo-status"
+name = "zingolib-status"
 description = "A Rust library for representing and working with transaction confirmation status in ZCash."
 authors = ["<zingo@zingolabs.org>"]
 version = "0.2.1"

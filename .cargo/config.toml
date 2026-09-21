@@ -1,0 +1,8 @@
+# Project-local cargo config. Applies only to builds invoked within this repo.
+#
+# Ironwood (NU6.3) lives behind `#[cfg(zcash_unstable = "nu6.3")]` in the
+# released zcash crates until mainnet activation. Enabling the cfg here means
+# every `cargo` invocation in this repo builds the Ironwood code paths without
+# needing a RUSTFLAGS prefix each time.
+[build]
+rustflags = ["--cfg", "zcash_unstable=\"nu6.3\""]

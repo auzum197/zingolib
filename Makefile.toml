@@ -41,7 +41,7 @@ The local-run task mirrors the PR test defaults:
   cargo nextest run --verbose --workspace --profile ci --retries 2 -E 'not test(slow)'
 
 Forward extra nextest flags after the task name:
-  makers container-test -p zingo-memo
+  makers container-test -p zingolib-memo
 
 Override the default nextest filter:
   ZINGOLIB_NEXTEST_FILTER='package(zingolib) & not test(slow)' makers container-test

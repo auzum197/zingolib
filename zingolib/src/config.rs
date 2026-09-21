@@ -83,6 +83,7 @@ pub(crate) mod consealed {
                 ChainType::Mainnet => MAIN_NETWORK.activation_height(nu),
                 ChainType::Testnet => TEST_NETWORK.activation_height(nu),
                 ChainType::Regtest(activation_heights) => match nu {
+                    NetworkUpgrade::Nu6_3 => activation_heights.nu6_3().map(BlockHeight::from_u32),
                     NetworkUpgrade::Overwinter => {
                         activation_heights.overwinter().map(BlockHeight::from_u32)
                     }

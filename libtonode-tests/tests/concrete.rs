@@ -1,5 +1,4 @@
 #![forbid(unsafe_code)]
-use json::JsonValue;
 
 use zcash_address::unified::Fvk;
 use zcash_primitives::transaction::fees::zip317::MINIMUM_FEE;
@@ -143,10 +142,9 @@ mod fast {
     use zcash_local_net::validator::Validator;
     use zcash_protocol::consensus::BlockHeight;
     use zcash_protocol::memo::Memo;
-    use zcash_protocol::{PoolType, ShieldedProtocol, value::Zatoshis};
+    use zcash_protocol::{PoolType, ShieldedPool, value::Zatoshis};
     use zcash_transparent::keys::NonHardenedChildIndex;
     use zingo_common_components::protocol::ActivationHeights;
-    use zingo_status::confirmation_status::ConfirmationStatus;
     use zingolib::{
         ZENNIES_FOR_ZINGO_REGTEST_ADDRESS,
         config::WalletConfig,
@@ -157,9 +155,10 @@ mod fast {
         },
         wallet::{
             keys::unified::{ReceiverSelection, UnifiedAddressId},
-            summary::data::{SelfSendValueTransfer, SentValueTransfer, ValueTransferKind},
+            summary::data::{SelfSendWalletEvent, SentWalletEvent, WalletEventKind},
         },
     };
+    use zingolib_status::confirmation_status::ConfirmationStatus;
     use zingolib_testutils::scenarios::increase_height_and_wait_for_client;
     use zip32::AccountId;
 
@@ -181,7 +180,7 @@ mod fast {
     //             Some(value),
     //             None,
     //             None,
-    //             PoolType::Shielded(ShieldedProtocol::Sapling),
+    //             PoolType::Shielded(ShieldedPool::Sapling),
     //             regtest_network,
     //             true,
     //         )
@@ -464,7 +463,12 @@ mod fast {
     async fn unified_address_discovery() {
         let (local_net, mut client_builder) = scenarios::custom_clients_default().await;
         let mut faucet = client_builder
-            .build_faucet(true, local_net.validator().get_activation_heights().await)
+            .build_faucet(
+                true,
+                zingolib_testutils::scenarios::from_consensus_activation_heights(
+                    local_net.validator().get_activation_heights().await,
+                ),
+            )
             .await;
         let mut recipient = client_builder
             .build_client(
@@ -475,7 +479,9 @@ mod fast {
                     wallet_settings: default_test_wallet_settings(),
                 },
                 true,
-                local_net.validator().get_activation_heights().await,
+                zingolib_testutils::scenarios::from_consensus_activation_heights(
+                    local_net.validator().get_activation_heights().await,
+                ),
             )
             .await;
         let network = recipient.chain_type();
@@ -531,7 +537,9 @@ mod fast {
                     wallet_settings: default_test_wallet_settings(),
                 },
                 true,
-                local_net.validator().get_activation_heights().await,
+                zingolib_testutils::scenarios::from_consensus_activation_heights(
+                    local_net.validator().get_activation_heights().await,
+                ),
             )
             .await;
         if let Some(_ua) =
@@ -650,7 +658,7 @@ mod fast {
             Some(200_000),
             Some(100_000),
             None,
-            PoolType::Shielded(ShieldedProtocol::Orchard),
+            PoolType::Shielded(ShieldedPool::Orchard),
             ActivationHeights::default(),
             None,
         )
@@ -688,15 +696,13 @@ mod fast {
 
         recipient.send_stored_proposal(true).await.unwrap();
 
-        let value_transfers = &recipient.value_transfers(true).await.unwrap();
+        let wallet_events = &recipient.wallet_events(true).await.unwrap();
 
-        assert!(value_transfers.iter().any(|vt| vt.kind
-            == ValueTransferKind::Sent(SentValueTransfer::SendToSelf(
-                SelfSendValueTransfer::Basic
-            ))));
-        assert!(value_transfers.iter().any(|vt| vt.kind
-            == ValueTransferKind::Sent(SentValueTransfer::Send)
-            && vt.recipient_address == Some(ZENNIES_FOR_ZINGO_REGTEST_ADDRESS.to_string())));
+        assert!(wallet_events.iter().any(|event| event.kind
+            == WalletEventKind::Sent(SentWalletEvent::SendToSelf(SelfSendWalletEvent::Basic))));
+        assert!(wallet_events.iter().any(|event| event.kind
+            == WalletEventKind::Sent(SentWalletEvent::Send)
+            && event.recipient_address == Some(ZENNIES_FOR_ZINGO_REGTEST_ADDRESS.to_string())));
     }
 
     /// This tests checks that `messages_containing` returns an empty vector when empty memos are included.
@@ -900,20 +906,20 @@ mod fast {
             .unwrap();
 
         // Collect observations
-        let value_transfers_bob = &recipient
+        let wallet_events_bob = &recipient
             .messages_containing(Some(&bob.encode(&recipient.chain_type())))
             .await
             .unwrap();
-        let value_transfers_charlie = &recipient
+        let wallet_events_charlie = &recipient
             .messages_containing(Some(&charlie.encode(&recipient.chain_type())))
             .await
             .unwrap();
-        let all_vts = &recipient.value_transfers(true).await.unwrap();
+        let all_events = &recipient.wallet_events(true).await.unwrap();
         let all_messages = &recipient.messages_containing(None).await.unwrap();
 
         // Make assertions
-        assert_eq!(value_transfers_bob.len(), 3);
-        assert_eq!(value_transfers_charlie.len(), 2);
+        assert_eq!(wallet_events_bob.len(), 3);
+        assert_eq!(wallet_events_charlie.len(), 2);
 
         // Also asserting the order now (sorry juanky)
         // ALL MESSAGES (First one should be the oldest one)
@@ -922,18 +928,18 @@ mod fast {
                 .windows(2)
                 .all(|pair| { pair[0].blockheight <= pair[1].blockheight })
         );
-        // ALL VTS (First one should be the most recent one)
+        // ALL EVENTS (First one should be the most recent one)
         assert!(
-            all_vts
+            all_events
                 .windows(2)
                 .all(|pair| { pair[0].blockheight >= pair[1].blockheight })
         );
     }
 
-    /// Tests that value transfers are properly sorted by block height and index.
-    /// It also tests that retrieving the value transfers multiple times in a row returns the same results.
+    /// Tests that wallet events are properly sorted by block height and index.
+    /// It also tests that repeated retrievals return the same events.
     #[tokio::test]
-    async fn value_transfers() {
+    async fn wallet_events() {
         let mut environment = LibtonodeEnvironment::setup().await;
 
         let mut faucet = environment.create_faucet().await;
@@ -975,21 +981,21 @@ mod fast {
         environment.increase_chain_height().await;
         recipient.sync_and_await().await.unwrap();
 
-        let value_transfers = &recipient.value_transfers(true).await.unwrap();
-        let value_transfers1 = &recipient.value_transfers(true).await.unwrap();
-        let value_transfers2 = &recipient.value_transfers(true).await.unwrap();
-        let mut value_transfers3 = recipient.value_transfers(false).await.unwrap();
-        let mut value_transfers4 = recipient.value_transfers(false).await.unwrap();
+        let wallet_events = &recipient.wallet_events(true).await.unwrap();
+        let wallet_events1 = &recipient.wallet_events(true).await.unwrap();
+        let wallet_events2 = &recipient.wallet_events(true).await.unwrap();
+        let mut wallet_events3 = recipient.wallet_events(false).await.unwrap();
+        let mut wallet_events4 = recipient.wallet_events(false).await.unwrap();
 
-        assert_eq!(value_transfers[0].memos.len(), 4);
+        assert_eq!(wallet_events[0].memos.len(), 4);
 
-        value_transfers3.reverse();
-        value_transfers4.reverse();
+        wallet_events3.reverse();
+        wallet_events4.reverse();
 
-        assert_eq!(value_transfers, value_transfers1);
-        assert_eq!(value_transfers, value_transfers2);
-        assert_eq!(value_transfers, &value_transfers3);
-        assert_eq!(value_transfers, &value_transfers4);
+        assert_eq!(wallet_events, wallet_events1);
+        assert_eq!(wallet_events, wallet_events2);
+        assert_eq!(wallet_events, &wallet_events3);
+        assert_eq!(wallet_events, &wallet_events4);
     }
 
     pub mod tex {
@@ -1055,9 +1061,9 @@ mod fast {
             );
 
             // FIXME: add tex addresses to encoded memos
-            // let val_tranfers = sender.value_transfers(true).await.unwrap();
+            // let wallet_events = sender.wallet_events(true).await.unwrap();
             // assert_eq!(
-            //     val_tranfers[0].recipient_address().unwrap(),
+            //     wallet_events[0].recipient_address().unwrap(),
             //     tex_addr_from_first.encode()
             // );
         }
@@ -1175,10 +1181,15 @@ mod fast {
             .generate_unified_address(ReceiverSelection::all_shielded(), zip32::AccountId::ZERO)
             .await
             .unwrap();
-        let addresses = recipient.unified_addresses_json().await;
+        let addresses: Vec<String> = recipient
+            .unified_addresses()
+            .await
+            .into_values()
+            .map(|address| address.encode(&recipient.chain_type()))
+            .collect();
         let address_5000_nonememo_tuples = addresses
-            .members()
-            .map(|ua| (ua["encoded_address"].as_str().unwrap(), 10_000, None))
+            .iter()
+            .map(|address| (address.as_str(), 10_000, None))
             .collect::<Vec<(&str, u64, Option<&str>)>>();
         from_inputs::quick_send(&mut faucet, address_5000_nonememo_tuples)
             .await
@@ -1199,6 +1210,9 @@ mod fast {
                 total_orchard_balance: Some(30_000.try_into().unwrap()),
                 confirmed_orchard_balance: Some(30_000.try_into().unwrap()),
                 unconfirmed_orchard_balance: Some(0.try_into().unwrap()),
+                total_ironwood_balance: Some(0.try_into().unwrap()),
+                confirmed_ironwood_balance: Some(0.try_into().unwrap()),
+                unconfirmed_ironwood_balance: Some(0.try_into().unwrap()),
                 total_transparent_balance: Some(0.try_into().unwrap()),
                 confirmed_transparent_balance: Some(0.try_into().unwrap()),
                 unconfirmed_transparent_balance: Some(0.try_into().unwrap())
@@ -1221,7 +1235,9 @@ mod fast {
                     wallet_settings: default_test_wallet_settings(),
                 },
                 false,
-                local_net.validator().get_activation_heights().await,
+                zingolib_testutils::scenarios::from_consensus_activation_heights(
+                    local_net.validator().get_activation_heights().await,
+                ),
             )
             .await;
         let network = recipient.chain_type();
@@ -1300,7 +1316,9 @@ tmQuMoTTjU3GFfTjrhPiBYihbTVfYmPk5Gr"
                     wallet_settings: default_test_wallet_settings(),
                 },
                 false,
-                local_net.validator().get_activation_heights().await,
+                zingolib_testutils::scenarios::from_consensus_activation_heights(
+                    local_net.validator().get_activation_heights().await,
+                ),
             )
             .await;
 
@@ -1480,9 +1498,8 @@ mod slow {
     use zcash_protocol::consensus::BlockHeight;
     use zcash_protocol::memo::Memo;
     use zcash_protocol::value::Zatoshis;
-    use zcash_protocol::{PoolType, ShieldedProtocol};
+    use zcash_protocol::{PoolType, ShieldedPool};
     use zingo_common_components::protocol::ActivationHeights;
-    use zingo_status::confirmation_status::ConfirmationStatus;
     use zingo_test_vectors::TEST_TXID;
     use zingolib::config::{ChainType, ClientConfig, WalletConfig};
     use zingolib::lightclient::LightClient;
@@ -1502,6 +1519,7 @@ mod slow {
     use zingolib::wallet::summary::data::{
         BasicNoteSummary, OutgoingNoteSummary, SendType, TransactionKind, TransactionSummary,
     };
+    use zingolib_status::confirmation_status::ConfirmationStatus;
     use zingolib_testutils::scenarios::increase_height_and_wait_for_client;
     use zip32::AccountId;
 
@@ -1544,10 +1562,7 @@ mod slow {
                 .await
                 .unwrap()
         );
-        tracing::info!(
-            "{}",
-            JsonValue::from(recipient.value_transfers(true).await.unwrap()).pretty(4)
-        );
+        tracing::info!("{}", recipient.wallet_events(true).await.unwrap());
     }
     #[tokio::test]
     async fn zero_value_change() {
@@ -1804,7 +1819,12 @@ mod slow {
 
         let (local_net, mut client_builder) = scenarios::custom_clients_default().await;
         let mut faucet = client_builder
-            .build_faucet(false, local_net.validator().get_activation_heights().await)
+            .build_faucet(
+                false,
+                zingolib_testutils::scenarios::from_consensus_activation_heights(
+                    local_net.validator().get_activation_heights().await,
+                ),
+            )
             .await;
         let mut original_recipient = client_builder
             .build_client(
@@ -1815,7 +1835,9 @@ mod slow {
                     wallet_settings: default_test_wallet_settings(),
                 },
                 false,
-                local_net.validator().get_activation_heights().await,
+                zingolib_testutils::scenarios::from_consensus_activation_heights(
+                    local_net.validator().get_activation_heights().await,
+                ),
             )
             .await;
 
@@ -1896,7 +1918,9 @@ mod slow {
             let zingo_config = ClientConfig::builder()
                 .set_indexer_uri(client_builder.server_id.clone())
                 .set_chain_type(ChainType::Regtest(
-                    local_net.validator().get_activation_heights().await,
+                    zingolib_testutils::scenarios::from_consensus_activation_heights(
+                        local_net.validator().get_activation_heights().await,
+                    ),
                 ))
                 .set_wallet_dir(client_builder.zingo_datadir.path().to_path_buf())
                 .set_wallet_config(WalletConfig::Ufvk {
@@ -2044,10 +2068,7 @@ mod slow {
                 .unwrap()
         );
         tracing::info!("{}", recipient.transaction_summaries(false).await.unwrap());
-        tracing::info!(
-            "{}",
-            JsonValue::from(recipient.value_transfers(true).await.unwrap()).pretty(2)
-        );
+        tracing::info!("{}", recipient.wallet_events(true).await.unwrap());
         recipient.rescan_and_await().await.unwrap();
         tracing::info!(
             "{}",
@@ -2057,10 +2078,7 @@ mod slow {
                 .unwrap()
         );
         tracing::info!("{}", recipient.transaction_summaries(false).await.unwrap());
-        tracing::info!(
-            "{}",
-            JsonValue::from(recipient.value_transfers(true).await.unwrap()).pretty(2)
-        );
+        tracing::info!("{}", recipient.wallet_events(true).await.unwrap());
         // TODO: Add asserts!
     }
     #[tokio::test]
@@ -2100,11 +2118,9 @@ mod slow {
                 })
         }));
         assert_eq!(
-            transactions,
-            rescanned_transactions,
-            "Pre-Rescan: {}\n\n\nPost-Rescan: {}\n\n\n",
-            json::stringify_pretty(transactions.clone(), 4),
-            json::stringify_pretty(rescanned_transactions.clone(), 4)
+            transactions, rescanned_transactions,
+            "Pre-Rescan: {:#?}\n\n\nPost-Rescan: {:#?}\n\n\n",
+            transactions, rescanned_transactions
         );
     }
     #[tokio::test]
@@ -2123,6 +2139,7 @@ mod slow {
             value: recipient_initial_funds,
             fee: Some(10_000),
             zec_price: None,
+            ironwood_notes: vec![],
             orchard_notes: vec![BasicNoteSummary::from_parts(
                 recipient_initial_funds,
                 SpendStatus::Spent(
@@ -2133,6 +2150,7 @@ mod slow {
             )],
             sapling_notes: vec![],
             transparent_coins: vec![],
+            outgoing_ironwood_notes: vec![],
             outgoing_orchard_notes: vec![],
             outgoing_sapling_notes: vec![],
             outgoing_transparent_coins: vec![],
@@ -2162,6 +2180,7 @@ mod slow {
             value: first_send_to_sapling,
             fee: Some(20_000),
             zec_price: None,
+            ironwood_notes: vec![],
             orchard_notes: vec![BasicNoteSummary::from_parts(
                 99_960_000,
                 SpendStatus::TransmittedSpent(
@@ -2172,6 +2191,7 @@ mod slow {
             )],
             sapling_notes: vec![],
             transparent_coins: vec![],
+            outgoing_ironwood_notes: vec![],
             outgoing_orchard_notes: vec![],
             outgoing_sapling_notes: vec![OutgoingNoteSummary {
                  output_index: 0,
@@ -2196,6 +2216,7 @@ mod slow {
             value: first_send_to_transparent,
             fee: Some(15_000),
             zec_price: None,
+            ironwood_notes: vec![],
             orchard_notes: vec![BasicNoteSummary::from_parts(
                 99_925_000,
                 SpendStatus::Unspent,
@@ -2204,6 +2225,7 @@ mod slow {
             )],
             sapling_notes: vec![],
             transparent_coins: vec![],
+            outgoing_ironwood_notes: vec![],
             outgoing_orchard_notes: vec![],
             outgoing_sapling_notes: vec![],
             outgoing_transparent_coins: vec![],
@@ -2273,6 +2295,7 @@ mod slow {
             value: recipient_second_funding,
             fee: Some(10_000),
             zec_price: None,
+            ironwood_notes: vec![],
             orchard_notes: vec![BasicNoteSummary::from_parts(
                 recipient_second_funding,
                 SpendStatus::Spent(
@@ -2283,6 +2306,7 @@ mod slow {
             )],
             sapling_notes: vec![],
             transparent_coins: vec![],
+            outgoing_ironwood_notes: vec![],
             outgoing_orchard_notes: vec![],
             outgoing_sapling_notes: vec![],
             outgoing_transparent_coins: vec![],
@@ -2312,6 +2336,7 @@ mod slow {
             value: second_send_to_transparent,
             fee: Some(15_000),
             zec_price: None,
+            ironwood_notes: vec![],
             orchard_notes: vec![BasicNoteSummary::from_parts(
                 965_000,
                 SpendStatus::Spent(
@@ -2322,6 +2347,7 @@ mod slow {
             )],
             sapling_notes: vec![],
             transparent_coins: vec![],
+            outgoing_ironwood_notes: vec![],
             outgoing_orchard_notes: vec![],
             outgoing_sapling_notes: vec![],
             outgoing_transparent_coins: vec![],
@@ -2350,6 +2376,7 @@ TransactionSummary {
             value: second_send_to_sapling,
             fee: Some(20_000),
             zec_price: None,
+            ironwood_notes: vec![],
             orchard_notes: vec![BasicNoteSummary::from_parts(
                 99_885_000,
                 SpendStatus::Unspent,
@@ -2358,6 +2385,7 @@ TransactionSummary {
             )],
             sapling_notes: vec![],
             transparent_coins: vec![],
+            outgoing_ironwood_notes: vec![],
             outgoing_orchard_notes: vec![],
             outgoing_sapling_notes: vec![OutgoingNoteSummary {
                 output_index: 0,
@@ -2395,6 +2423,7 @@ TransactionSummary {
             value: external_transparent_3,
             fee: Some(15_000),
             zec_price: None,
+            ironwood_notes: vec![],
             orchard_notes: vec![BasicNoteSummary::from_parts(
                 930_000,
                 SpendStatus::Unspent,
@@ -2403,6 +2432,7 @@ TransactionSummary {
             )],
             sapling_notes: vec![],
             transparent_coins: vec![],
+            outgoing_ironwood_notes: vec![],
             outgoing_orchard_notes: vec![],
             outgoing_sapling_notes: vec![],
             outgoing_transparent_coins: vec![],
@@ -2488,10 +2518,7 @@ TransactionSummary {
         faucet.sync_and_await().await.unwrap();
         let faucet_orch = three_blocks_reward + orch_change + u64::from(MINIMUM_FEE);
 
-        tracing::info!(
-            "{}",
-            JsonValue::from(faucet.value_transfers(true).await.unwrap()).pretty(4)
-        );
+        tracing::info!("{}", faucet.wallet_events(true).await.unwrap());
         tracing::info!(
             "{}",
             &faucet
@@ -2584,7 +2611,7 @@ TransactionSummary {
             .build();
 
         let (local_net, mut faucet, mut recipient) = scenarios::faucet_recipient(
-            PoolType::Shielded(ShieldedProtocol::Sapling),
+            PoolType::Shielded(ShieldedPool::Sapling),
             activation_heights,
             None,
         )
@@ -2616,7 +2643,7 @@ TransactionSummary {
                 Some(100_000),
                 Some(100_000),
                 Some(100_000),
-                PoolType::Shielded(ShieldedProtocol::Orchard),
+                PoolType::Shielded(ShieldedPool::Orchard),
                 ActivationHeights::default(),
                 None,
             )
@@ -2683,10 +2710,7 @@ TransactionSummary {
         increase_height_and_wait_for_client(&local_net, &mut recipient, 1)
             .await
             .unwrap();
-        tracing::info!(
-            "{}",
-            json::stringify_pretty(recipient.transaction_summaries(false).await.unwrap(), 4)
-        );
+        tracing::info!("{}", recipient.transaction_summaries(false).await.unwrap());
         let mut txids = recipient
             .transaction_summaries(false)
             .await
@@ -2704,7 +2728,7 @@ TransactionSummary {
                 None,
                 Some(funding_value),
                 None,
-                PoolType::Shielded(ShieldedProtocol::Orchard),
+                PoolType::Shielded(ShieldedPool::Orchard),
                 ActivationHeights::default(),
                 None,
             )
@@ -3176,7 +3200,7 @@ TransactionSummary {
             assert_eq!(pre_rescan_summaries, post_rescan_summaries);
         }
         #[tokio::test]
-        async fn check_list_value_transfers_across_rescan() {
+        async fn check_wallet_events_across_rescan() {
             let inital_value = 100_000;
             let (ref local_net, faucet, mut recipient, _txid) =
                 scenarios::faucet_funded_recipient_default(inital_value).await;
@@ -3190,10 +3214,10 @@ TransactionSummary {
                 .await
                 .unwrap();
             let pre_rescan_transactions = recipient.transaction_summaries(false).await.unwrap();
-            let pre_rescan_summaries = recipient.value_transfers(true).await.unwrap();
+            let pre_rescan_summaries = recipient.wallet_events(true).await.unwrap();
             recipient.rescan_and_await().await.unwrap();
             let post_rescan_transactions = recipient.transaction_summaries(false).await.unwrap();
-            let post_rescan_summaries = recipient.value_transfers(true).await.unwrap();
+            let post_rescan_summaries = recipient.wallet_events(true).await.unwrap();
             assert_eq!(pre_rescan_transactions, post_rescan_transactions);
             assert_eq!(pre_rescan_summaries, post_rescan_summaries);
         }
@@ -3389,11 +3413,16 @@ TransactionSummary {
     // FIXME: add unified address discovery to pepper sync and add a test here
 
     #[tokio::test]
-    async fn list_value_transfers_check_fees() {
-        // Check that list_value_transfers behaves correctly given different fee scenarios
+    async fn wallet_events_check_fees() {
+        // Check wallet event fees across different transaction scenarios.
         let (local_net, mut client_builder) = scenarios::custom_clients_default().await;
         let mut faucet = client_builder
-            .build_faucet(false, local_net.validator().get_activation_heights().await)
+            .build_faucet(
+                false,
+                zingolib_testutils::scenarios::from_consensus_activation_heights(
+                    local_net.validator().get_activation_heights().await,
+                ),
+            )
             .await;
         let mut pool_migration_client = client_builder
             .build_client(
@@ -3404,7 +3433,9 @@ TransactionSummary {
                     wallet_settings: default_test_wallet_settings(),
                 },
                 false,
-                local_net.validator().get_activation_heights().await,
+                zingolib_testutils::scenarios::from_consensus_activation_heights(
+                    local_net.validator().get_activation_heights().await,
+                ),
             )
             .await;
         let pmc_taddr = get_base_address_macro!(pool_migration_client, "transparent");
@@ -3445,7 +3476,12 @@ TransactionSummary {
         // Test all possible promoting note source combinations
         let (local_net, mut client_builder) = scenarios::custom_clients_default().await;
         let mut faucet = client_builder
-            .build_faucet(false, local_net.validator().get_activation_heights().await)
+            .build_faucet(
+                false,
+                zingolib_testutils::scenarios::from_consensus_activation_heights(
+                    local_net.validator().get_activation_heights().await,
+                ),
+            )
             .await;
         let mut client = client_builder
             .build_client(
@@ -3456,7 +3492,9 @@ TransactionSummary {
                     wallet_settings: default_test_wallet_settings(),
                 },
                 false,
-                local_net.validator().get_activation_heights().await,
+                zingolib_testutils::scenarios::from_consensus_activation_heights(
+                    local_net.validator().get_activation_heights().await,
+                ),
             )
             .await;
         let pmc_taddr = get_base_address_macro!(client, "transparent");
@@ -3805,9 +3843,8 @@ TransactionSummary {
         faucet.sync_and_await().await.unwrap();
 
         assert_eq!(
-            JsonValue::from(faucet.do_total_memobytes_to_address().await.unwrap())[&base_uaddress]
-                .pretty(4),
-            "2".to_string()
+            faucet.do_total_memobytes_to_address().await.unwrap().0[&base_uaddress],
+            2
         );
 
         from_inputs::quick_send(&mut faucet, vec![(&base_uaddress, 1_000u64, Some("aaaa"))])
@@ -3817,9 +3854,8 @@ TransactionSummary {
         faucet.sync_and_await().await.unwrap();
 
         assert_eq!(
-            JsonValue::from(faucet.do_total_memobytes_to_address().await.unwrap())[&base_uaddress]
-                .pretty(4),
-            "6".to_string()
+            faucet.do_total_memobytes_to_address().await.unwrap().0[&base_uaddress],
+            6
         );
     }
 
