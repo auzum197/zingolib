@@ -5050,6 +5050,7 @@ dependencies = [
  "zingo-netutils",
  "zingo_common_components",
  "zingo_test_vectors",
+ "zingolib",
  "zingolib-memo",
  "zingolib-price",
  "zingolib-status",

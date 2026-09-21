@@ -1077,28 +1077,10 @@ async fn send_survives_lost_response_and_queued_duplicate_rejection() {
 /// these run on a chain where Ironwood never activates: funds land in
 /// Orchard and fees follow the pre-V6 action counts.
 mod pre_ironwood {
-    use zingo_common_components::protocol::ActivationHeights;
-
     use crate::testutils::mock_indexer::{MockChain, faucet_funding_transaction_for};
+    use crate::testutils::scenarios::pre_ironwood_activation_heights;
 
     use super::*;
-
-    /// Every upgrade through NU6.2 active at height 1, NU6.3 never.
-    fn pre_ironwood_activation_heights() -> ActivationHeights {
-        ActivationHeights::builder()
-            .set_overwinter(Some(1))
-            .set_sapling(Some(1))
-            .set_blossom(Some(1))
-            .set_heartwood(Some(1))
-            .set_canopy(Some(1))
-            .set_nu5(Some(1))
-            .set_nu6(Some(1))
-            .set_nu6_1(Some(1))
-            .set_nu6_2(Some(1))
-            .set_nu6_3(None)
-            .set_nu7(None)
-            .build()
-    }
 
     async fn launch() -> MockNet {
         MockNet::launch_with(MockChain::with_activation_heights(

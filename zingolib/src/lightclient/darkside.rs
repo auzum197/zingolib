@@ -133,9 +133,6 @@ async fn reorg_expires_outgoing_transaction() {
     let mut sender = net
         .client(zingo_test_vectors::seeds::HOSPITAL_MUSEUM_SEED)
         .await;
-    // Not ABANDON_ART: that is the synthetic funding faucet's own seed,
-    // so its change output would land in this wallet and pollute the
-    // recipient's balance assertions.
     let mut recipient = net.client(zingo_test_vectors::seeds::DARKSIDE_SEED).await;
     let sender_address = get_base_address(&sender, PoolType::Shielded(ShieldedPool::Orchard)).await;
     let recipient_address =

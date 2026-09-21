@@ -83,6 +83,8 @@ zeroize = { workspace = true }
 zcash_proofs = { workspace = true, features = ["download-params"] }
 
 [dev-dependencies]
+# Self dev-dependency: turns on `testutils` for the integration tests.
+zingolib = { path = ".", features = ["testutils"] }
 pepper-sync = { workspace = true, features = ["test-features"] }
 portpicker = { workspace = true }
 tempfile = { workspace = true }
