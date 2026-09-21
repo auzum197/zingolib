@@ -163,8 +163,12 @@ fn every_main_screen_renders() {
 
     s.screen = Screen::Home;
     let out = render(&s, 100, 40);
-    for row in super::bignum::render("1.5006").unwrap() {
-        assert!(out.contains(&row), "the balance is drawn in large digits");
+    let t = crate::theme::Theme::new(s.theme, s.color_depth);
+    for row in super::bignum::render("1.5006", &t.balance).unwrap() {
+        assert!(
+            out.contains(&row.to_string()),
+            "the balance is drawn in large digits"
+        );
     }
     assert!(out.contains("ZEC"));
     assert!(out.contains("0.00025 ZEC pending"));
@@ -1021,7 +1025,7 @@ fn the_bars_share_the_bodys_edges() {
     // the footer's first key and the body's first word share a column
     let footer = lines[usize::from(h) - 1];
     assert_eq!(footer.chars().take_while(|c| *c == ' ').count(), EDGE);
-    assert_eq!(indent_of(&out, "Balance"), EDGE);
+    assert_eq!(indent_of(&out, "Recent transactions"), EDGE);
 }
 
 /// The reported mainnet transaction: 0.0102 ZEC of Orchard moved into the wallet's own Ironwood

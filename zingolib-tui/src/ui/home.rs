@@ -16,19 +16,14 @@ pub fn draw(frame: &mut Frame, area: Rect, state: &State, t: &Theme) {
     let b = &state.balance;
     let amount = format::zec(b.total());
 
-    let mut top = vec![Line::styled("Balance", t.muted)];
-    let big = bignum::render(&amount).filter(|rows| rows[0].chars().count() + 5 <= width);
+    let mut top = Vec::new();
+    let big = bignum::render(&amount, &t.balance).filter(|rows| rows[0].width() + 5 <= width);
     let number_width = match big {
-        Some(rows) => {
-            let w = rows[0].chars().count() + 5;
-            for (i, row) in rows.into_iter().enumerate() {
-                let mut spans = vec![Span::styled(row, t.title)];
-                // the unit sits on the baseline row
-                if i == 2 {
-                    spans.push(Span::styled("  ZEC", t.muted));
-                }
-                top.push(Line::from(spans));
-            }
+        Some(mut rows) => {
+            let w = rows[0].width() + 5;
+            // the unit sits on the baseline row
+            rows[3].push_span(Span::styled("  ZEC", t.muted));
+            top.extend(rows);
             w
         }
         None => {

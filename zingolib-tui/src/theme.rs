@@ -396,6 +396,9 @@ pub struct Theme {
     pub info: Style,
     /// The block cursor in text fields.
     pub cursor: Style,
+    /// The large balance digits, one colour per pixel row from the top of a digit to its
+    /// baseline.
+    pub balance: [Color; 7],
     pools: [Style; 4],
     /// Dark modules in `fg`, light modules and the quiet zone in `bg`. Derived from the theme's
     /// own tones, so the code matches the screen while still scanning. `None` leaves QR codes
@@ -443,6 +446,8 @@ impl Theme {
             warning: fg(p.warning),
             info: fg(p.info),
             cursor: Style::new().bg(c(p.accent)).fg(c(p.bg)),
+            // warm at the top, settling into the accent at the baseline
+            balance: std::array::from_fn(|row| c(mix(p.warning, p.accent, row as f64 / 6.0))),
             pools: [fg(p.orchard), fg(p.ironwood), fg(p.sapling), fg(p.fg)],
             qr: Some(qr_style(&p, depth)),
         }
@@ -464,6 +469,7 @@ impl Theme {
             warning: fg(Color::Yellow),
             info: fg(Color::Blue),
             cursor: Style::new().add_modifier(Modifier::REVERSED),
+            balance: [Color::Cyan; 7],
             pools: [
                 fg(Color::Magenta),
                 fg(Color::Cyan),
@@ -491,6 +497,7 @@ impl Theme {
             warning: Style::new(),
             info: Style::new(),
             cursor: Style::new().add_modifier(Modifier::REVERSED),
+            balance: [Color::Reset; 7],
             pools: [Style::new(); 4],
             qr: None,
         }
