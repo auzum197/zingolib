@@ -1969,37 +1969,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "libtonode-tests"
-version = "0.2.0"
-dependencies = [
- "bip0039",
- "http",
- "incrementalmerkletree",
- "itertools 0.14.0",
- "pepper-sync",
- "proptest",
- "rustls 0.23.42",
- "shardtree",
- "test-log",
- "tokio",
- "tracing",
- "tracing-subscriber",
- "zcash_address",
- "zcash_client_backend",
- "zcash_local_net",
- "zcash_primitives",
- "zcash_protocol",
- "zcash_transparent",
- "zingo-netutils",
- "zingo_common_components",
- "zingo_test_vectors",
- "zingolib",
- "zingolib-status",
- "zingolib_testutils",
- "zip32",
-]
-
-[[package]]
 name = "lightwallet-protocol"
 version = "0.3.0"
 source = "git+https://github.com/zingolabs/lightwallet-protocol-rust?rev=9bdfdc77eb283f2a3d26c27100cc2ac90148cd93#9bdfdc77eb283f2a3d26c27100cc2ac90148cd93"
@@ -4626,7 +4595,6 @@ dependencies = [
  "bs58",
  "corez",
  "f4jumble",
- "proptest",
  "zcash_encoding",
  "zcash_protocol",
 ]
