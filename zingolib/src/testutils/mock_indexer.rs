@@ -1011,6 +1011,12 @@ impl MockChain {
         self.mempool.len()
     }
 
+    /// Removes and returns the raw transactions in the mempool, in arrival
+    /// order.
+    pub fn take_mempool(&mut self) -> Vec<Vec<u8>> {
+        std::mem::take(&mut self.mempool)
+    }
+
     /// Validates `bytes` under the chain's rules and enters the mempool on success.
     pub fn submit_transaction(&mut self, bytes: Vec<u8>) -> Result<TxId, Rejection> {
         let transaction = self.validate(&bytes)?;
@@ -1330,6 +1336,31 @@ impl MockChain {
             .expiry_height();
             expiry == NO_EXPIRY || expiry >= next_height
         });
+    }
+
+    /// Mines the transactions of a serialized block, such as one recorded
+    /// from a real chain, into the next block. The header is dropped: the
+    /// mock fabricates its own hashes and tree states.
+    pub fn mine_recorded_block(&mut self, block: &[u8]) {
+        let mut reader = block;
+        zcash_primitives::block::BlockHeader::read(&mut reader)
+            .expect("a recorded block starts with a header");
+        let count = zcash_encoding::CompactSize::read(&mut reader)
+            .expect("a recorded block counts its transactions");
+        let height = self.next_height();
+        let raw_transactions = (0..count)
+            .map(|_| {
+                let transaction =
+                    Transaction::read(&mut reader, BranchId::for_height(&self.chain_type, height))
+                        .expect("a recorded block holds parseable transactions");
+                let mut bytes = vec![];
+                transaction
+                    .write(&mut bytes)
+                    .expect("in-memory serialization is infallible");
+                bytes
+            })
+            .collect();
+        self.mine_block(raw_transactions);
     }
 
     /// Mines `count` empty blocks, advancing the tip without new outputs.
