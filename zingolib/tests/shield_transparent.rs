@@ -1,11 +1,10 @@
 use zingolib::get_base_address_macro;
 use zingolib::testutils::lightclient::from_inputs;
-use zingolib_testutils::scenarios::{
+use zingolib::testutils::scenarios::{
     faucet_recipient_default, increase_height_and_wait_for_client,
 };
 
 #[tokio::test]
-#[ignore]
 async fn shield_transparent() {
     let (local_net, mut faucet, mut recipient) = faucet_recipient_default().await;
     let transparent_funds = 100_000;
