@@ -159,23 +159,12 @@ container_nextest_run() {
     -v "zingolib-cargo-git:/root/.cargo/git${mount_suffix}" \
     -v "zingolib-cargo-registry:/root/.cargo/registry${mount_suffix}" \
     -e "NEXTEST_EXPERIMENTAL_LIBTEST_JSON=${NEXTEST_EXPERIMENTAL_LIBTEST_JSON}" \
-    -e "TEST_BINARIES_DIR=/workspace/test_binaries/bins" \
     -w /workspace \
     "${IMAGE_NAME}:${tag}" \
-    bash -lc 'mkdir -p test_binaries/bins && ln -sf /usr/bin/lightwalletd /usr/bin/zcashd /usr/bin/zcash-cli /usr/bin/zainod test_binaries/bins/ && exec "$@"' \
-    bash \
     cargo nextest run "${args[@]}"
 }
 '''
 script.main = "true"
-
-[tasks.prepare-test-binaries-dir]
-description = "Ensure the local test binary directory exists"
-script_runner = "bash"
-script = '''
-set -euo pipefail
-mkdir -p test_binaries/bins
-'''
 
 [tasks.compute-image-tag]
 description = "Print the reproducible local test image tag"
@@ -192,7 +181,7 @@ runtime="$(container_runtime)"
 for volume in zingolib-container-target zingolib-cargo-git zingolib-cargo-registry; do
   "${runtime}" volume inspect "${volume}" >/dev/null 2>&1 || "${runtime}" volume create "${volume}" >/dev/null
 done
-mkdir -p target test_binaries/bins
+mkdir -p target
 '''
 
 [tasks.build-image]
@@ -243,7 +232,6 @@ fi
 [tasks.local-run]
 clear = true
 description = "Run reproducible workspace tests on the host with the same defaults used by PR CI"
-dependencies = ["prepare-test-binaries-dir"]
 script_runner = "bash"
 extend = "base-script"
 script.main = '''
@@ -274,7 +262,6 @@ container_nextest_run --rerun latest "$@"
 [tasks.run-ignored]
 clear = true
 description = "Run ignored tests with the reproducible nextest profile"
-dependencies = ["prepare-test-binaries-dir"]
 script_runner = "bash"
 extend = "base-script"
 script.main = '''

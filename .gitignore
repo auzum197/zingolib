@@ -3,6 +3,5 @@ cobertura.xml
 target
 wallets/*
 zingolib/proptest-regressions
-test_binaries/bins/*
 .DS_Store
 .zingo-cli/

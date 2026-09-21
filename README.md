@@ -55,7 +55,7 @@ Use `makers container-test` or `cargo make container-test` to run the same defau
 makers container-test
 ```
 
-The task builds the image if needed, symlinks the image-provided `lightwalletd`, `zcashd`, `zcash-cli`, and `zainod` into `test_binaries/bins`, then runs the workspace with the `ci` nextest profile, two retries, and the default filter `not test(slow)`. The image tag is derived from `.env.testing-artifacts`, `rust-toolchain.toml`, and `docker-ci`.
+The task builds the image if needed, then runs the workspace with the `ci` nextest profile, two retries, and the default filter `not test(slow)`. The image tag is derived from `.env.testing-artifacts`, `rust-toolchain.toml`, and `docker-ci`.
 
 Extra nextest flags can be forwarded after the task name, and the default filter can be changed with `ZINGOLIB_NEXTEST_FILTER`.
 
