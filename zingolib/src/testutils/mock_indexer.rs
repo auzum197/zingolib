@@ -88,9 +88,19 @@ const FAUCET_TIP: u32 = 20;
 /// Entropy of the synthetic wallet that signs funding transactions. It is
 /// no test's seed, so funding change never lands in a wallet under test.
 const FUNDING_SOURCE_ENTROPY: [u8; 32] = [0x5a; 32];
-/// The per-block miner reward of the zcashd regtest chains the ported
-/// tests were written against.
+/// The per-block miner subsidy from Canopy on, on the zcashd regtest
+/// chains the ported tests were written against.
 pub const BLOCK_REWARD: u64 = zingo_test_vectors::block_rewards::CANOPY;
+
+/// The miner subsidy at `height`: [`BLOCK_REWARD`] from Canopy on, the
+/// Blossom-era subsidy before it.
+pub fn block_subsidy(chain_type: &ChainType, height: BlockHeight) -> Zatoshis {
+    if chain_type.is_nu_active(NetworkUpgrade::Canopy, height) {
+        Zatoshis::const_from_u64(BLOCK_REWARD)
+    } else {
+        Zatoshis::const_from_u64(zingo_test_vectors::block_rewards::BLOSSOM)
+    }
+}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 /// The set of consensus checks applied to a submitted transaction.
@@ -709,6 +719,16 @@ pub fn transparent_only_transaction(
     inputs: Vec<TxIn<TransparentAuthorized>>,
     outputs: Vec<TxOut>,
 ) -> Vec<u8> {
+    transparent_transaction(chain_type, height, NO_EXPIRY, inputs, outputs)
+}
+
+fn transparent_transaction(
+    chain_type: &ChainType,
+    height: BlockHeight,
+    expiry: BlockHeight,
+    inputs: Vec<TxIn<TransparentAuthorized>>,
+    outputs: Vec<TxOut>,
+) -> Vec<u8> {
     let bundle = TransparentBundle {
         vin: inputs,
         vout: outputs,
@@ -719,7 +739,7 @@ pub fn transparent_only_transaction(
         TxVersion::V6 => TransactionData::<Authorized>::from_parts_v6(
             branch_id,
             0,
-            NO_EXPIRY,
+            expiry,
             Some(bundle),
             None,
             None,
@@ -729,7 +749,7 @@ pub fn transparent_only_transaction(
             version,
             branch_id,
             0,
-            NO_EXPIRY,
+            expiry,
             Some(bundle),
             None,
             None,
@@ -744,28 +764,135 @@ pub fn transparent_only_transaction(
     bytes
 }
 
-/// Serializes a coinbase transaction paying `reward` to the orchard
-/// receiver of `recipient`, into the Ironwood pool where NU6.3 is active at
-/// `height` and the Orchard pool before it. The proof and signatures are
-/// zeroes of the canonical sizes: nothing on the mock path verifies them,
-/// and skipping the prover makes a reward block cheap to mine.
+/// The shielded receiver a coinbase transaction pays.
+#[derive(Clone, Copy, Debug)]
+pub enum CoinbaseRecipient {
+    /// A Sapling address.
+    Sapling(sapling_crypto::PaymentAddress),
+    /// An Orchard receiver, paid in the Ironwood pool once NU6.3 is active.
+    Orchard(orchard::Address),
+}
+
+/// Serializes a coinbase transaction paying `reward` to `recipient` at
+/// `height`. The proofs and signatures are zeroes of the canonical sizes:
+/// nothing on the mock path verifies them, and skipping the provers makes
+/// a reward block cheap to mine.
 pub fn shielded_coinbase_transaction(
     chain_type: &ChainType,
     height: BlockHeight,
-    recipient: orchard::Address,
+    recipient: CoinbaseRecipient,
     reward: Zatoshis,
 ) -> Vec<u8> {
-    use orchard::builder::{Builder, BundleType};
-    use orchard::bundle::{Authorized as OrchardAuthorized, Flags};
-    use zcash_primitives::transaction::components::orchard::bundle_version_for_branch;
-
     let branch_id = BranchId::for_height(chain_type, height);
     let version = TxVersion::suggested_for_branch(branch_id);
-    let pool = if version == TxVersion::V6 {
-        orchard::ValuePool::Ironwood
-    } else {
-        orchard::ValuePool::Orchard
+    let transparent = TransparentBundle {
+        vin: vec![TxIn::from_parts(
+            OutPoint::NULL,
+            coinbase_script_sig(height),
+            u32::MAX,
+        )],
+        vout: vec![],
+        authorization: TransparentAuthorized,
     };
+    let data = match recipient {
+        CoinbaseRecipient::Sapling(address) => TransactionData::<Authorized>::from_parts(
+            version,
+            branch_id,
+            0,
+            height,
+            Some(transparent),
+            None,
+            Some(sapling_coinbase_bundle(chain_type, height, address, reward)),
+            None,
+        ),
+        CoinbaseRecipient::Orchard(address) if version == TxVersion::V6 => {
+            TransactionData::<Authorized>::from_parts_v6(
+                branch_id,
+                0,
+                height,
+                Some(transparent),
+                None,
+                None,
+                Some(orchard_coinbase_bundle(
+                    branch_id,
+                    orchard::ValuePool::Ironwood,
+                    address,
+                    reward,
+                )),
+            )
+        }
+        CoinbaseRecipient::Orchard(address) => TransactionData::<Authorized>::from_parts(
+            version,
+            branch_id,
+            0,
+            height,
+            Some(transparent),
+            None,
+            None,
+            Some(orchard_coinbase_bundle(
+                branch_id,
+                orchard::ValuePool::Orchard,
+                address,
+                reward,
+            )),
+        ),
+    };
+    let mut bytes = vec![];
+    data.freeze()
+        .expect("a shielded coinbase transaction freezes")
+        .write(&mut bytes)
+        .expect("in-memory serialization is infallible");
+    bytes
+}
+
+fn sapling_coinbase_bundle(
+    chain_type: &ChainType,
+    height: BlockHeight,
+    recipient: sapling_crypto::PaymentAddress,
+    reward: Zatoshis,
+) -> sapling_crypto::Bundle<sapling_crypto::bundle::Authorized, ZatBalance> {
+    use sapling_crypto::builder::{Builder, BundleType};
+    use zcash_primitives::transaction::components::sapling::zip212_enforcement;
+    use zcash_proofs::prover::LocalTxProver;
+
+    let mut builder = Builder::new(
+        zip212_enforcement(chain_type, height),
+        BundleType::Coinbase,
+        sapling_crypto::Anchor::empty_tree(),
+    );
+    builder
+        .add_output(
+            None,
+            recipient,
+            sapling_crypto::value::NoteValue::from_raw(reward.into_u64()),
+            [0; 512],
+        )
+        .expect("coinbase bundles take outputs");
+    let (unauthorized, _) = builder
+        .build::<LocalTxProver, LocalTxProver, _, ZatBalance>(&[], rand::rngs::OsRng)
+        .expect("a one-output coinbase bundle builds")
+        .expect("a bundle with an output is non-empty");
+    unauthorized.map_authorization(
+        (),
+        |_, _| [0; 192],
+        |_, _| [0; 192],
+        |_, _| [0; 64].into(),
+        |_, _| sapling_crypto::bundle::Authorized {
+            binding_sig: [0; 64].into(),
+        },
+    )
+}
+
+fn orchard_coinbase_bundle(
+    branch_id: BranchId,
+    pool: orchard::ValuePool,
+    recipient: orchard::Address,
+    reward: Zatoshis,
+) -> orchard::Bundle<orchard::bundle::Authorized, ZatBalance> {
+    use orchard::builder::{Builder, BundleType};
+    use orchard::bundle::Flags;
+    use zcash_primitives::transaction::components::orchard::bundle_version_for_branch;
+
     let bundle_version = bundle_version_for_branch(branch_id, pool)
         .expect("the pool is active at a shielded-coinbase height");
     let mut builder = Builder::new(
@@ -788,53 +915,16 @@ pub fn shielded_coinbase_transaction(
         .expect("a one-output coinbase bundle builds")
         .expect("a bundle with an output is non-empty");
     let actions = unauthorized.actions().len();
-    let bundle = unauthorized.map_authorization(
+    unauthorized.map_authorization(
         &mut (),
         |_, _, _| [0; 64].into(),
         |_, _| {
-            OrchardAuthorized::from_parts(
+            orchard::bundle::Authorized::from_parts(
                 orchard::Proof::new(vec![0; orchard::Proof::expected_proof_size(actions)]),
                 [0; 64].into(),
             )
         },
-    );
-    let transparent = TransparentBundle {
-        vin: vec![TxIn::from_parts(
-            OutPoint::NULL,
-            coinbase_script_sig(height),
-            u32::MAX,
-        )],
-        vout: vec![],
-        authorization: TransparentAuthorized,
-    };
-    let data = if pool == orchard::ValuePool::Ironwood {
-        TransactionData::<Authorized>::from_parts_v6(
-            branch_id,
-            0,
-            NO_EXPIRY,
-            Some(transparent),
-            None,
-            None,
-            Some(bundle),
-        )
-    } else {
-        TransactionData::<Authorized>::from_parts(
-            version,
-            branch_id,
-            0,
-            NO_EXPIRY,
-            Some(transparent),
-            None,
-            None,
-            Some(bundle),
-        )
-    };
-    let mut bytes = vec![];
-    data.freeze()
-        .expect("a shielded coinbase transaction freezes")
-        .write(&mut bytes)
-        .expect("in-memory serialization is infallible");
-    bytes
+    )
 }
 
 impl Default for MockChain {
@@ -1049,6 +1139,36 @@ impl MockChain {
         Ok(all_known.then_some(total))
     }
 
+    /// Returns the fees `raw_transactions` pay if mined in the next block.
+    /// A transaction whose inputs are not all known pays nothing here.
+    pub fn fees(&self, raw_transactions: &[Vec<u8>]) -> Zatoshis {
+        let next_height = self.next_height();
+        let mempool = self.mempool_state(next_height);
+        raw_transactions
+            .iter()
+            .filter_map(|bytes| {
+                let transaction = self.parse_transaction(bytes, next_height);
+                let inputs = transaction
+                    .transparent_bundle()
+                    .filter(|bundle| !bundle.is_coinbase())
+                    .into_iter()
+                    .flat_map(|bundle| bundle.vin.iter())
+                    .map(|txin| {
+                        self.previous_output(txin.prevout(), next_height, &mempool)
+                            .ok()
+                            .flatten()
+                            .map(|output| output.value())
+                    })
+                    .try_fold(Zatoshis::ZERO, |total, value| total + value?)?;
+                let fee = (ZatBalance::from(inputs)
+                    - ZatBalance::from(transparent_output_total(&transaction))
+                    + shielded_value_balance(&transaction))?;
+                Zatoshis::try_from(fee).ok()
+            })
+            .try_fold(Zatoshis::ZERO, |total, fee| total + fee)
+            .expect("block fees stay within the money range")
+    }
+
     fn previous_output(
         &self,
         outpoint: &OutPoint,
@@ -1113,7 +1233,10 @@ impl MockChain {
             .expect("the miner address is a transparent address of this chain");
         let input = TxIn::from_parts(OutPoint::NULL, coinbase_script_sig(height), u32::MAX);
         let output = TxOut::new(reward, script_pubkey);
-        transparent_only_transaction(&self.chain_type, height, vec![input], vec![output])
+        // A coinbase expires at its own height (ZIP 203). The v5 txid does
+        // not commit to the height in the script sig, so the expiry is what
+        // keeps coinbase txids distinct across blocks.
+        transparent_transaction(&self.chain_type, height, height, vec![input], vec![output])
     }
 
     fn mine(&mut self, coinbase: Option<Vec<u8>>, raw_transactions: Vec<Vec<u8>>) {
@@ -1954,12 +2077,32 @@ fn unix_micros() -> i64 {
     .expect("microseconds since the epoch fit in i64")
 }
 
-fn orchard_receiver(address: &str, chain_type: &ChainType) -> Option<orchard::Address> {
+/// The shielded receiver of `address` a coinbase at `height` can pay: the
+/// orchard receiver from NU5 on, else a sapling address or receiver from
+/// Sapling on.
+fn coinbase_recipient(
+    address: &str,
+    chain_type: &ChainType,
+    height: BlockHeight,
+) -> Option<CoinbaseRecipient> {
     use pepper_sync::keys::decode_address;
     use zcash_client_backend::address::Address as DecodedAddress;
 
-    match decode_address(chain_type, address) {
-        Ok(DecodedAddress::Unified(unified)) => unified.orchard().copied(),
+    if !chain_type.is_nu_active(NetworkUpgrade::Sapling, height) {
+        return None;
+    }
+    let orchard_active = chain_type.is_nu_active(NetworkUpgrade::Nu5, height);
+    match decode_address(chain_type, address).ok()? {
+        DecodedAddress::Sapling(sapling) => Some(CoinbaseRecipient::Sapling(sapling)),
+        DecodedAddress::Unified(unified) => unified
+            .orchard()
+            .filter(|_| orchard_active)
+            .map(|orchard| CoinbaseRecipient::Orchard(*orchard))
+            .or_else(|| {
+                unified
+                    .sapling()
+                    .map(|sapling| CoinbaseRecipient::Sapling(*sapling))
+            }),
         _ => None,
     }
 }
@@ -2054,11 +2197,11 @@ impl MockNet {
         }
     }
 
-    /// Pays [`BLOCK_REWARD`] to `address` in every block
-    /// [`Self::generate_blocks`] mines, as a validator's miner address does.
-    /// A transparent address or an orchard receiver gets a coinbase output.
-    /// A sapling address gets a funding transaction, since the mock builds
-    /// no sapling coinbase.
+    /// Pays the block subsidy plus the block's fees to `address` in every
+    /// block [`Self::generate_blocks`] mines, as a validator's miner
+    /// address does.
+    /// Blocks below NU5 pay a unified address through its sapling receiver,
+    /// and blocks below Sapling pay a shielded miner nothing.
     pub fn set_miner_address(&mut self, address: impl Into<String>) {
         self.miner_address = Some(address.into());
     }
@@ -2076,33 +2219,27 @@ impl MockNet {
                 self.chain.write().await.mine_mempool();
                 continue;
             };
-            let next_height = u32::from(self.chain.read().await.next_height());
+            let (height, reward) = {
+                let chain = self.chain.read().await;
+                let height = chain.next_height();
+                let fees = chain.fees(&chain.mempool);
+                let reward = (block_subsidy(&self.chain_type, height) + fees)
+                    .expect("block rewards stay within the money range");
+                (height, reward)
+            };
             if taddr_script(miner, &self.chain_type).is_ok() {
                 let mut chain = self.chain.write().await;
                 let pending = std::mem::take(&mut chain.mempool);
-                chain.mine_block_rewarding(miner, Zatoshis::const_from_u64(BLOCK_REWARD), pending);
-            } else {
-                let reward = match orchard_receiver(miner, &self.chain_type) {
-                    Some(recipient) => shielded_coinbase_transaction(
-                        &self.chain_type,
-                        BlockHeight::from_u32(next_height),
-                        recipient,
-                        Zatoshis::const_from_u64(BLOCK_REWARD),
-                    ),
-                    None => {
-                        funding_transaction(
-                            self.activation_heights(),
-                            next_height,
-                            vec![(miner, BLOCK_REWARD, None)],
-                        )
-                        .await
-                    }
-                };
-                let mut chain = self.chain.write().await;
-                let mut block = vec![reward];
-                block.append(&mut chain.mempool);
-                chain.mine_block(block);
+                chain.mine_block_rewarding(miner, reward, pending);
+                continue;
             }
+            let coinbase = coinbase_recipient(miner, &self.chain_type, height).map(|recipient| {
+                shielded_coinbase_transaction(&self.chain_type, height, recipient, reward)
+            });
+            let mut chain = self.chain.write().await;
+            let mut block: Vec<_> = coinbase.into_iter().collect();
+            block.append(&mut chain.mempool);
+            chain.mine_block(block);
         }
     }
 
@@ -2224,25 +2361,14 @@ pub async fn faucet_funding_transaction_for(
     activation_heights: ActivationHeights,
     receivers: Vec<(&str, u64, Option<&str>)>,
 ) -> Vec<u8> {
-    funding_transaction(activation_heights, FAUCET_TIP + 1, receivers).await
-}
-
-/// Builds a funding transaction that targets `target_height`, so its
-/// consensus branch and expiry suit a block mined there.
-async fn funding_transaction(
-    activation_heights: ActivationHeights,
-    target_height: u32,
-    receivers: Vec<(&str, u64, Option<&str>)>,
-) -> Vec<u8> {
     let total: u64 = receivers.iter().map(|(_, value, _)| value).sum();
-    let tip = (target_height - 1).max(FAUCET_TIP);
     let source = bip0039::Mnemonic::<bip0039::English>::from_entropy(FUNDING_SOURCE_ENTROPY)
         .expect("32 bytes are valid mnemonic entropy");
     let faucet = SyntheticWalletBuilder::new(source.phrase())
-        .tip(tip)
+        .tip(FAUCET_TIP)
         .activation_heights(activation_heights);
     let faucet = if ChainType::Regtest(activation_heights)
-        .is_nu_active(NetworkUpgrade::Nu6_3, BlockHeight::from_u32(tip + 1))
+        .is_nu_active(NetworkUpgrade::Nu6_3, BlockHeight::from_u32(FAUCET_TIP + 1))
     {
         faucet.ironwood_note(total + FAUCET_HEADROOM)
     } else {
@@ -2505,6 +2631,19 @@ mod tests {
             chain.submit_transaction(spend).unwrap_err(),
             Rejection::SpentInput(coinbase_outpoint)
         );
+    }
+
+    #[test]
+    fn coinbase_transactions_of_different_blocks_have_distinct_txids() {
+        let mut chain = MockChain::new();
+        let miner = external_transparent_address();
+        let first = chain.mine_block_rewarding(&miner, REWARD, vec![]);
+        let second = chain.mine_block_rewarding(&miner, REWARD, vec![]);
+        assert_ne!(
+            chain.parse_transaction(&first, HEIGHT_ONE).txid(),
+            chain.parse_transaction(&second, HEIGHT_TWO).txid()
+        );
+        assert_eq!(chain.unspent_outputs(&miner, HEIGHT_ONE).unwrap().len(), 2);
     }
 
     #[test]
