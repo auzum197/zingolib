@@ -4,9 +4,7 @@ use incrementalmerkletree::Position;
 use pepper_sync::sync::ScanPriority;
 use pepper_sync::wallet::ShardTrees;
 use shardtree::store::ShardStore;
-use zcash_local_net::validator::Validator;
 use zcash_protocol::consensus::BlockHeight;
-use zingo_common_components::protocol::ActivationHeights;
 use zingo_netutils::lightwallet_protocol::GetSubtreeRootsArg;
 use zingo_netutils::{GrpcIndexer, Indexer};
 use zingo_test_vectors::seeds::HOSPITAL_MUSEUM_SEED;
@@ -15,7 +13,7 @@ use zingolib::data::PollReport;
 use zingolib::lightclient::DEFAULT_REQUEST_TIMEOUT;
 use zingolib::testutils::default_test_wallet_settings;
 use zingolib::testutils::lightclient::from_inputs::quick_send;
-use zingolib::testutils::paths::get_cargo_manifest_dir;
+use zingolib::testutils::scenarios::{self, increase_height_and_wait_for_client};
 use zingolib::testutils::tempfile::TempDir;
 use zingolib::{
     config::{DEFAULT_INDEXER_URI, construct_lightwalletd_uri},
@@ -23,7 +21,6 @@ use zingolib::{
     lightclient::LightClient,
     testutils::lightclient::from_inputs::{self},
 };
-use zingolib_testutils::scenarios::{self, increase_height_and_wait_for_client};
 
 #[ignore = "temporary mainnet test for sync development"]
 #[tokio::test]
@@ -74,6 +71,8 @@ async fn sync_mainnet_test() {
     // dbg!(&wallet.sync_state);
 }
 
+#[ignore = "dials the public mainnet indexer, not a local node: the mock chain is far too \
+            short to complete a note commitment subtree, so it has no roots to compare"]
 #[tokio::test]
 async fn add_subtree_roots() {
     fn assert_subtree_roots_match_server(
@@ -323,54 +322,56 @@ async fn sync_test() {
     // dbg!(wallet.wallet_blocks.len());
 }
 
-#[ignore = "only for building chain cache"]
-#[tokio::test]
-async fn store_all_checkpoints_in_verification_window_chain_cache() {
-    let (mut local_net, mut faucet, recipient) = scenarios::faucet_recipient_default().await;
-
+/// Mines the chain the verification-window test scans: 27 rounds of
+/// orchard and sapling sends from the faucet to `recipient`.
+async fn build_checkpoint_chain(
+    local_net: &zingolib::testutils::mock_indexer::MockNet,
+    faucet: &mut LightClient,
+    recipient: &LightClient,
+) {
     let recipient_orchard_addr = get_base_address_macro!(recipient, "unified");
     let recipient_sapling_addr = get_base_address_macro!(recipient, "sapling");
 
     for _ in 0..27 {
-        quick_send(&mut faucet, vec![(&recipient_orchard_addr, 10_000, None)])
+        quick_send(faucet, vec![(&recipient_orchard_addr, 10_000, None)])
             .await
             .unwrap();
-        increase_height_and_wait_for_client(&local_net, &mut faucet, 1)
-            .await
-            .unwrap();
-
-        quick_send(&mut faucet, vec![(&recipient_sapling_addr, 10_000, None)])
-            .await
-            .unwrap();
-        increase_height_and_wait_for_client(&local_net, &mut faucet, 1)
+        increase_height_and_wait_for_client(local_net, faucet, 1)
             .await
             .unwrap();
 
-        quick_send(&mut faucet, vec![(&recipient_orchard_addr, 10_000, None)])
+        quick_send(faucet, vec![(&recipient_sapling_addr, 10_000, None)])
             .await
             .unwrap();
-        quick_send(&mut faucet, vec![(&recipient_sapling_addr, 10_000, None)])
+        increase_height_and_wait_for_client(local_net, faucet, 1)
             .await
             .unwrap();
-        increase_height_and_wait_for_client(&local_net, &mut faucet, 2)
+
+        quick_send(faucet, vec![(&recipient_orchard_addr, 10_000, None)])
+            .await
+            .unwrap();
+        quick_send(faucet, vec![(&recipient_sapling_addr, 10_000, None)])
+            .await
+            .unwrap();
+        increase_height_and_wait_for_client(local_net, faucet, 2)
             .await
             .unwrap();
     }
-
-    local_net
-        .validator_mut()
-        .cache_chain(get_cargo_manifest_dir().join("store_all_checkpoints_test"))
-        .await;
 }
 
-#[ignore = "ignored until we add framework for chain caches as we don't want to check these into the zingolib repo"]
+#[ignore = "only built a zcashd chain cache for store_all_checkpoints_in_verification_window, \
+            which now mines its chain on the mock and needs no cache"]
+#[tokio::test]
+async fn store_all_checkpoints_in_verification_window_chain_cache() {
+    let (local_net, mut faucet, recipient) = scenarios::faucet_recipient_default().await;
+    build_checkpoint_chain(&local_net, &mut faucet, &recipient).await;
+}
+
 #[tokio::test]
 async fn store_all_checkpoints_in_verification_window() {
-    let (_local_net, lightclient) = scenarios::unfunded_client(
-        ActivationHeights::default(),
-        Some(get_cargo_manifest_dir().join("store_all_checkpoints_test")),
-    )
-    .await;
+    let (local_net, mut faucet, mut lightclient) = scenarios::faucet_recipient_default().await;
+    build_checkpoint_chain(&local_net, &mut faucet, &lightclient).await;
+    lightclient.sync_and_await().await.unwrap();
 
     for height in 12..112 {
         assert!(
