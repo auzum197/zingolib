@@ -5033,6 +5033,7 @@ dependencies = [
  "secp256k1 0.31.1",
  "secrecy",
  "serde",
+ "serde_json",
  "shardtree",
  "tempfile",
  "test-log",
