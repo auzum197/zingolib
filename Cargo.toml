@@ -1,6 +1,5 @@
 [workspace]
 members = [
-    "darkside-tests",
     "pepper-sync",
     "zingolib-memo",
     "zingolib-price",
