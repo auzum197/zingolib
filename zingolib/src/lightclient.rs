@@ -389,6 +389,11 @@ impl std::fmt::Debug for LightClient {
 }
 
 #[cfg(test)]
+mod darkside;
+#[cfg(test)]
+mod mock_chain_tests;
+
+#[cfg(test)]
 mod tests {
     use crate::{
         config::{ChainType, ClientConfig, WalletConfig},

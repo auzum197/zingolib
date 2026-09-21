@@ -240,6 +240,7 @@ pub mod orchard_note {
         value: Option<NoteValue>,
         rho: Option<Rho>,
         random_seed: Option<RandomSeed>,
+        note_version: Option<orchard::note::NoteVersion>,
     }
 
     impl OrchardCryptoNoteBuilder {
@@ -251,6 +252,7 @@ pub mod orchard_note {
                 value: None,
                 rho: None,
                 random_seed: None,
+                note_version: None,
             }
         }
 
@@ -259,6 +261,7 @@ pub mod orchard_note {
         build_method!(value, NoteValue);
         build_method!(rho, Rho);
         build_method!(random_seed, RandomSeed);
+        build_method!(note_version, orchard::note::NoteVersion);
 
         /// selects a default recipient address for the orchard note
         pub fn default_recipient(&mut self) -> &mut Self {
@@ -327,7 +330,8 @@ pub mod orchard_note {
                 self.value.unwrap(),
                 self.rho.unwrap(),
                 self.random_seed.unwrap(),
-                orchard::note::NoteVersion::V2,
+                // Legacy Orchard (V2) unless an Ironwood (V3) note is asked for.
+                self.note_version.unwrap_or(orchard::note::NoteVersion::V2),
             )
             .unwrap()
         }

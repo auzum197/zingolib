@@ -719,6 +719,97 @@ impl WalletTransaction {
             outgoing_ironwood_notes: Vec::new(),
         }
     }
+
+    /// As [`Self::new_for_test`], with received sapling notes attached.
+    #[must_use]
+    pub fn with_sapling_notes_for_test(mut self, sapling_notes: Vec<SaplingNote>) -> Self {
+        self.sapling_notes = sapling_notes;
+        self
+    }
+
+    /// As [`Self::new_for_test`], with received transparent coins attached.
+    #[must_use]
+    pub fn with_transparent_coins_for_test(
+        mut self,
+        transparent_coins: Vec<TransparentCoin>,
+    ) -> Self {
+        self.transparent_coins = transparent_coins;
+        self
+    }
+
+    /// As [`Self::new_for_test`], with received and outgoing orchard notes
+    /// attached, for tests exercising summary/value-transfer derivation
+    /// without a chain.
+    pub fn new_for_test_with_orchard_notes(
+        txid: TxId,
+        status: ConfirmationStatus,
+        orchard_notes: Vec<OrchardNote>,
+        outgoing_orchard_notes: Vec<OutgoingOrchardNote>,
+    ) -> Self {
+        let mut transaction = Self::new_for_test(txid, status);
+        transaction.orchard_notes = orchard_notes;
+        transaction.outgoing_orchard_notes = outgoing_orchard_notes;
+        transaction
+    }
+
+    /// As [`Self::new_for_test`], with received and outgoing ironwood notes
+    /// attached, for tests exercising summary/value-transfer derivation
+    /// without a chain.
+    pub fn new_for_test_with_ironwood_notes(
+        txid: TxId,
+        status: ConfirmationStatus,
+        ironwood_notes: Vec<IronwoodNote>,
+        outgoing_ironwood_notes: Vec<OutgoingIronwoodNote>,
+    ) -> Self {
+        let mut transaction = Self::new_for_test(txid, status);
+        transaction.ironwood_notes = ironwood_notes;
+        transaction.outgoing_ironwood_notes = outgoing_ironwood_notes;
+        transaction
+    }
+}
+
+#[cfg(feature = "test-features")]
+impl SyncState {
+    /// Creates sync state with the given scan ranges, for tests exercising
+    /// spendability/witness gating without a chain.
+    pub fn new_for_test(scan_ranges: Vec<ScanRange>) -> Self {
+        let mut sync_state = Self::new();
+        sync_state.scan_ranges = scan_ranges;
+        sync_state
+    }
+}
+
+#[cfg(feature = "test-features")]
+impl<N, Nf: Copy, P> WalletNote<N, Nf, P> {
+    /// Creates a minimal received note for testing purposes.
+    pub fn new_for_test(
+        output_id: OutputId,
+        account_id: zip32::AccountId,
+        scope: zip32::Scope,
+        note: N,
+        memo: Memo,
+        position: Option<Position>,
+    ) -> Self {
+        Self {
+            output_id,
+            key_id: KeyId::from_parts(account_id, scope),
+            note,
+            nullifier: None,
+            position,
+            memo,
+            spending_transaction: None,
+            refetch_nullifier_ranges: Vec::new(),
+            marker: PhantomData,
+        }
+    }
+
+    /// Attaches a nullifier, for tests exercising spend paths, since the
+    /// spendable-note filter requires a known nullifier.
+    #[must_use]
+    pub fn with_nullifier_for_test(mut self, nullifier: Nf) -> Self {
+        self.nullifier = Some(nullifier);
+        self
+    }
 }
 
 #[cfg(feature = "wallet_essentials")]
@@ -906,6 +997,30 @@ pub struct TransparentCoin {
     /// Transaction ID of transaction this output was spent.
     /// If `None`, output is not spent.
     pub(crate) spending_transaction: Option<TxId>,
+}
+
+#[cfg(feature = "test-features")]
+impl TransparentCoin {
+    /// Creates a minimal received coin for testing purposes. The script
+    /// must be the real locking script for `address`: spendable-output
+    /// selection reconstructs the recipient from it and silently drops
+    /// coins whose script does not parse to an address.
+    pub fn new_for_test(
+        output_id: OutputId,
+        key_id: TransparentAddressId,
+        address: String,
+        script: Script,
+        value: Zatoshis,
+    ) -> Self {
+        Self {
+            output_id,
+            key_id,
+            address,
+            script,
+            value,
+            spending_transaction: None,
+        }
+    }
 }
 
 impl TransparentCoin {
@@ -1481,6 +1596,13 @@ impl IronwoodShardStore {
     #[must_use]
     pub fn empty() -> Self {
         Self(MemoryShardStore::empty())
+    }
+
+    /// Unwraps the Orchard-shaped store, for APIs that only accept the
+    /// Orchard store type.
+    #[must_use]
+    pub fn into_inner(self) -> MemoryShardStore<MerkleHashOrchard, BlockHeight> {
+        self.0
     }
 }
 

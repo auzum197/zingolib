@@ -47,6 +47,7 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 lightwallet-protocol = { version = "0.3.0", features = ["rebuild-proto"] }
 zingo-netutils = { version = "5.0.1", features = ["globally-public-transparent"] }
 zingo_common_components = "0.4.0"
+tokio-stream = { version = "0.1", features = ["net"] }
 
 ### Zcash
 incrementalmerkletree = "0.8.2"
