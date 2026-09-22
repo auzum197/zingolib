@@ -39,10 +39,10 @@ use crate::{
 };
 
 use super::{
-    InitialSyncState, IronwoodNote, KeyIdInterface, NullifierMap, OrchardNote,
-    OutgoingIronwoodNote, OutgoingNote, OutgoingNoteInterface, OutgoingOrchardNote,
-    OutgoingSaplingNote, OutputId, OutputInterface, SaplingNote, ShardTrees, SyncState,
-    TransparentCoin, TreeBounds, WalletBlock, WalletNote, WalletTransaction, decode_memo_relaxed,
+    IronwoodNote, KeyIdInterface, NullifierMap, OrchardNote, OutgoingIronwoodNote, OutgoingNote,
+    OutgoingNoteInterface, OutgoingOrchardNote, OutgoingSaplingNote, OutputId, OutputInterface,
+    SaplingNote, ShardTrees, SyncState, TransparentCoin, TreeBounds, WalletBlock, WalletNote,
+    WalletTransaction, decode_memo_relaxed,
 };
 
 fn read_string<R: Read>(mut reader: R) -> std::io::Result<String> {
@@ -185,14 +185,13 @@ impl SyncState {
         .into_iter()
         .collect::<BTreeSet<_>>();
 
-        Ok(Self {
+        Ok(Self::from_parts(
             scan_ranges,
             sapling_shard_ranges,
             orchard_shard_ranges,
             ironwood_shard_ranges,
             scan_targets,
-            initial_sync_state: InitialSyncState::new(),
-        })
+        ))
     }
 
     /// Serialize into `writer`
@@ -203,17 +202,9 @@ impl SyncState {
             w.write_u32::<LittleEndian>(scan_range.block_range().end.into())?;
             w.write_u8(scan_range.priority() as u8)
         })?;
-        Vector::write(&mut writer, &self.sapling_shard_ranges, |w, shard_range| {
-            w.write_u32::<LittleEndian>(shard_range.start.into())?;
-            w.write_u32::<LittleEndian>(shard_range.end.into())
-        })?;
-        Vector::write(&mut writer, &self.orchard_shard_ranges, |w, shard_range| {
-            w.write_u32::<LittleEndian>(shard_range.start.into())?;
-            w.write_u32::<LittleEndian>(shard_range.end.into())
-        })?;
         Vector::write(
             &mut writer,
-            &self.ironwood_shard_ranges,
+            self.sapling_shard_ranges(),
             |w, shard_range| {
                 w.write_u32::<LittleEndian>(shard_range.start.into())?;
                 w.write_u32::<LittleEndian>(shard_range.end.into())
@@ -221,7 +212,23 @@ impl SyncState {
         )?;
         Vector::write(
             &mut writer,
-            &self.scan_targets.iter().collect::<Vec<_>>(),
+            self.orchard_shard_ranges(),
+            |w, shard_range| {
+                w.write_u32::<LittleEndian>(shard_range.start.into())?;
+                w.write_u32::<LittleEndian>(shard_range.end.into())
+            },
+        )?;
+        Vector::write(
+            &mut writer,
+            self.ironwood_shard_ranges(),
+            |w, shard_range| {
+                w.write_u32::<LittleEndian>(shard_range.start.into())?;
+                w.write_u32::<LittleEndian>(shard_range.end.into())
+            },
+        )?;
+        Vector::write(
+            &mut writer,
+            &self.scan_targets().iter().collect::<Vec<_>>(),
             |w, &scan_target| scan_target.write(w),
         )
     }
@@ -1379,20 +1386,27 @@ mod tests {
 
     #[test]
     fn sync_state_v4_roundtrip_preserves_ironwood_ranges() {
-        let mut state = SyncState::new();
-        state.ironwood_shard_ranges = vec![
-            BlockHeight::from_u32(100)..BlockHeight::from_u32(200),
-            BlockHeight::from_u32(300)..BlockHeight::from_u32(400),
-        ];
-        state.scan_ranges.push(ScanRange::from_parts(
-            BlockHeight::from_u32(100)..BlockHeight::from_u32(400),
-            ScanPriority::Historic,
-        ));
+        let mut state = SyncState::from_parts(
+            vec![ScanRange::from_parts(
+                BlockHeight::from_u32(100)..BlockHeight::from_u32(400),
+                ScanPriority::Historic,
+            )],
+            Vec::new(),
+            Vec::new(),
+            vec![
+                BlockHeight::from_u32(100)..BlockHeight::from_u32(200),
+                BlockHeight::from_u32(300)..BlockHeight::from_u32(400),
+            ],
+            BTreeSet::new(),
+        );
         let mut bytes = Vec::new();
         state.write(&mut bytes).expect("write should succeed");
         let recovered = SyncState::read(bytes.as_slice()).expect("read should succeed");
-        assert_eq!(recovered.ironwood_shard_ranges, state.ironwood_shard_ranges);
-        assert_eq!(recovered.scan_ranges, state.scan_ranges);
+        assert_eq!(
+            recovered.ironwood_shard_ranges(),
+            state.ironwood_shard_ranges()
+        );
+        assert_eq!(recovered.scan_ranges(), state.scan_ranges());
     }
 
     // Helper: build a minimal v1 NullifierMap byte blob (no ironwood BTreeMap).

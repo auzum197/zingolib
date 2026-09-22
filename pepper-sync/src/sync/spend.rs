@@ -28,8 +28,6 @@ use crate::{
     witness::SHARD_HEIGHT,
 };
 
-use super::state;
-
 /// Wall-clock breakdown of [`update_shielded_spends`], for commit instrumentation.
 #[derive(Clone, Copy, Debug, Default)]
 pub(crate) struct SpendTiming {
@@ -100,21 +98,18 @@ where
     let sync_state = wallet
         .get_sync_state_mut()
         .map_err(SyncError::WalletError)?;
-    state::set_found_note_scan_ranges(
+    sync_state.set_found_note_scan_ranges(
         consensus_parameters,
-        sync_state,
         ShieldedPool::Sapling,
         sapling_spend_scan_targets.values().copied(),
     );
-    state::set_found_note_scan_ranges(
+    sync_state.set_found_note_scan_ranges(
         consensus_parameters,
-        sync_state,
         ShieldedPool::Orchard,
         orchard_spend_scan_targets.values().copied(),
     );
-    state::set_found_note_scan_ranges(
+    sync_state.set_found_note_scan_ranges(
         consensus_parameters,
-        sync_state,
         ShieldedPool::Ironwood,
         ironwood_spend_scan_targets.values().copied(),
     );

@@ -166,8 +166,7 @@ pub(crate) async fn update_addresses_and_scan_targets<W: SyncWallet>(
     wallet
         .get_sync_state_mut()
         .map_err(SyncError::WalletError)?
-        .scan_targets
-        .append(&mut scan_targets);
+        .add_scan_targets(scan_targets);
 
     Ok(())
 }
