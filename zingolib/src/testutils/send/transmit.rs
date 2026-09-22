@@ -1,31 +1,120 @@
-//! TODO: Add Mod Description Here!
+//! Building, proving and broadcasting transactions from a proposal.
 
 use std::convert::Infallible;
 
 use nonempty::NonEmpty;
 
+use zcash_client_backend::data_api::wallet::SpendingKeys;
 use zcash_client_backend::proposal::Proposal;
 use zcash_client_backend::zip321::TransactionRequest;
 use zcash_primitives::transaction::{TxId, fees::zip317};
+use zcash_protocol::consensus::Parameters as _;
 
 use zingo_netutils::Indexer as _;
 use zingo_netutils::lightwallet_protocol::RawTransaction;
 use zingolib_status::confirmation_status::ConfirmationStatus;
 
-use crate::data::proposal::ZingoProposal;
-use crate::lightclient::error::{LightClientError, SendError, TransmissionError};
+use super::error::{CalculateTransactionError, SendError, TransmissionError};
+use super::proposal::ZingoProposal;
 use crate::lightclient::{DEFAULT_REQUEST_TIMEOUT, LightClient};
-use crate::wallet::error::WalletError;
+use crate::wallet::LightWallet;
+use crate::wallet::error::{KeyError, WalletError};
 use crate::wallet::output::OutputRef;
 
 const MAX_RETRIES: u8 = 3;
+
+/// The Sapling proving parameters, downloaded by the build script when `testutils` is on.
+#[derive(rust_embed::RustEmbed)]
+#[folder = "zcash-params/"]
+struct SaplingParams;
+
+fn read_sapling_params() -> Result<(Vec<u8>, Vec<u8>), String> {
+    let read = |name: &str| {
+        SaplingParams::get(name)
+            .map(|file| file.data.into_owned())
+            .ok_or_else(|| format!("{name} is not embedded"))
+    };
+    Ok((
+        read("sapling-output.params")?,
+        read("sapling-spend.params")?,
+    ))
+}
+
+impl LightWallet {
+    /// Creates and stores transaction from the given `proposal`, returning the txids for each calculated transaction.
+    pub(crate) async fn calculate_transactions<NoteRef>(
+        &mut self,
+        proposal: Proposal<zip317::FeeRule, NoteRef>,
+        sending_account: zip32::AccountId,
+    ) -> Result<NonEmpty<TxId>, CalculateTransactionError<NoteRef>> {
+        let calculated_txids = match proposal.steps().len() {
+            1 => {
+                self.create_proposed_transactions(proposal, sending_account)
+                    .await?
+            }
+            2 if proposal.steps()[1]
+                .transaction_request()
+                .payments()
+                .values()
+                .any(|payment| {
+                    matches!(
+                        payment
+                            .recipient_address()
+                            .clone()
+                            .convert_if_network::<zcash_keys::address::Address>(
+                                self.chain_type().network_type()
+                            ),
+                        Ok(zcash_keys::address::Address::Tex(_))
+                    )
+                }) =>
+            {
+                self.create_proposed_transactions(proposal, sending_account)
+                    .await?
+            }
+
+            _ => return Err(CalculateTransactionError::NonTexMultiStep),
+        };
+        self.save_required = true;
+
+        Ok(calculated_txids)
+    }
+
+    async fn create_proposed_transactions<NoteRef>(
+        &mut self,
+        proposal: Proposal<zcash_primitives::transaction::fees::zip317::FeeRule, NoteRef>,
+        sending_account: zip32::AccountId,
+    ) -> Result<NonEmpty<TxId>, CalculateTransactionError<NoteRef>> {
+        let chain_type = self.chain_type();
+        let usk: zcash_keys::keys::UnifiedSpendingKey = self
+            .unified_key_store
+            .get(&sending_account)
+            .ok_or(KeyError::NoAccountKeys)?
+            .try_into()?;
+
+        // TODO:  Remove fallible sapling operations from Orchard only sends.
+        let (sapling_output, sapling_spend): (Vec<u8>, Vec<u8>) =
+            read_sapling_params().map_err(CalculateTransactionError::SaplingParams)?;
+        let sapling_prover =
+            zcash_proofs::prover::LocalTxProver::from_bytes(&sapling_spend, &sapling_output);
+        zcash_client_backend::data_api::wallet::create_proposed_transactions(
+            self,
+            &chain_type,
+            &sapling_prover,
+            &sapling_prover,
+            &SpendingKeys::new(usk),
+            zcash_client_backend::wallet::OvkPolicy::Sender,
+            &proposal,
+        )
+        .map_err(CalculateTransactionError::Calculation)
+    }
+}
 
 impl LightClient {
     async fn send(
         &mut self,
         proposal: Proposal<zip317::FeeRule, OutputRef>,
         sending_account: zip32::AccountId,
-    ) -> Result<NonEmpty<TxId>, LightClientError> {
+    ) -> Result<NonEmpty<TxId>, SendError> {
         let calculated_txids = self
             .wallet()
             .write()
@@ -41,7 +130,7 @@ impl LightClient {
         &mut self,
         proposal: Proposal<zip317::FeeRule, Infallible>,
         shielding_account: zip32::AccountId,
-    ) -> Result<NonEmpty<TxId>, LightClientError> {
+    ) -> Result<NonEmpty<TxId>, SendError> {
         let calculated_txids = self
             .wallet()
             .write()
@@ -59,7 +148,7 @@ impl LightClient {
     pub async fn send_stored_proposal(
         &mut self,
         resume_sync: bool,
-    ) -> Result<NonEmpty<TxId>, LightClientError> {
+    ) -> Result<NonEmpty<TxId>, SendError> {
         let opt_proposal = self.wallet().write().await.take_proposal();
         if let Some(proposal) = opt_proposal {
             let txids = match proposal {
@@ -79,7 +168,7 @@ impl LightClient {
 
             Ok(txids)
         } else {
-            Err(SendError::NoStoredProposal.into())
+            Err(SendError::NoStoredProposal)
         }
     }
 
@@ -91,7 +180,7 @@ impl LightClient {
         request: TransactionRequest,
         account_id: zip32::AccountId,
         resume_sync: bool,
-    ) -> Result<NonEmpty<TxId>, LightClientError> {
+    ) -> Result<NonEmpty<TxId>, SendError> {
         let _ignore_error = self.pause_sync();
         let proposal = self
             .wallet()
@@ -111,7 +200,7 @@ impl LightClient {
     pub async fn quick_shield(
         &mut self,
         account_id: zip32::AccountId,
-    ) -> Result<NonEmpty<TxId>, LightClientError> {
+    ) -> Result<NonEmpty<TxId>, SendError> {
         let proposal = self
             .wallet()
             .write()
@@ -127,7 +216,7 @@ impl LightClient {
     async fn transmit_transactions(
         &mut self,
         calculated_txids: NonEmpty<TxId>,
-    ) -> Result<NonEmpty<TxId>, LightClientError> {
+    ) -> Result<NonEmpty<TxId>, SendError> {
         let mut wallet = self.wallet().write().await;
         for txid in calculated_txids.iter() {
             let calculated_transaction = wallet
@@ -142,8 +231,7 @@ impl LightClient {
             ) {
                 return Err(SendError::TransmissionError(
                     TransmissionError::IncorrectTransactionStatus(*txid),
-                )
-                .into());
+                ));
             }
 
             let mut transaction_bytes = vec![];
@@ -213,8 +301,7 @@ impl LightClient {
             if txid_from_server != *txid {
                 return Err(SendError::TransmissionError(
                     TransmissionError::IncorrectTxidFromServer(*txid, txid_from_server),
-                )
-                .into());
+                ));
             }
         }
 

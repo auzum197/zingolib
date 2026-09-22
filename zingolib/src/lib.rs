@@ -21,13 +21,6 @@ pub use zingo_common_components::protocol::ActivationHeights;
 // This line includes the generated `git_description()` function directly into this scope.
 include!(concat!(env!("OUT_DIR"), "/git_description.rs"));
 
-#[macro_use]
-extern crate rust_embed;
-/// Embedded zcash-params.
-#[derive(RustEmbed)]
-#[folder = "zcash-params/"]
-pub struct SaplingParams;
-
 /// Developer donation address
 pub const DEVELOPER_DONATION_ADDRESS: &str = "u1w47nzy4z5g9zvm4h2s4ztpl8vrdmlclqz5sz02742zs5j3tz232u4safvv9kplg7g06wpk5fx0k0rx3r9gg4qk6nkg4c0ey57l0dyxtatqf8403xat7vyge7mmen7zwjcgvryg22khtg3327s6mqqkxnpwlnrt27kxhwg37qys2kpn2d2jl2zkk44l7j7hq9az82594u3qaescr3c9v";
 /// Zennies for zingo donation address

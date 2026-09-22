@@ -1,9 +1,6 @@
 //! TODO: Add Mod Description Here!
 use byteorder::{LittleEndian, ReadBytesExt, WriteBytesExt};
-use std::{
-    io::{self, Read, Write},
-    path::PathBuf,
-};
+use std::io::{self, Read, Write};
 use zcash_primitives::transaction::TxId;
 use zcash_protocol::memo::MemoBytes;
 
@@ -41,33 +38,6 @@ pub fn txid_from_slice(txid: &[u8]) -> TxId {
     let mut txid_bytes = [0u8; 32];
     txid_bytes.copy_from_slice(txid);
     TxId::from_bytes(txid_bytes)
-}
-
-/// Returns the downloaded Sapling parameters as bytes.
-pub(crate) fn read_sapling_params() -> Result<(Vec<u8>, Vec<u8>), String> {
-    use crate::SaplingParams;
-    let mut sapling_output = vec![];
-    sapling_output.extend_from_slice(
-        SaplingParams::get("sapling-output.params")
-            .unwrap()
-            .data
-            .as_ref(),
-    );
-
-    let mut sapling_spend = vec![];
-    sapling_spend.extend_from_slice(
-        SaplingParams::get("sapling-spend.params")
-            .unwrap()
-            .data
-            .as_ref(),
-    );
-    Ok((sapling_output, sapling_spend))
-}
-
-/// Returns the path to the default directory that the Zcash proving parameters are located in.
-pub fn get_zcash_params_path() -> std::io::Result<PathBuf> {
-    zcash_proofs::default_params_folder()
-        .ok_or_else(|| std::io::Error::other("could not load default params folder"))
 }
 
 #[cfg(test)]

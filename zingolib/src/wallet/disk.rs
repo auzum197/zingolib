@@ -388,6 +388,7 @@ impl LightWallet {
             transparent_addresses,
             unified_addresses,
             chain_type,
+            #[cfg(any(test, feature = "testutils"))]
             send_proposal: None,
             save_required: false,
             encryption: None,
@@ -658,6 +659,7 @@ impl LightWallet {
             sync_state,
             wallet_settings,
             price_list,
+            #[cfg(any(test, feature = "testutils"))]
             send_proposal: None,
             save_required: false,
             encryption: None,

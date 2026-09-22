@@ -45,16 +45,18 @@ pub mod from_inputs {
     use nonempty::NonEmpty;
     use zcash_primitives::transaction::TxId;
 
-    use crate::{
-        lightclient::{LightClient, error::LightClientError},
-        wallet::error::ProposeSendError,
+    use crate::lightclient::LightClient;
+    use crate::testutils::send::error::{ProposeSendError, SendError};
+    use crate::testutils::send::proposal::ProportionalFeeProposal;
+    use crate::testutils::send::receivers::{
+        Receiver, Receivers, transaction_request_from_receivers,
     };
 
     /// Panics if the address, amount or memo conversion fails.
     pub async fn quick_send(
         quick_sender: &mut crate::lightclient::LightClient,
         raw_receivers: Vec<(&str, u64, Option<&str>)>,
-    ) -> Result<NonEmpty<TxId>, LightClientError> {
+    ) -> Result<NonEmpty<TxId>, SendError> {
         let request = transaction_request_from_send_inputs(raw_receivers)
             .expect("should be able to create a transaction request as receivers are valid.");
         quick_sender
@@ -65,7 +67,7 @@ pub mod from_inputs {
     /// Panics if the address, amount or memo conversion fails.
     pub(crate) fn receivers_from_send_inputs(
         raw_receivers: Vec<(&str, u64, Option<&str>)>,
-    ) -> crate::data::receivers::Receivers {
+    ) -> Receivers {
         raw_receivers
             .into_iter()
             .map(|(address, amount, memo)| {
@@ -78,7 +80,7 @@ pub mod from_inputs {
                         .expect("should be able to interpret memo")
                 });
 
-                crate::data::receivers::Receiver::new(recipient_address, amount, memo)
+                Receiver::new(recipient_address, amount, memo)
             })
             .collect()
     }
@@ -91,14 +93,14 @@ pub mod from_inputs {
         zcash_client_backend::zip321::Zip321Error,
     > {
         let receivers = receivers_from_send_inputs(raw_receivers);
-        crate::data::receivers::transaction_request_from_receivers(receivers)
+        transaction_request_from_receivers(receivers)
     }
 
     /// Panics if the address, amount or memo conversion fails.
     pub async fn propose(
         proposer: &mut LightClient,
         raw_receivers: Vec<(&str, u64, Option<&str>)>,
-    ) -> Result<crate::data::proposal::ProportionalFeeProposal, ProposeSendError> {
+    ) -> Result<ProportionalFeeProposal, ProposeSendError> {
         let request = transaction_request_from_send_inputs(raw_receivers)
             .expect("should be able to create a transaction request as receivers are valid.");
         proposer.propose_send(request, zip32::AccountId::ZERO).await

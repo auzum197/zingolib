@@ -69,7 +69,10 @@ fn get_zcash_params() {
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    get_zcash_params();
+    // only the test harness proves transactions
+    if env::var_os("CARGO_FEATURE_TESTUTILS").is_some() {
+        get_zcash_params();
+    }
     git_description();
     Ok(())
 }

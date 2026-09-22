@@ -19,7 +19,6 @@ use pepper_sync::{
 use zingolib_price::PriceList;
 
 use crate::config::{ChainType, WalletConfig};
-use crate::data::proposal::ZingoProposal;
 use error::{KeyError, PriceError, WalletError};
 use keys::unified::{UnifiedAddressId, UnifiedKeyStore};
 
@@ -34,8 +33,7 @@ pub mod disk;
 pub mod encryption;
 pub mod keys;
 pub mod output;
-pub mod propose;
-pub mod send;
+pub mod spendable;
 pub mod summary;
 pub mod sync;
 pub mod transaction;
@@ -146,8 +144,10 @@ pub struct LightWallet {
     pub wallet_settings: WalletSettings,
     /// The current and historical daily price of zec.
     pub price_list: PriceList,
-    /// Send proposal
-    send_proposal: Option<ZingoProposal>,
+    /// The proposal the test harness is about to send. The wallet is watch-only, so this
+    /// exists only for the tests.
+    #[cfg(any(test, feature = "testutils"))]
+    pub(crate) send_proposal: Option<crate::testutils::send::proposal::ZingoProposal>,
     /// Boolean for tracking whether the wallet state has changed since last save.
     pub save_required: bool,
     /// At-rest encryption session. When `Some`, the serialized wallet is wrapped in a
@@ -260,6 +260,7 @@ impl LightWallet {
             wallet_settings,
             price_list: PriceList::new(),
             save_required: true,
+            #[cfg(any(test, feature = "testutils"))]
             send_proposal: None,
             encryption,
         })
@@ -311,11 +312,6 @@ impl LightWallet {
     #[must_use]
     pub fn transparent_addresses(&self) -> &BTreeMap<TransparentAddressId, String> {
         &self.transparent_addresses
-    }
-
-    /// Clears the proposal in the `send_proposal` field.
-    pub fn clear_proposal(&mut self) {
-        self.send_proposal = None;
     }
 
     #[must_use]
