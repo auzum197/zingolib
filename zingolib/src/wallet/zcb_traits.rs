@@ -37,8 +37,9 @@ use pepper_sync::{
     error::SyncError,
     keys::transparent::{self, TransparentScope},
     wallet::{
-        IronwoodNote, KeyIdInterface, NoteInterface, OrchardNote, OrchardShardStore, OutputId,
-        OutputInterface, SaplingNote, SaplingShardStore, traits::SyncWallet,
+        IronwoodNote, IronwoodShardStore, KeyIdInterface, NoteInterface, OrchardNote,
+        OrchardShardStore, OutputId, OutputInterface, SaplingNote, SaplingShardStore,
+        traits::SyncWallet,
     },
 };
 use zingolib_status::confirmation_status::ConfirmationStatus;
@@ -627,6 +628,32 @@ impl WalletCommitmentTrees for LightWallet {
         })?;
 
         Ok(())
+    }
+
+    // The trait default answers `None`, which makes every step touching the
+    // Ironwood pool fail with `ProposalNotSupported`. The trait hands out the
+    // Orchard store type, so the Ironwood store is unwrapped for the call and
+    // wrapped again after it.
+    fn with_ironwood_tree_mut<F, A, E>(&mut self, mut callback: F) -> Result<Option<A>, E>
+    where
+        for<'a> F: FnMut(
+            &'a mut ShardTree<
+                Self::OrchardShardStore<'a>,
+                { ORCHARD_SHARD_HEIGHT * 2 },
+                ORCHARD_SHARD_HEIGHT,
+            >,
+        ) -> Result<A, E>,
+        E: From<ShardTreeError<Self::Error>>,
+    {
+        let max_checkpoints = self.shard_trees.ironwood.max_checkpoints();
+        let ironwood = std::mem::replace(
+            &mut self.shard_trees.ironwood,
+            ShardTree::new(IronwoodShardStore::empty(), max_checkpoints),
+        );
+        let mut tree = ShardTree::new(ironwood.into_store().into_inner(), max_checkpoints);
+        let answer = callback(&mut tree);
+        self.shard_trees.ironwood = ShardTree::new(tree.into_store().into(), max_checkpoints);
+        answer.map(Some)
     }
 }
 

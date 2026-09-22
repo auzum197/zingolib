@@ -1,13 +1,10 @@
 [workspace]
 members = [
-    "darkside-tests",
-    "libtonode-tests",
     "pepper-sync",
     "zingolib-memo",
     "zingolib-price",
     "zingolib-status",
     "zingolib",
-    "zingolib_testutils",
 ]
 resolver = "2"
 
@@ -25,10 +22,6 @@ portpicker = "0.1"
 proptest = "1.6.0"
 tempfile = "3"
 test-log = "0.2"
-zcash_local_net = { git = "https://github.com/zingolabs/infrastructure.git", rev = "537f84d3d81b228c06ae82365f306ff364e164da", features = [
-    "legacy-stack",
-] }
-zingo-consensus = { git = "https://github.com/zingolabs/infrastructure.git", rev = "537f84d3d81b228c06ae82365f306ff364e164da" }
 zingo_test_vectors = { git = "https://github.com/zingolabs/infrastructure.git", rev = "537f84d3d81b228c06ae82365f306ff364e164da" }
 
 ### Documentation
@@ -47,6 +40,7 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 lightwallet-protocol = { version = "0.3.0", features = ["rebuild-proto"] }
 zingo-netutils = { version = "5.0.1", features = ["globally-public-transparent"] }
 zingo_common_components = "0.4.0"
+tokio-stream = { version = "0.1", features = ["net"] }
 
 ### Zcash
 incrementalmerkletree = "0.8.2"

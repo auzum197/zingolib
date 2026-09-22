@@ -11,8 +11,14 @@ license = "MIT"
 [features]
 default = []
 ci = []
-darkside_tests = ["pepper-sync/darkside_test"]
-testutils = ["portpicker", "zingo_test_vectors", "tempfile"]
+testutils = [
+    "portpicker",
+    "zingo_test_vectors",
+    "tempfile",
+    "pepper-sync/test-features",
+    "dep:tokio-stream",
+    "dep:tonic",
+]
 
 [dependencies]
 append-only-vec = { workspace = true }
@@ -48,6 +54,8 @@ shardtree = { workspace = true, features = ["legacy-api"] }
 tempfile = { workspace = true, optional = true }
 thiserror = { workspace = true }
 tokio = { workspace = true, features = ["full"] }
+tokio-stream = { workspace = true, optional = true }
+tonic = { workspace = true, optional = true }
 tracing.workspace = true
 zcash_address = { workspace = true }
 zcash_client_backend = { workspace = true, features = [
@@ -74,9 +82,18 @@ zeroize = { workspace = true }
 zcash_proofs = { workspace = true, features = ["download-params"] }
 
 [dev-dependencies]
+# Self dev-dependency: turns on `testutils` for the integration tests.
+zingolib = { path = ".", features = ["testutils"] }
+itertools = { workspace = true }
+proptest = { workspace = true }
+serde_json = { workspace = true }
+test-log = { workspace = true }
+tracing-subscriber = { workspace = true }
 pepper-sync = { workspace = true, features = ["test-features"] }
 portpicker = { workspace = true }
 tempfile = { workspace = true }
+tokio-stream = { workspace = true }
+tonic = { workspace = true }
 zingo_test_vectors = { workspace = true }
 
 [badges]
