@@ -43,9 +43,7 @@ use crate::{
 use error::LightClientError;
 
 pub mod error;
-pub mod propose;
 pub mod save;
-pub mod send;
 pub mod sync;
 
 pub const DEFAULT_REQUEST_TIMEOUT: Duration = Duration::from_secs(10);
@@ -95,7 +93,7 @@ impl WalletMeta {
 ///
 /// `sync_mode` is an atomic representation of [`pepper_sync::wallet::SyncMode`].
 pub struct LightClient {
-    indexer: zingo_netutils::GrpcIndexer,
+    pub(crate) indexer: zingo_netutils::GrpcIndexer,
     wallet: WalletMeta,
     sync_mode: Arc<AtomicU8>,
     sync_handle: Option<JoinHandle<Result<SyncResult, SyncError<WalletError>>>>,

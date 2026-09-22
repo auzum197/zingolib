@@ -17,8 +17,8 @@ use zcash_protocol::value::Zatoshis;
 use crate::check_client_balances;
 use crate::testutils::lightclient::{from_inputs, get_base_address};
 use crate::testutils::mock_indexer::{MockNet, faucet_funding_transaction};
+use crate::testutils::send::error::ProposeSendError;
 use crate::testutils::synthetic_wallet::SyntheticWalletBuilder;
-use crate::wallet::error::ProposeSendError;
 use crate::wallet::keys::unified::ReceiverSelection;
 
 /// An address belonging to no wallet on the mock net, so sends to it
@@ -762,9 +762,9 @@ async fn send_to_transparent_and_sapling_maintain_balance() {
             V6's two-bundle fees lead the planner to leave the sapling note unspent)"]
 #[tokio::test]
 async fn from_t_z_o_tz_to_zo_tzo_to_orchard() {
-    use crate::lightclient::error::{LightClientError, SendError};
     use crate::testutils::lightclient::get_fees_paid_by_client;
-    use crate::wallet::error::ProposeSendError;
+    use crate::testutils::send::error::ProposeSendError;
+    use crate::testutils::send::error::SendError;
     use zcash_protocol::value::Zatoshis;
 
     let mut net = MockNet::launch().await;
@@ -872,13 +872,11 @@ async fn from_t_z_o_tz_to_zo_tzo_to_orchard() {
     // 10b transparent-to-transparent is refused: transparent funds are
     // not send-spendable.
     match from_inputs::quick_send(&mut client, vec![(&pmc_taddr, 10_000, None)]).await {
-        Err(LightClientError::SendError(SendError::ProposeSendError(
-            ProposeSendError::Proposal(
-                zcash_client_backend::data_api::error::Error::InsufficientFunds {
-                    available,
-                    required,
-                },
-            ),
+        Err(SendError::ProposeSendError(ProposeSendError::Proposal(
+            zcash_client_backend::data_api::error::Error::InsufficientFunds {
+                available,
+                required,
+            },
         ))) => {
             assert_eq!(available, Zatoshis::from_u64(0).unwrap());
             assert_eq!(required, Zatoshis::from_u64(20_000).unwrap());
@@ -890,13 +888,11 @@ async fn from_t_z_o_tz_to_zo_tzo_to_orchard() {
 
     // 11 transparent-to-sapling likewise refused.
     match from_inputs::quick_send(&mut client, vec![(&pmc_sapling, 50_000, None)]).await {
-        Err(LightClientError::SendError(SendError::ProposeSendError(
-            ProposeSendError::Proposal(
-                zcash_client_backend::data_api::error::Error::InsufficientFunds {
-                    available,
-                    required,
-                },
-            ),
+        Err(SendError::ProposeSendError(ProposeSendError::Proposal(
+            zcash_client_backend::data_api::error::Error::InsufficientFunds {
+                available,
+                required,
+            },
         ))) => {
             assert_eq!(available, Zatoshis::from_u64(0).unwrap());
             assert_eq!(required, Zatoshis::from_u64(60_000).unwrap());
@@ -1851,9 +1847,9 @@ mod pre_ironwood {
                 compiles out the transparent-address discovery this test's funding depends on"]
     #[tokio::test]
     async fn from_t_z_o_tz_to_zo_tzo_to_orchard() {
-        use crate::lightclient::error::{LightClientError, SendError};
         use crate::testutils::lightclient::get_fees_paid_by_client;
-        use crate::wallet::error::ProposeSendError;
+        use crate::testutils::send::error::ProposeSendError;
+        use crate::testutils::send::error::SendError;
         use zcash_protocol::value::Zatoshis;
 
         let mut net = launch().await;
@@ -1963,13 +1959,11 @@ mod pre_ironwood {
         // 10b transparent-to-transparent is refused: transparent funds are
         // not send-spendable.
         match from_inputs::quick_send(&mut client, vec![(&pmc_taddr, 10_000, None)]).await {
-            Err(LightClientError::SendError(SendError::ProposeSendError(
-                ProposeSendError::Proposal(
-                    zcash_client_backend::data_api::error::Error::InsufficientFunds {
-                        available,
-                        required,
-                    },
-                ),
+            Err(SendError::ProposeSendError(ProposeSendError::Proposal(
+                zcash_client_backend::data_api::error::Error::InsufficientFunds {
+                    available,
+                    required,
+                },
             ))) => {
                 assert_eq!(available, Zatoshis::from_u64(0).unwrap());
                 assert_eq!(required, Zatoshis::from_u64(20_000).unwrap());
@@ -1981,13 +1975,11 @@ mod pre_ironwood {
 
         // 11 transparent-to-sapling likewise refused.
         match from_inputs::quick_send(&mut client, vec![(&pmc_sapling, 50_000, None)]).await {
-            Err(LightClientError::SendError(SendError::ProposeSendError(
-                ProposeSendError::Proposal(
-                    zcash_client_backend::data_api::error::Error::InsufficientFunds {
-                        available,
-                        required,
-                    },
-                ),
+            Err(SendError::ProposeSendError(ProposeSendError::Proposal(
+                zcash_client_backend::data_api::error::Error::InsufficientFunds {
+                    available,
+                    required,
+                },
             ))) => {
                 assert_eq!(available, Zatoshis::from_u64(0).unwrap());
                 assert_eq!(required, Zatoshis::from_u64(60_000).unwrap());

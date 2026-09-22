@@ -8,8 +8,6 @@ use zcash_keys::keys::DerivationError;
 use zcash_primitives::transaction::TxId;
 use zcash_protocol::{PoolType, ShieldedPool, consensus::BlockHeight};
 
-use super::output::OutputRef;
-
 /// Top level wallet errors
 // TODO: remove external types from public API
 #[derive(Debug, thiserror::Error)]
@@ -227,75 +225,4 @@ impl From<bip32::Error> for KeyError {
     fn from(value: bip32::Error) -> Self {
         Self::KeyDerivationError(DerivationError::Transparent(value))
     }
-}
-
-#[allow(missing_docs)] // error types document themselves
-#[derive(Debug, thiserror::Error)]
-pub enum CalculateTransactionError<NoteRef> {
-    #[error("No unified spending key found for this account. {0}")]
-    NoSpendingKey(#[from] crate::wallet::error::KeyError),
-    #[error("Failed to load sapling paramaters. {0}")]
-    SaplingParams(String),
-    #[error("Failed to calculate transaction. {0}")]
-    Calculation(
-        zcash_client_backend::data_api::error::Error<
-            WalletError,
-            Infallible,
-            Infallible,
-            zcash_primitives::transaction::fees::zip317::FeeError,
-            zcash_primitives::transaction::fees::zip317::FeeError,
-            NoteRef,
-        >,
-    ),
-    #[error("Only tex multistep transactions are supported!")]
-    NonTexMultiStep,
-}
-
-/// Errors that can result from constructing send proposals.
-#[derive(Debug, thiserror::Error)]
-pub enum ProposeSendError {
-    /// error in using trait to create spend proposal
-    #[error("{0}")]
-    Proposal(
-        zcash_client_backend::data_api::error::Error<
-            WalletError,
-            WalletError,
-            zcash_client_backend::data_api::wallet::input_selection::GreedyInputSelectorError,
-            zcash_primitives::transaction::fees::zip317::FeeError,
-            zcash_primitives::transaction::fees::zip317::FeeError,
-            OutputRef,
-        >,
-    ),
-    /// failed to construct a transaction request
-    #[error("{0}")]
-    TransactionRequestFailed(#[from] zcash_client_backend::zip321::Zip321Error),
-    /// send all is transferring no value
-    #[error("send all is transferring no value. only enough funds to pay the fees!")]
-    ZeroValueSendAll,
-    /// failed to calculate balance.
-    #[error("failed to calculated balance. {0}")]
-    BalanceError(#[from] crate::wallet::error::BalanceError),
-}
-
-/// Errors that can result from constructing shield proposals.
-#[derive(Debug, thiserror::Error)]
-pub enum ProposeShieldError {
-    /// error in using trait to create shielding proposal
-    #[error("{0}")]
-    Component(
-        zcash_client_backend::data_api::error::Error<
-            WalletError,
-            WalletError,
-            zcash_client_backend::data_api::wallet::input_selection::GreedyInputSelectorError,
-            zcash_primitives::transaction::fees::zip317::FeeError,
-            zcash_primitives::transaction::fees::zip317::FeeError,
-            Infallible,
-        >,
-    ),
-    /// Insufficient transparent funds to shield.
-    #[error("insufficient transparent funds to shield.")]
-    InsufficientFunds,
-    /// Address parse error.
-    #[error("address parse error. {0}")]
-    AddressParseError(#[from] zcash_address::ParseError),
 }

@@ -1,19 +1,202 @@
-//! `LightClient` function `do_propose` generates a proposal to send to specified addresses.
+//! Proposals: which notes to spend and what to pay, before anything is built or signed.
 
 use zcash_address::ZcashAddress;
-use zcash_client_backend::zip321::TransactionRequest;
-use zcash_protocol::value::Zatoshis;
+use zcash_client_backend::{
+    data_api::wallet::{
+        ConfirmationsPolicy,
+        input_selection::{GreedyInputSelector, SpendPolicy},
+    },
+    fees::{DustAction, DustOutputPolicy},
+    zip321::TransactionRequest,
+};
+use zcash_protocol::{
+    ShieldedPool,
+    consensus::Parameters,
+    memo::{Memo, MemoBytes},
+    value::Zatoshis,
+};
 
+use pepper_sync::keys::transparent::TransparentScope;
+
+use super::error::{ProposeSendError, ProposeShieldError};
+use super::proposal::{ProportionalFeeProposal, ProportionalFeeShieldProposal, ZingoProposal};
+use super::receivers::{Receiver, transaction_request_from_receivers};
 use crate::ZENNIES_FOR_ZINGO_AMOUNT;
-use crate::data::proposal::ProportionalFeeProposal;
-use crate::data::proposal::ProportionalFeeShieldProposal;
-use crate::data::proposal::ZingoProposal;
-use crate::data::receivers::Receiver;
-use crate::data::receivers::transaction_request_from_receivers;
+use crate::config::ChainType;
 use crate::get_zennies_for_zingo_address;
 use crate::lightclient::LightClient;
-use crate::wallet::error::ProposeSendError;
-use crate::wallet::error::ProposeShieldError;
+use crate::wallet::LightWallet;
+use crate::wallet::error::WalletError;
+
+impl LightWallet {
+    /// Creates a proposal from a transaction request.
+    pub(crate) fn create_send_proposal(
+        &mut self,
+        request: TransactionRequest,
+        account_id: zip32::AccountId,
+    ) -> Result<ProportionalFeeProposal, ProposeSendError> {
+        let memo = self.change_memo_from_transaction_request(&request);
+        let input_selector = GreedyInputSelector::new();
+        let change_strategy = zcash_client_backend::fees::zip317::SingleOutputChangeStrategy::new(
+            zcash_primitives::transaction::fees::zip317::FeeRule::standard(),
+            Some(memo),
+            ShieldedPool::Orchard,
+            DustOutputPolicy::new(DustAction::AllowDustChange, None),
+        );
+        let chain_type = self.chain_type();
+
+        zcash_client_backend::data_api::wallet::propose_transfer::<
+            LightWallet,
+            ChainType,
+            GreedyInputSelector<LightWallet>,
+            zcash_client_backend::fees::zip317::SingleOutputChangeStrategy<
+                zcash_primitives::transaction::fees::zip317::FeeRule,
+                LightWallet,
+            >,
+            WalletError,
+        >(
+            self,
+            &chain_type,
+            account_id,
+            &input_selector,
+            &change_strategy,
+            request,
+            // TODO: replace wallet min_confirmations field with confirmation policy to unify for all proposals
+            ConfirmationsPolicy::new_symmetrical(self.wallet_settings.min_confirmations, false),
+            &SpendPolicy::default(),
+            None,
+        )
+        .map_err(ProposeSendError::Proposal)
+    }
+
+    /// The shield operation consumes a proposal that transfers value
+    /// into the Orchard pool.
+    ///
+    /// The proposal is generated with this method, which operates on
+    /// the balance transparent pool, without other input.
+    /// In other words, shield does not take a user-specified amount
+    /// to shield, rather it consumes all transparent value in the wallet that
+    /// can be consumed without costing more in zip317 fees than is being transferred.
+    pub(crate) fn create_shield_proposal(
+        &mut self,
+        account_id: zip32::AccountId,
+    ) -> Result<ProportionalFeeShieldProposal, ProposeShieldError> {
+        let input_selector = GreedyInputSelector::new();
+        let change_strategy = zcash_client_backend::fees::zip317::SingleOutputChangeStrategy::new(
+            zcash_primitives::transaction::fees::zip317::FeeRule::standard(),
+            None,
+            ShieldedPool::Orchard,
+            DustOutputPolicy::new(DustAction::AllowDustChange, None),
+        );
+        let chain_type = self.chain_type();
+
+        // TODO: store t addrs as concrete types instead of encoded
+        let transparent_addresses = self
+            .transparent_addresses()
+            .values()
+            .map(|address| {
+                Ok(zcash_address::ZcashAddress::try_from_encoded(address)?
+                    .convert_if_network::<zcash_transparent::address::TransparentAddress>(
+                        chain_type.network_type(),
+                    )
+                    .expect("incorrect network should be checked on wallet load"))
+            })
+            .collect::<Result<Vec<_>, zcash_address::ParseError>>()?;
+
+        let proposed_shield = zcash_client_backend::data_api::wallet::propose_shielding::<
+            LightWallet,
+            ChainType,
+            GreedyInputSelector<LightWallet>,
+            zcash_client_backend::fees::zip317::SingleOutputChangeStrategy<
+                zcash_primitives::transaction::fees::zip317::FeeRule,
+                LightWallet,
+            >,
+            WalletError,
+        >(
+            self,
+            &chain_type,
+            &input_selector,
+            &change_strategy,
+            Zatoshis::const_from_u64(10_000),
+            &transparent_addresses,
+            account_id,
+            // TODO: replace wallet min_confirmations field with confirmation policy to unify for all proposals
+            ConfirmationsPolicy::new_symmetrical(self.wallet_settings.min_confirmations, false),
+            zcash_client_backend::data_api::CoinbaseFilter::AllTransparentOutputs,
+        )
+        .map_err(ProposeShieldError::Component)?;
+
+        for step in proposed_shield.steps().iter() {
+            if step
+                .balance()
+                .proposed_change()
+                .iter()
+                .fold(0, |total_out, output| total_out + output.value().into_u64())
+                == 0
+            {
+                return Err(ProposeShieldError::InsufficientFunds);
+            }
+        }
+
+        Ok(proposed_shield)
+    }
+
+    /// Stores a proposal in the `send_proposal` field.
+    /// This field must be populated in order to then construct and transmit transactions.
+    pub(crate) fn store_proposal(&mut self, proposal: ZingoProposal) {
+        self.send_proposal = Some(proposal);
+    }
+
+    /// Takes the proposal from the `send_proposal` field, leaving the field empty.
+    pub(crate) fn take_proposal(&mut self) -> Option<ZingoProposal> {
+        self.send_proposal.take()
+    }
+
+    fn change_memo_from_transaction_request(&self, request: &TransactionRequest) -> MemoBytes {
+        let chain_type = self.chain_type();
+        let mut recipient_uas = Vec::new();
+        let mut refund_address_indexes = Vec::new();
+        let mut refund_address_count = self
+            .transparent_addresses()
+            .keys()
+            .filter(|&address_id| address_id.scope() == TransparentScope::Refund)
+            .count() as u32;
+        for payment in request.payments().values() {
+            if let Ok(address) = payment
+                .recipient_address()
+                .clone()
+                .convert_if_network::<zcash_keys::address::Address>(chain_type.network_type())
+            {
+                match address {
+                    zcash_keys::address::Address::Unified(unified_address) => {
+                        recipient_uas.push(unified_address);
+                    }
+                    zcash_keys::address::Address::Tex(_) => {
+                        refund_address_indexes.push(refund_address_count);
+                        refund_address_count += 1;
+                    }
+                    _ => (),
+                }
+            }
+        }
+        let uas_bytes = match zingolib_memo::create_wallet_internal_memo_version_1(
+            &chain_type,
+            recipient_uas.as_slice(),
+            refund_address_indexes.as_slice(),
+        ) {
+            Ok(bytes) => bytes,
+            Err(e) => {
+                log::error!(
+                    "Could not write uas to memo field: {e}\n\
+        Your wallet will display an incorrect sent-to address. This is a visual error only.\n\
+        The correct address was sent to."
+                );
+                [0; 511]
+            }
+        };
+        MemoBytes::from(Memo::Arbitrary(Box::new(uas_bytes)))
+    }
+}
 
 impl LightClient {
     fn append_zingo_zenny_receiver(&self, receivers: &mut Vec<Receiver>) {
@@ -167,15 +350,18 @@ impl LightClient {
 }
 
 #[cfg(test)]
-mod shielding {
+mod tests {
     use zcash_protocol::consensus::Parameters;
+    use zcash_protocol::{PoolType, ShieldedPool};
     use zingo_test_vectors::seeds;
 
+    use super::super::error::ProposeShieldError;
     use crate::{
         config::{ClientConfig, WalletConfig},
         lightclient::LightClient,
         testutils::default_test_wallet_settings,
-        wallet::error::ProposeShieldError,
+        testutils::lightclient::from_inputs::transaction_request_from_send_inputs,
+        wallet::disk::testing::examples,
     };
 
     async fn create_basic_client() -> LightClient {
@@ -205,6 +391,7 @@ mod shielding {
             _ => panic!("Unexpected error state!"),
         };
     }
+
     #[tokio::test]
     async fn get_transparent_addresses() {
         let basic_client = create_basic_client().await;
@@ -236,5 +423,28 @@ mod shielding {
                 ])
             ]
         );
+    }
+
+    /// this test loads an example wallet with existing sapling finds
+    #[ignore = "for some reason this is does not work without network, even though it should be possible"]
+    #[tokio::test]
+    async fn example_mainnet_hhcclaltpcckcsslpcnetblr_80b5594ac_propose_100_000_to_self() {
+        let client = examples::NetworkSeedVersion::Mainnet(
+            examples::MainnetSeedVersion::HotelHumor(examples::HotelHumorVersion::Latest),
+        )
+        .load_example_wallet()
+        .await;
+        let mut wallet = client.wallet().write().await;
+
+        let pool = PoolType::Shielded(ShieldedPool::Orchard);
+        let self_address = wallet.get_address(pool);
+
+        let receivers = vec![(self_address.as_str(), 100_000, None)];
+        let request = transaction_request_from_send_inputs(receivers)
+            .expect("actually all of this logic oughta be internal to propose");
+
+        wallet
+            .create_send_proposal(request, zip32::AccountId::ZERO)
+            .expect("can propose from existing data");
     }
 }

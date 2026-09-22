@@ -16,8 +16,10 @@ testutils = [
     "zingo_test_vectors",
     "tempfile",
     "pepper-sync/test-features",
+    "dep:rust-embed",
     "dep:tokio-stream",
     "dep:tonic",
+    "dep:zcash_proofs",
 ]
 
 [dependencies]
@@ -44,7 +46,7 @@ portpicker = { workspace = true, optional = true }
 prost = { workspace = true }
 rand = { workspace = true }
 ring = { workspace = true }
-rust-embed = { workspace = true, features = ["debug-embed"] }
+rust-embed = { workspace = true, features = ["debug-embed"], optional = true }
 rustls.workspace = true
 sapling-crypto.workspace = true
 secp256k1 = { workspace = true }
@@ -66,7 +68,7 @@ zcash_client_backend = { workspace = true, features = [
 zcash_encoding = { workspace = true }
 zcash_keys = { workspace = true }
 zcash_primitives = { workspace = true }
-zcash_proofs = { workspace = true, features = ["download-params"] }
+zcash_proofs = { workspace = true, features = ["download-params"], optional = true }
 zcash_protocol = { workspace = true }
 zcash_transparent = { workspace = true }
 zingolib-memo = { workspace = true }

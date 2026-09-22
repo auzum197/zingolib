@@ -1489,9 +1489,11 @@ mod slow {
     use zingo_test_vectors::TEST_TXID;
     use zingolib::config::{ChainType, ClientConfig, WalletConfig};
     use zingolib::lightclient::LightClient;
-    use zingolib::lightclient::error::{LightClientError, SendError};
     use zingolib::testutils::lightclient::{from_inputs, get_fees_paid_by_client};
     use zingolib::testutils::scenarios::increase_height_and_wait_for_client;
+    use zingolib::testutils::send::error::{
+        CalculateTransactionError, ProposeSendError, SendError,
+    };
     use zingolib::testutils::{
         assert_transaction_summary_equality, assert_transaction_summary_exists,
         build_fvks_from_unified_keystore, default_test_wallet_settings,
@@ -1499,7 +1501,6 @@ mod slow {
     };
     use zingolib::utils;
     use zingolib::utils::conversion::txid_from_hex_encoded_str;
-    use zingolib::wallet::error::{CalculateTransactionError, ProposeSendError};
     use zingolib::wallet::keys::unified::UnifiedAddressId;
     use zingolib::wallet::output::SpendStatus;
     use zingolib::wallet::summary;
@@ -1948,9 +1949,9 @@ mod slow {
                     vec![(zingo_test_vectors::EXT_TADDR, 1000, None)]
                 )
                 .await,
-                Err(LightClientError::SendError(SendError::CalculateSendError(
+                Err(SendError::CalculateSendError(
                     CalculateTransactionError::NoSpendingKey(_)
-                )))
+                ))
             ));
         }
     }
@@ -2001,12 +2002,12 @@ mod slow {
         .unwrap_err();
         assert!(matches!(
             sent_transaction_error,
-            LightClientError::SendError(SendError::ProposeSendError(ProposeSendError::Proposal(
+            SendError::ProposeSendError(ProposeSendError::Proposal(
                 zcash_client_backend::data_api::error::Error::InsufficientFunds {
                     available: _,
                     required: _
                 }
-            )))
+            ))
         ));
     }
 
@@ -3619,7 +3620,7 @@ TransactionSummary {
         // Very explicit catch of reject sending from transparent
         match from_inputs::quick_send(&mut client, vec![(&pmc_taddr, 10_000, None)]).await {
             Ok(_) => panic!(),
-            Err(LightClientError::SendError(SendError::ProposeSendError(e))) => match e {
+            Err(SendError::ProposeSendError(e)) => match e {
                 ProposeSendError::Proposal(insufficient) => {
                     if let zcash_client_backend::data_api::error::Error::InsufficientFunds {
                         available,
@@ -3648,7 +3649,7 @@ TransactionSummary {
         //  t -> z
         match from_inputs::quick_send(&mut client, vec![(&pmc_sapling, 50_000, None)]).await {
             Ok(_) => panic!(),
-            Err(LightClientError::SendError(SendError::ProposeSendError(e))) => {
+            Err(SendError::ProposeSendError(e)) => {
                 if let ProposeSendError::Proposal(insufficient_funds) = e {
                     match insufficient_funds {
                         zcash_client_backend::data_api::error::Error::InsufficientFunds {
@@ -4415,7 +4416,8 @@ mod send_all {
 
     use pepper_sync::wallet::{OrchardNote, SaplingNote};
     use zcash_protocol::value::Zatoshis;
-    use zingolib::{testutils::lightclient::from_inputs, wallet::error::ProposeSendError};
+    use zingolib::testutils::lightclient::from_inputs;
+    use zingolib::testutils::send::error::ProposeSendError;
 
     use super::*;
     #[tokio::test]

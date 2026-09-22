@@ -37,8 +37,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   as its wallet events, instead of zero. A `PoolMove` is worth the value moved.
 - An empty text memo, which is what a zero-filled memo field decodes to, is treated as no memo
   in summaries and wallet events. It no longer turns a send to self into a memo to self.
+- The wallet is watch-only. Proposing, building and broadcasting transactions moved out of the
+  product API into `testutils::send`, behind the `testutils` feature, where the integration
+  tests still use it. `LightClient::propose_send`, `propose_send_all`, `propose_shield`,
+  `max_send_value`, `send_stored_proposal`, `quick_send` and `quick_shield` are only compiled
+  with that feature, and return `testutils::send::error::SendError` instead of
+  `LightClientError`. `zcash_proofs` and the Sapling parameter download are now test-only.
 
 ### Removed
+- `LightClientError::SendError`, `lightclient::error::SendError` and `TransmissionError`,
+  `wallet::error::CalculateTransactionError`, `ProposeSendError` and `ProposeShieldError`:
+  moved to `testutils::send::error`.
+- `data::proposal` and `data::receivers`: moved to `testutils::send::proposal` and
+  `testutils::send::receivers`.
+- `LightWallet::clear_proposal` and `wallet::utils::get_zcash_params_path`.
 
 ## [5.0.0] - 2026-06-10
 
