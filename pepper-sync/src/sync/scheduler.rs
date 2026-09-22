@@ -1083,6 +1083,7 @@ fn split_out_scan_range(
 
 #[cfg(test)]
 mod tests {
+    use proptest::prelude::*;
     use zcash_protocol::local_consensus::LocalNetwork;
 
     use super::*;
@@ -1111,6 +1112,9 @@ mod tests {
         ..BASE_NETWORK
     };
 
+    const BIRTHDAY: u32 = 100;
+    const TIP: u32 = 300;
+
     fn h(height: u32) -> BlockHeight {
         BlockHeight::from_u32(height)
     }
@@ -1121,6 +1125,440 @@ mod tests {
 
     fn sync_state_with_ranges(birthday: u32, tip: u32) -> SyncState {
         SyncState::new_for_test(vec![range(birthday, tip + 1, ScanPriority::Historic)])
+    }
+
+    /// Sapling and orchard shards complete at 149, 199 and 249, so neighbouring shard ranges share their boundary
+    /// block: `1..150`, `149..200`, `199..250`.
+    fn with_shards(mut sync_state: SyncState) -> SyncState {
+        for pool in [ShieldedPool::Sapling, ShieldedPool::Orchard] {
+            sync_state.add_shard_ranges(&NO_NU6_3_NETWORK, pool, [h(149), h(199), h(249)]);
+        }
+        sync_state
+    }
+
+    /// A first sync session from `BIRTHDAY` to `TIP`.
+    fn first_session() -> SyncState {
+        let mut sync_state = with_shards(SyncState::new());
+        sync_state.update_scan_ranges(&NO_NU6_3_NETWORK, h(BIRTHDAY - 1), h(TIP));
+        sync_state
+    }
+
+    fn assert_plan(sync_state: &SyncState, birthday: u32, tip: u32, expected: &[ScanRange]) {
+        assert_eq!(sync_state.check_invariants(), Ok(()));
+        assert_eq!(sync_state.wallet_birthday(), Some(h(birthday)));
+        assert_eq!(sync_state.last_known_chain_height(), Some(h(tip)));
+        assert_eq!(sync_state.scan_ranges(), expected);
+    }
+
+    fn select(sync_state: &mut SyncState) -> Option<ScanRange> {
+        sync_state.select_scan_range(&NO_NU6_3_NETWORK, false)
+    }
+
+    fn finish(sync_state: &mut SyncState, scan_range: &ScanRange) {
+        sync_state.set_scanned_scan_range(scan_range.block_range().clone(), true);
+        sync_state.merge_scan_ranges(ScanPriority::Scanned);
+    }
+
+    #[test]
+    fn first_session_plans_birthday_to_tip() {
+        let mut sync_state = with_shards(SyncState::new());
+
+        let reorg_detection_start_height =
+            sync_state.update_scan_ranges(&NO_NU6_3_NETWORK, h(BIRTHDAY - 1), h(TIP));
+
+        assert_eq!(reorg_detection_start_height, h(BIRTHDAY));
+        assert_plan(
+            &sync_state,
+            BIRTHDAY,
+            TIP,
+            &[
+                range(100, 110, ScanPriority::Verify),
+                range(110, 249, ScanPriority::Historic),
+                range(249, 301, ScanPriority::ChainTip),
+            ],
+        );
+    }
+
+    #[test]
+    fn select_follows_priority_then_scans_historic_shard_by_shard() {
+        let mut sync_state = first_session();
+
+        let verify = select(&mut sync_state).expect("verify range");
+        assert_eq!(verify, range(100, 110, ScanPriority::Verify));
+        let chain_tip = select(&mut sync_state).expect("chain tip range");
+        assert_eq!(chain_tip, range(249, 301, ScanPriority::ChainTip));
+        // historic ranges are split at the shard containing their start
+        let first_shard = select(&mut sync_state).expect("historic range");
+        assert_eq!(first_shard, range(110, 150, ScanPriority::Historic));
+        let second_shard = select(&mut sync_state).expect("historic range");
+        assert_eq!(second_shard, range(150, 200, ScanPriority::Historic));
+        let third_shard = select(&mut sync_state).expect("historic range");
+        assert_eq!(third_shard, range(200, 249, ScanPriority::Historic));
+        assert_plan(
+            &sync_state,
+            BIRTHDAY,
+            TIP,
+            &[
+                range(100, 110, ScanPriority::Scanning),
+                range(110, 150, ScanPriority::Scanning),
+                range(150, 200, ScanPriority::Scanning),
+                range(200, 249, ScanPriority::Scanning),
+                range(249, 301, ScanPriority::Scanning),
+            ],
+        );
+        assert_eq!(select(&mut sync_state), None);
+
+        finish(&mut sync_state, &chain_tip);
+        finish(&mut sync_state, &second_shard);
+        assert_eq!(sync_state.fully_scanned_height(), Some(h(99)));
+        assert_eq!(sync_state.highest_scanned_height(), Some(h(300)));
+        finish(&mut sync_state, &verify);
+        finish(&mut sync_state, &first_shard);
+        assert_eq!(sync_state.fully_scanned_height(), Some(h(199)));
+        assert!(!sync_state.scan_complete());
+        finish(&mut sync_state, &third_shard);
+
+        assert_plan(
+            &sync_state,
+            BIRTHDAY,
+            TIP,
+            &[range(100, 301, ScanPriority::Scanned)],
+        );
+        assert!(sync_state.scan_complete());
+        assert_eq!(sync_state.calculate_scanned_blocks(), 201);
+    }
+
+    #[test]
+    fn found_note_on_shard_boundary_punches_both_shards() {
+        let mut sync_state = with_shards(sync_state_with_ranges(BIRTHDAY, TIP));
+
+        // block 149 holds the last outputs of the first shard and the first outputs of the second
+        assert_eq!(
+            sync_state.determine_block_range(
+                &NO_NU6_3_NETWORK,
+                h(149),
+                Some(ShieldedPool::Orchard)
+            ),
+            h(1)..h(200)
+        );
+        sync_state.set_found_note_scan_range(
+            &NO_NU6_3_NETWORK,
+            Some(ShieldedPool::Orchard),
+            h(149),
+        );
+
+        assert_plan(
+            &sync_state,
+            BIRTHDAY,
+            TIP,
+            &[
+                range(100, 200, ScanPriority::FoundNote),
+                range(200, 301, ScanPriority::Historic),
+            ],
+        );
+    }
+
+    #[test]
+    fn found_note_on_shard_boundary_leaves_scanned_lower_shard_alone() {
+        let mut sync_state = with_shards(SyncState::new_for_test(vec![
+            range(100, 150, ScanPriority::Scanned),
+            range(150, 301, ScanPriority::Historic),
+        ]));
+
+        sync_state.set_found_note_scan_range(
+            &NO_NU6_3_NETWORK,
+            Some(ShieldedPool::Sapling),
+            h(149),
+        );
+
+        assert_plan(
+            &sync_state,
+            BIRTHDAY,
+            TIP,
+            &[
+                range(100, 150, ScanPriority::Scanned),
+                range(150, 200, ScanPriority::FoundNote),
+                range(200, 301, ScanPriority::Historic),
+            ],
+        );
+    }
+
+    #[test]
+    fn narrow_scan_target_punches_surrounding_area() {
+        let mut sync_state = sync_state_with_ranges(9_000, 25_000);
+
+        sync_state.set_found_note_scan_ranges(
+            &NO_NU6_3_NETWORK,
+            ShieldedPool::Orchard,
+            [ScanTarget {
+                block_height: h(12_345),
+                txid: TxId::from_bytes([1; 32]),
+                narrow_scan_area: true,
+            }]
+            .into_iter(),
+        );
+
+        assert_plan(
+            &sync_state,
+            9_000,
+            25_000,
+            &[
+                range(9_000, 10_000, ScanPriority::Historic),
+                range(10_000, 20_000, ScanPriority::FoundNote),
+                range(20_000, 25_001, ScanPriority::Historic),
+            ],
+        );
+    }
+
+    #[test]
+    fn punch_skips_scanning_scanned_and_higher_priorities() {
+        let mut sync_state = SyncState::new_for_test(vec![
+            range(100, 150, ScanPriority::Scanned),
+            range(150, 170, ScanPriority::ScannedWithoutMapping),
+            range(170, 190, ScanPriority::RefetchingNullifiers),
+            range(190, 200, ScanPriority::Scanning),
+            range(200, 250, ScanPriority::ChainTip),
+            range(250, 301, ScanPriority::Historic),
+        ]);
+        let before = sync_state.scan_ranges().to_vec();
+
+        sync_state.punch_scan_priority(h(100)..h(280), ScanPriority::FoundNote);
+
+        let mut expected = before[..5].to_vec();
+        expected.extend([
+            range(250, 280, ScanPriority::FoundNote),
+            range(280, 301, ScanPriority::Historic),
+        ]);
+        assert_plan(&sync_state, BIRTHDAY, TIP, &expected);
+    }
+
+    #[test]
+    fn select_with_nullifier_map_limit_prefers_lowest_range_of_highest_priority() {
+        let sync_state = SyncState::new_for_test(vec![
+            range(100, 150, ScanPriority::Historic),
+            range(150, 200, ScanPriority::FoundNote),
+            range(200, 250, ScanPriority::Historic),
+            range(250, 301, ScanPriority::FoundNote),
+        ]);
+
+        let mut unlimited = sync_state.clone();
+        assert_eq!(
+            unlimited.select_scan_range(&NO_NU6_3_NETWORK, false),
+            Some(range(250, 301, ScanPriority::FoundNote))
+        );
+        let mut limited = sync_state;
+        assert_eq!(
+            limited.select_scan_range(&NO_NU6_3_NETWORK, true),
+            Some(range(150, 200, ScanPriority::FoundNote))
+        );
+        assert_eq!(limited.check_invariants(), Ok(()));
+        assert_eq!(limited.scan_ranges()[1].priority(), ScanPriority::Scanning);
+    }
+
+    #[test]
+    fn nullifier_refetch_runs_first_when_lowest_unscanned() {
+        let mut sync_state = SyncState::new_for_test(vec![
+            range(100, 150, ScanPriority::Scanned),
+            range(150, 200, ScanPriority::ScannedWithoutMapping),
+            range(200, 301, ScanPriority::ChainTip),
+        ]);
+
+        let refetch = select(&mut sync_state).expect("refetch range");
+        assert_eq!(
+            refetch,
+            range(150, 200, ScanPriority::ScannedWithoutMapping)
+        );
+        assert_eq!(
+            sync_state.scan_ranges()[1],
+            range(150, 200, ScanPriority::RefetchingNullifiers)
+        );
+
+        // a refetch that lost the race with a lower range is discarded and selected again
+        sync_state.reset_refetching_nullifiers_scan_range(refetch.block_range().clone());
+        assert_eq!(select(&mut sync_state), Some(refetch.clone()));
+
+        finish(&mut sync_state, &refetch);
+        assert_plan(
+            &sync_state,
+            BIRTHDAY,
+            TIP,
+            &[
+                range(100, 200, ScanPriority::Scanned),
+                range(200, 301, ScanPriority::ChainTip),
+            ],
+        );
+    }
+
+    #[test]
+    fn unmapped_scan_is_marked_for_refetch_and_merged() {
+        let mut sync_state = SyncState::new_for_test(vec![
+            range(100, 150, ScanPriority::Scanning),
+            range(150, 200, ScanPriority::ScannedWithoutMapping),
+            range(200, 250, ScanPriority::Scanning),
+            range(250, 301, ScanPriority::Historic),
+        ]);
+
+        sync_state.set_scanned_scan_range(h(200)..h(250), false);
+        sync_state.merge_scan_ranges(ScanPriority::ScannedWithoutMapping);
+
+        assert_plan(
+            &sync_state,
+            BIRTHDAY,
+            TIP,
+            &[
+                range(100, 150, ScanPriority::Scanning),
+                range(150, 250, ScanPriority::ScannedWithoutMapping),
+                range(250, 301, ScanPriority::Historic),
+            ],
+        );
+    }
+
+    #[test]
+    fn tip_move_appends_chain_tip_and_verifies_new_blocks() {
+        let mut sync_state = with_shards(SyncState::new_for_test(vec![range(
+            100,
+            301,
+            ScanPriority::Scanned,
+        )]));
+
+        let reorg_detection_start_height =
+            sync_state.update_scan_ranges(&NO_NU6_3_NETWORK, h(TIP), h(320));
+
+        assert_eq!(reorg_detection_start_height, h(301));
+        assert_plan(
+            &sync_state,
+            BIRTHDAY,
+            320,
+            &[
+                range(100, 301, ScanPriority::Scanned),
+                range(301, 311, ScanPriority::Verify),
+                range(311, 321, ScanPriority::ChainTip),
+            ],
+        );
+    }
+
+    #[test]
+    fn unchanged_tip_on_scanned_wallet_leaves_verification_to_caller() {
+        let mut sync_state = with_shards(SyncState::new_for_test(vec![range(
+            100,
+            301,
+            ScanPriority::Scanned,
+        )]));
+
+        let reorg_detection_start_height =
+            sync_state.update_scan_ranges(&NO_NU6_3_NETWORK, h(TIP), h(TIP));
+
+        assert_eq!(reorg_detection_start_height, h(TIP + 1));
+        assert_plan(
+            &sync_state,
+            BIRTHDAY,
+            TIP,
+            &[range(100, 301, ScanPriority::Scanned)],
+        );
+
+        // the caller found a different block hash at the tip
+        let verify = sync_state.set_verify_scan_range(h(TIP), VerifyEnd::VerifyHighest);
+        assert_eq!(verify, range(291, 301, ScanPriority::Verify));
+        assert_plan(
+            &sync_state,
+            BIRTHDAY,
+            TIP,
+            &[
+                range(100, 291, ScanPriority::Scanned),
+                range(291, 301, ScanPriority::Verify),
+            ],
+        );
+    }
+
+    #[test]
+    fn interrupted_session_is_reset_on_next_session() {
+        let mut sync_state = with_shards(SyncState::new_for_test(vec![
+            range(100, 150, ScanPriority::Scanned),
+            range(150, 200, ScanPriority::RefetchingNullifiers),
+            range(200, 250, ScanPriority::Scanning),
+            range(250, 301, ScanPriority::Historic),
+        ]));
+
+        let reorg_detection_start_height =
+            sync_state.update_scan_ranges(&NO_NU6_3_NETWORK, h(TIP), h(TIP));
+
+        assert_eq!(reorg_detection_start_height, h(200));
+        assert_plan(
+            &sync_state,
+            BIRTHDAY,
+            TIP,
+            &[
+                range(100, 150, ScanPriority::Scanned),
+                range(150, 200, ScanPriority::ScannedWithoutMapping),
+                range(200, 210, ScanPriority::Verify),
+                range(210, 249, ScanPriority::FoundNote),
+                range(249, 301, ScanPriority::ChainTip),
+            ],
+        );
+    }
+
+    #[test]
+    fn scan_targets_are_prioritised_on_next_session() {
+        let mut sync_state = with_shards(SyncState::new_for_test(vec![range(
+            100,
+            301,
+            ScanPriority::Historic,
+        )]));
+        let target = ScanTarget {
+            block_height: h(170),
+            txid: TxId::from_bytes([2; 32]),
+            narrow_scan_area: false,
+        };
+        sync_state.add_scan_targets([target]);
+
+        sync_state.update_scan_ranges(&NO_NU6_3_NETWORK, h(TIP), h(TIP));
+
+        assert_plan(
+            &sync_state,
+            BIRTHDAY,
+            TIP,
+            &[
+                range(100, 110, ScanPriority::Verify),
+                range(110, 149, ScanPriority::Historic),
+                range(149, 200, ScanPriority::FoundNote),
+                range(200, 249, ScanPriority::Historic),
+                range(249, 301, ScanPriority::ChainTip),
+            ],
+        );
+        assert_eq!(
+            sync_state.find_scan_targets(&(h(149)..h(200))),
+            BTreeSet::from([target])
+        );
+        assert!(sync_state.find_scan_targets(&(h(171)..h(200))).is_empty());
+
+        sync_state.remove_scanned_scan_targets(h(170));
+        assert!(sync_state.scan_targets().is_empty());
+    }
+
+    #[test]
+    fn reorg_extends_verification_below_failed_range() {
+        let mut sync_state = SyncState::new_for_test(vec![
+            range(100, 250, ScanPriority::Scanned),
+            range(250, 260, ScanPriority::Scanning),
+            range(260, 301, ScanPriority::Historic),
+        ]);
+
+        // the verify range starting at 250 failed its continuity check
+        sync_state.set_scan_priority(&(h(250)..h(260)), ScanPriority::Verify);
+        let verify = sync_state.set_verify_scan_range(h(249), VerifyEnd::VerifyHighest);
+        sync_state.merge_scan_ranges(ScanPriority::Verify);
+
+        assert_eq!(verify, range(240, 250, ScanPriority::Verify));
+        assert_plan(
+            &sync_state,
+            BIRTHDAY,
+            TIP,
+            &[
+                range(100, 240, ScanPriority::Scanned),
+                range(240, 260, ScanPriority::Verify),
+                range(260, 301, ScanPriority::Historic),
+            ],
+        );
     }
 
     #[test]
@@ -1134,13 +1572,105 @@ mod tests {
 
         sync_state.truncate_scan_ranges(h(250));
 
-        assert_eq!(
-            sync_state.scan_ranges(),
-            [
+        assert_plan(
+            &sync_state,
+            1,
+            250,
+            &[
                 range(1, 100, ScanPriority::Historic),
                 range(100, 200, ScanPriority::Historic),
                 range(200, 251, ScanPriority::Historic),
-            ]
+            ],
+        );
+    }
+
+    #[test]
+    fn truncate_on_range_boundary_keeps_lower_range_whole() {
+        let mut sync_state = SyncState::new_for_test(vec![
+            range(100, 250, ScanPriority::Scanned),
+            range(250, 301, ScanPriority::ChainTip),
+        ]);
+
+        sync_state.truncate_scan_ranges(h(249));
+
+        assert_plan(
+            &sync_state,
+            BIRTHDAY,
+            249,
+            &[range(100, 250, ScanPriority::Scanned)],
+        );
+    }
+
+    #[test]
+    fn truncate_to_genesis_clears_everything() {
+        let mut sync_state = first_session();
+        sync_state.add_scan_targets([ScanTarget {
+            block_height: h(170),
+            txid: TxId::from_bytes([2; 32]),
+            narrow_scan_area: false,
+        }]);
+
+        sync_state.truncate_scan_ranges(consensus::H0);
+
+        assert!(sync_state.scan_ranges().is_empty());
+        assert!(sync_state.sapling_shard_ranges().is_empty());
+        assert!(sync_state.orchard_shard_ranges().is_empty());
+        assert!(sync_state.scan_targets().is_empty());
+    }
+
+    #[test]
+    fn check_invariants_names_offending_ranges() {
+        let mut sync_state = SyncState::new_for_test(vec![range(100, 301, ScanPriority::Historic)]);
+        assert_eq!(sync_state.check_invariants(), Ok(()));
+
+        sync_state.scan_ranges = vec![
+            range(100, 150, ScanPriority::Historic),
+            range(160, 301, ScanPriority::Historic),
+        ];
+        assert_eq!(
+            sync_state.check_invariants(),
+            Err(
+                "scan ranges Historic(100..150) and Historic(160..301) overlap or leave a gap"
+                    .to_string()
+            )
+        );
+
+        sync_state.scan_ranges = vec![
+            range(100, 150, ScanPriority::Historic),
+            range(140, 301, ScanPriority::Historic),
+        ];
+        assert!(sync_state.check_invariants().is_err());
+
+        sync_state.scan_ranges = vec![
+            range(100, 150, ScanPriority::Historic),
+            range(150, 150, ScanPriority::Historic),
+            range(150, 301, ScanPriority::Historic),
+        ];
+        assert_eq!(
+            sync_state.check_invariants(),
+            Err("empty scan range Historic(150..150)".to_string())
+        );
+    }
+
+    #[test]
+    #[should_panic(expected = "scan ranges are invalid before selecting a range to scan")]
+    fn select_rejects_invalid_scan_ranges() {
+        let mut sync_state = SyncState::new();
+        sync_state.scan_ranges = vec![
+            range(100, 150, ScanPriority::Historic),
+            range(160, 301, ScanPriority::Historic),
+        ];
+
+        select(&mut sync_state);
+    }
+
+    #[test]
+    #[should_panic(expected = "cannot split 200..210 out of scan range Historic(100..150)")]
+    fn split_out_scan_range_rejects_disjoint_block_range() {
+        split_out_scan_range(
+            &range(100, 150, ScanPriority::Historic),
+            h(200)..h(210),
+            ScanPriority::FoundNote,
         );
     }
 
@@ -1207,5 +1737,168 @@ mod tests {
             "ChainTip priority flooded down to {chain_tip_start} (wallet birthday is 1_000); \
              expected the chain-tip region confined to the tip shards (start >= 17_999)"
         );
+    }
+
+    #[derive(Debug, Clone)]
+    enum Op {
+        Punch {
+            offset: u32,
+            len: u32,
+            priority: ScanPriority,
+        },
+        FoundNote {
+            offset: u32,
+            narrow: bool,
+        },
+        Select {
+            nullifier_map_limit_exceeded: bool,
+        },
+        FinishScan {
+            index: usize,
+            nullifiers_mapped: bool,
+        },
+        /// A new session: resets interrupted ranges and moves the tip up by `blocks_mined`.
+        NewSession {
+            blocks_mined: u32,
+        },
+        Reorg {
+            depth: u32,
+        },
+    }
+
+    fn op() -> impl Strategy<Value = Op> {
+        let punch_priority = prop::sample::select(vec![
+            ScanPriority::Historic,
+            ScanPriority::OpenAdjacent,
+            ScanPriority::FoundNote,
+            ScanPriority::ChainTip,
+            ScanPriority::Verify,
+        ]);
+        prop_oneof![
+            1 => (0..400u32, 1..80u32, punch_priority).prop_map(|(offset, len, priority)| {
+                Op::Punch {
+                    offset,
+                    len,
+                    priority,
+                }
+            }),
+            1 => (0..400u32, any::<bool>()).prop_map(|(offset, narrow)| Op::FoundNote { offset, narrow }),
+            3 => any::<bool>().prop_map(|nullifier_map_limit_exceeded| Op::Select {
+                nullifier_map_limit_exceeded
+            }),
+            3 => (any::<usize>(), any::<bool>()).prop_map(|(index, nullifiers_mapped)| {
+                Op::FinishScan {
+                    index,
+                    nullifiers_mapped,
+                }
+            }),
+            1 => (0..30u32).prop_map(|blocks_mined| Op::NewSession { blocks_mined }),
+            1 => (1..=100u32).prop_map(|depth| Op::Reorg { depth }),
+        ]
+    }
+
+    fn assert_protected_or_at_least(
+        sync_state: &SyncState,
+        block_range: &Range<BlockHeight>,
+        priority: ScanPriority,
+    ) {
+        for scan_range in sync_state.scan_ranges() {
+            let overlaps = scan_range.block_range().start < block_range.end
+                && block_range.start < scan_range.block_range().end;
+            if overlaps {
+                assert!(
+                    scan_range.priority() >= priority
+                        || matches!(
+                            scan_range.priority(),
+                            ScanPriority::Scanned
+                                | ScanPriority::ScannedWithoutMapping
+                                | ScanPriority::Scanning
+                                | ScanPriority::RefetchingNullifiers
+                        ),
+                    "{scan_range} overlaps punched range {block_range:?} but is below {priority:?}"
+                );
+            }
+        }
+    }
+
+    proptest! {
+        #[test]
+        fn scan_ranges_stay_valid_under_any_sequence_of_operations(ops in prop::collection::vec(op(), 1..80)) {
+            let mut sync_state = first_session();
+            let mut tip = TIP;
+            let mut in_flight: Vec<ScanRange> = Vec::new();
+
+            for op in ops {
+                match op {
+                    Op::Punch { offset, len, priority } => {
+                        let start = h(BIRTHDAY + offset % (tip - BIRTHDAY + 1));
+                        let block_range = start..start + len;
+                        sync_state.punch_scan_priority(block_range.clone(), priority);
+                        assert_protected_or_at_least(&sync_state, &block_range, priority);
+                    }
+                    Op::FoundNote { offset, narrow } => {
+                        let height = h(BIRTHDAY + offset % (tip - BIRTHDAY + 1));
+                        let pool = (!narrow).then_some(ShieldedPool::Orchard);
+                        let block_range = sync_state.determine_block_range(&NO_NU6_3_NETWORK, height, pool);
+                        sync_state.set_found_note_scan_range(&NO_NU6_3_NETWORK, pool, height);
+                        assert_protected_or_at_least(&sync_state, &block_range, ScanPriority::FoundNote);
+                    }
+                    Op::Select { nullifier_map_limit_exceeded } => {
+                        if let Some(selected) = sync_state.select_scan_range(&NO_NU6_3_NETWORK, nullifier_map_limit_exceeded) {
+                            let index = sync_state
+                                .index_containing(selected.block_range())
+                                .expect("selected range is in the plan");
+                            let expected = if selected.priority() == ScanPriority::ScannedWithoutMapping {
+                                ScanPriority::RefetchingNullifiers
+                            } else {
+                                ScanPriority::Scanning
+                            };
+                            prop_assert_eq!(sync_state.scan_ranges()[index].priority(), expected);
+                            in_flight.push(selected);
+                        }
+                    }
+                    Op::FinishScan { index, nullifiers_mapped } => {
+                        if !in_flight.is_empty() {
+                            let finished = in_flight.swap_remove(index % in_flight.len());
+                            if finished.priority() == ScanPriority::ScannedWithoutMapping {
+                                sync_state.set_scanned_scan_range(finished.block_range().clone(), true);
+                            } else {
+                                sync_state.set_scanned_scan_range(finished.block_range().clone(), nullifiers_mapped);
+                                sync_state.merge_scan_ranges(ScanPriority::ScannedWithoutMapping);
+                            }
+                            sync_state.merge_scan_ranges(ScanPriority::Scanned);
+                            let index = sync_state
+                                .index_containing(finished.block_range())
+                                .expect("finished range is in the plan");
+                            prop_assert!(matches!(
+                                sync_state.scan_ranges()[index].priority(),
+                                ScanPriority::Scanned | ScanPriority::ScannedWithoutMapping
+                            ));
+                        }
+                    }
+                    Op::NewSession { blocks_mined } => {
+                        in_flight.clear();
+                        sync_state.update_scan_ranges(&NO_NU6_3_NETWORK, h(tip), h(tip + blocks_mined));
+                        tip += blocks_mined;
+                        prop_assert!(sync_state.scan_ranges().iter().all(|scan_range| !matches!(
+                            scan_range.priority(),
+                            ScanPriority::Scanning | ScanPriority::RefetchingNullifiers
+                        )));
+                    }
+                    Op::Reorg { depth } => {
+                        // truncating below the birthday is handled by clearing the wallet instead
+                        if tip - depth >= BIRTHDAY {
+                            in_flight.clear();
+                            tip -= depth;
+                            sync_state.truncate_scan_ranges(h(tip));
+                        }
+                    }
+                }
+
+                prop_assert_eq!(sync_state.check_invariants(), Ok(()));
+                prop_assert_eq!(sync_state.wallet_birthday(), Some(h(BIRTHDAY)));
+                prop_assert_eq!(sync_state.last_known_chain_height(), Some(h(tip)));
+            }
+        }
     }
 }
