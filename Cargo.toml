@@ -5,12 +5,13 @@ members = [
     "zingolib-price",
     "zingolib-status",
     "zingolib",
+    "zingolib-tui",
 ]
 resolver = "2"
 
 [workspace.dependencies]
 ### Workspace
-pepper-sync = { path = "pepper-sync" } # NOTE: for development between releases
+pepper-sync = { path = "pepper-sync" }         # NOTE: for development between releases
 zingolib-memo = { path = "zingolib-memo" }
 zingolib-price = { path = "zingolib-price" }
 zingolib-status = { path = "zingolib-status" }
@@ -38,7 +39,9 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 # proto files (see [patch.crates-io]), which carry the Ironwood fields the
 # checked-in generated code lacks. Requires `protoc`.
 lightwallet-protocol = { version = "0.3.0", features = ["rebuild-proto"] }
-zingo-netutils = { version = "5.0.1", features = ["globally-public-transparent"] }
+zingo-netutils = { version = "5.0.1", features = [
+    "globally-public-transparent",
+] }
 zingo_common_components = "0.4.0"
 tokio-stream = { version = "0.1", features = ["net"] }
 
@@ -124,6 +127,11 @@ clap = "4"
 dirs = "6"
 memuse = "0.2"
 rand = "0.8"
+
+### Terminal UI
+ratatui = "0.30"
+crossterm = "0.29"
+qrcode = { version = "0.14", default-features = false }
 
 ### Misc / not-yet-grouped
 rust-embed = "8"
