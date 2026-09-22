@@ -945,4 +945,4 @@ fn wallet_event_row(event: &WalletEvent) -> WalletEventRow {
 }
 
 #[cfg(test)]
-mod darkside;
+mod mock_net;

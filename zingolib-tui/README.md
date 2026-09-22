@@ -40,10 +40,5 @@ Logs go to `zingolib-tui.log` in the data directory. `RUST_LOG` sets the level.
 cargo test -p zingolib-tui
 ```
 
-The unit tests need no wallet and no terminal. One ignored test drives the backend against
-darksidewalletd, a fake lightwalletd. It needs a darkside-capable `lightwalletd` binary in
-`test_binaries/bins`:
-
-```text
-cargo test -p zingolib-tui -- --ignored darkside
-```
+The tests need no wallet, no terminal and no network. One of them drives the backend against
+zingolib's in-process mock indexer.

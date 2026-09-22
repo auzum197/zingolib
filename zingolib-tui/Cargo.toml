@@ -30,7 +30,7 @@ tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
 
 [dev-dependencies]
-darkside-tests = { path = "../darkside-tests" }
-zingolib_testutils = { path = "../zingolib_testutils" }
+zingolib = { workspace = true, features = ["testutils"] }
+zingo_test_vectors = { workspace = true }
 zcash_keys = { workspace = true }
 tempfile = { workspace = true }

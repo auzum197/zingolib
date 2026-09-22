@@ -55,7 +55,7 @@ Use `makers container-test` or `cargo make container-test` to run the same defau
 makers container-test
 ```
 
-The task builds the image if needed, symlinks the image-provided `lightwalletd`, `zcashd`, `zcash-cli`, and `zainod` into `test_binaries/bins`, then runs the workspace with the `ci` nextest profile, two retries, and the default filter `not test(slow)`. The image tag is derived from `.env.testing-artifacts`, `rust-toolchain.toml`, and `docker-ci`.
+The task builds the image if needed, then runs the workspace with the `ci` nextest profile, two retries, and the default filter `not test(slow)`. The image tag is derived from `.env.testing-artifacts`, `rust-toolchain.toml`, and `docker-ci`.
 
 Extra nextest flags can be forwarded after the task name, and the default filter can be changed with `ZINGOLIB_NEXTEST_FILTER`.
 
@@ -107,6 +107,6 @@ Here are some CLI arguments you can pass to `zingo-cli`. Please run `zingo-cli -
 Please see `zingo-cli/README.md` for details of running zingo-cli in regtest mode with a local network.
 
 ## Testing
-Darkside tests must be run seprately to the tests in the rest of the workspace to avoid zingolib being built with the "darkside_tests" feature in non-darkside testing.
+The tests run against an in-process mock indexer (`zingolib::testutils::mock_indexer`), so they need no zcashd, zebrad, lightwalletd or zainod.
 
 `run_workspace_tests.sh` script may be used as a helper to run all tests in one invocation.
