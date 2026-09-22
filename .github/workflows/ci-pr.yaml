@@ -48,6 +48,13 @@ jobs:
         uses: zingolabs/infrastructure/.github/actions/cargo-hack@20485fed7a080e381130ed8120419dc81acae641
         with:
           hack-subcommand: check
+          hack-flags: --workspace --exclude zingolib-tui --feature-powerset --lib --bins --tests --target-dir target/hack
+
+      - name: Run cargo-hack (zingolib-tui)
+        uses: zingolabs/infrastructure/.github/actions/cargo-hack@20485fed7a080e381130ed8120419dc81acae641
+        with:
+          hack-subcommand: check
+          hack-flags: --package zingolib-tui --feature-powerset --bins --tests --target-dir target/hack
 
   run-doc-tests:
     name: Run doc tests
