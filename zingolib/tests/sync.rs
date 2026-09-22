@@ -322,63 +322,37 @@ async fn sync_test() {
     // dbg!(wallet.wallet_blocks.len());
 }
 
-/// Mines the chain the verification-window test scans: 27 rounds of
-/// orchard and sapling sends from the faucet to `recipient`.
-async fn build_checkpoint_chain(
-    local_net: &zingolib::testutils::mock_indexer::MockNet,
-    faucet: &mut LightClient,
-    recipient: &LightClient,
-) {
-    let recipient_orchard_addr = get_base_address_macro!(recipient, "unified");
-    let recipient_sapling_addr = get_base_address_macro!(recipient, "sapling");
-
-    for _ in 0..27 {
-        quick_send(faucet, vec![(&recipient_orchard_addr, 10_000, None)])
-            .await
-            .unwrap();
-        increase_height_and_wait_for_client(local_net, faucet, 1)
-            .await
-            .unwrap();
-
-        quick_send(faucet, vec![(&recipient_sapling_addr, 10_000, None)])
-            .await
-            .unwrap();
-        increase_height_and_wait_for_client(local_net, faucet, 1)
-            .await
-            .unwrap();
-
-        quick_send(faucet, vec![(&recipient_orchard_addr, 10_000, None)])
-            .await
-            .unwrap();
-        quick_send(faucet, vec![(&recipient_sapling_addr, 10_000, None)])
-            .await
-            .unwrap();
-        increase_height_and_wait_for_client(local_net, faucet, 2)
-            .await
-            .unwrap();
-    }
-}
-
-#[ignore = "only built a zcashd chain cache for store_all_checkpoints_in_verification_window, \
-            which now mines its chain on the mock and needs no cache"]
 #[tokio::test]
-async fn store_all_checkpoints_in_verification_window_chain_cache() {
-    let (local_net, mut faucet, recipient) = scenarios::faucet_recipient_default().await;
-    build_checkpoint_chain(&local_net, &mut faucet, &recipient).await;
-}
+async fn mock_chain_keeps_checkpoints_between_pool_updates() {
+    let (local_net, mut faucet, mut recipient) = scenarios::faucet_recipient_default().await;
+    increase_height_and_wait_for_client(&local_net, &mut faucet, 1)
+        .await
+        .unwrap();
 
-#[tokio::test]
-async fn store_all_checkpoints_in_verification_window() {
-    let (local_net, mut faucet, mut lightclient) = scenarios::faucet_recipient_default().await;
-    build_checkpoint_chain(&local_net, &mut faucet, &lightclient).await;
-    lightclient.sync_and_await().await.unwrap();
+    let orchard_address = get_base_address_macro!(recipient, "unified");
+    quick_send(&mut faucet, vec![(&orchard_address, 10_000, None)])
+        .await
+        .unwrap();
+    increase_height_and_wait_for_client(&local_net, &mut faucet, 1)
+        .await
+        .unwrap();
+    recipient.sync_and_await().await.unwrap();
+    let orchard_height = local_net.chain_height().await;
 
-    for height in 12..112 {
+    let sapling_address = get_base_address_macro!(recipient, "sapling");
+    quick_send(&mut faucet, vec![(&sapling_address, 10_000, None)])
+        .await
+        .unwrap();
+    increase_height_and_wait_for_client(&local_net, &mut faucet, 1)
+        .await
+        .unwrap();
+    recipient.sync_and_await().await.unwrap();
+    let sapling_height = local_net.chain_height().await;
+
+    let wallet = recipient.wallet().read().await;
+    for height in [orchard_height, sapling_height] {
         assert!(
-            lightclient
-                .wallet()
-                .read()
-                .await
+            wallet
                 .shard_trees
                 .sapling
                 .store()
@@ -388,10 +362,7 @@ async fn store_all_checkpoints_in_verification_window() {
             "missing sapling checkpoint at height {height}"
         );
         assert!(
-            lightclient
-                .wallet()
-                .read()
-                .await
+            wallet
                 .shard_trees
                 .orchard
                 .store()

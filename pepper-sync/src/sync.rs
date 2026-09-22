@@ -2052,6 +2052,8 @@ mod test {
         use std::collections::{BTreeMap, HashMap};
         use std::time::Duration;
 
+        use incrementalmerkletree::Position;
+        use shardtree::store::ShardStore;
         use tokio::sync::mpsc;
         use zcash_primitives::block::BlockHash;
         use zcash_primitives::transaction::{TransactionData, TxId, TxVersion};
@@ -2059,12 +2061,15 @@ mod test {
         use zcash_protocol::local_consensus::LocalNetwork;
         use zingolib_status::confirmation_status::ConfirmationStatus;
 
+        use crate::bench_support::{synthetic_orchard_leaves, synthetic_sapling_leaves};
         use crate::config::PerformanceLevel;
         use crate::events::SyncEvent;
         use crate::mocks::MockWalletBuilder;
         use crate::scan::ScanResults;
-        use crate::sync::{ScanPriority, ScanRange, process_scan_results};
+        use crate::sync::{MAX_REORG_ALLOWANCE, ScanPriority, ScanRange, process_scan_results};
+        use crate::wallet::traits::SyncShardTrees;
         use crate::wallet::{NullifierMap, SyncState, TreeBounds, WalletBlock, WalletTransaction};
+        use crate::witness::build_located_trees;
 
         const LOCAL_NETWORK: LocalNetwork = LocalNetwork {
             overwinter: Some(BlockHeight::from_u32(1)),
@@ -2131,6 +2136,113 @@ mod test {
                 outgoing_sapling_notes: Vec::new(),
                 outgoing_orchard_notes: Vec::new(),
                 outgoing_ironwood_notes: Vec::new(),
+            }
+        }
+
+        fn checkpoint_wallet_block(height: u32) -> (BlockHeight, WalletBlock) {
+            let block_height = BlockHeight::from_u32(height);
+            let initial_tree_size = height - 1;
+            (
+                block_height,
+                WalletBlock {
+                    block_height,
+                    block_hash: BlockHash([height as u8; 32]),
+                    prev_hash: BlockHash([initial_tree_size as u8; 32]),
+                    time: 0,
+                    txids: Vec::new(),
+                    tree_bounds: TreeBounds {
+                        sapling_initial_tree_size: initial_tree_size,
+                        sapling_final_tree_size: height,
+                        orchard_initial_tree_size: initial_tree_size,
+                        orchard_final_tree_size: height,
+                        ironwood_initial_tree_size: initial_tree_size,
+                        ironwood_final_tree_size: height,
+                    },
+                },
+            )
+        }
+
+        #[tokio::test]
+        async fn checkpoint_window_covers_the_reorg_allowance() {
+            let range_end = MAX_REORG_ALLOWANCE + 2;
+            let scan_range = ScanRange::from_parts(
+                BlockHeight::from_u32(1)..BlockHeight::from_u32(range_end),
+                ScanPriority::Scanning,
+            );
+            let sync_state = SyncState {
+                scan_ranges: vec![scan_range.clone()],
+                ..Default::default()
+            };
+            let mut wallet = MockWalletBuilder::new()
+                .sync_state(sync_state)
+                .create_mock_wallet();
+
+            let scanned_blocks = (1..range_end).map(checkpoint_wallet_block).collect();
+            let sapling_located_trees = build_located_trees(
+                Position::from(0),
+                synthetic_sapling_leaves(range_end - 1, range_end - 1, &[]),
+                4096,
+            );
+            let orchard_located_trees = build_located_trees(
+                Position::from(0),
+                synthetic_orchard_leaves(range_end - 1, range_end - 1, &[]),
+                4096,
+            );
+            let ironwood_located_trees = build_located_trees(
+                Position::from(0),
+                synthetic_orchard_leaves(range_end - 1, range_end - 1, &[]),
+                4096,
+            );
+            let scan_results = ScanResults {
+                nullifiers: NullifierMap::new(),
+                outpoints: BTreeMap::new(),
+                scanned_blocks,
+                wallet_transactions: HashMap::new(),
+                sapling_located_trees,
+                orchard_located_trees,
+                ironwood_located_trees,
+                fetch_duration: Duration::ZERO,
+                decryption_duration: Duration::ZERO,
+                tree_duration: Duration::ZERO,
+            };
+
+            let (fetch_request_sender, _fetch_request_receiver) = mpsc::unbounded_channel();
+            let mut nullifier_map_limit_exceeded = false;
+            process_scan_results(
+                &LOCAL_NETWORK,
+                &mut wallet,
+                fetch_request_sender,
+                &HashMap::new(),
+                scan_range,
+                Ok(scan_results),
+                BlockHeight::from_u32(1),
+                PerformanceLevel::High,
+                &mut nullifier_map_limit_exceeded,
+            )
+            .await
+            .unwrap();
+
+            let shard_trees = wallet.get_shard_trees_mut().unwrap();
+            for height in range_end - MAX_REORG_ALLOWANCE..range_end {
+                let height = BlockHeight::from_u32(height);
+                assert!(
+                    shard_trees
+                        .sapling
+                        .store()
+                        .get_checkpoint(&height)
+                        .unwrap()
+                        .is_some(),
+                    "missing sapling checkpoint at {height}"
+                );
+                assert!(
+                    shard_trees
+                        .orchard
+                        .store()
+                        .get_checkpoint(&height)
+                        .unwrap()
+                        .is_some(),
+                    "missing orchard checkpoint at {height}"
+                );
             }
         }
 
