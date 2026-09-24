@@ -4,7 +4,7 @@
 //! sync engine.
 
 use std::{
-    collections::{BTreeMap, BTreeSet},
+    collections::BTreeMap,
     convert::Infallible,
     fmt::Debug,
     marker::PhantomData,
@@ -39,7 +39,7 @@ use crate::{
     error::{ServerError, SyncModeError},
     keys::{self, KeyId, transparent::TransparentAddressId},
     scan::compact_blocks::calculate_block_tree_bounds,
-    sync::{MAX_REORG_ALLOWANCE, ScanPriority, ScanRange},
+    sync::MAX_REORG_ALLOWANCE,
     utils::{
         get_compact_block_hash, get_compact_block_height, get_compact_block_prev_hash,
         get_compact_tx_txid,
@@ -48,6 +48,8 @@ use crate::{
 };
 
 pub mod traits;
+
+pub use crate::sync::scheduler::SyncState;
 
 #[cfg(feature = "wallet_essentials")]
 pub mod serialization;
@@ -133,140 +135,6 @@ impl InitialSyncState {
 }
 
 impl Default for InitialSyncState {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-/// Encapsulates the current state of sync
-#[derive(Debug, Clone)]
-pub struct SyncState {
-    /// A vec of block ranges with scan priorities from wallet birthday to chain tip.
-    /// In block height order with no overlaps or gaps.
-    pub(crate) scan_ranges: Vec<ScanRange>,
-    /// The block ranges that contain all sapling outputs of complete sapling shards.
-    ///
-    /// There is an edge case where a range may include two (or more) shards. However, this only occurs when the lower
-    /// shards are already scanned so will cause no issues when punching in the higher scan priorites.
-    pub(crate) sapling_shard_ranges: Vec<Range<BlockHeight>>,
-    /// The block ranges that contain all orchard outputs of complete orchard shards.
-    ///
-    /// There is an edge case where a range may include two (or more) shards. However, this only occurs when the lower
-    /// shards are already scanned so will cause no issues when punching in the higher scan priorites.
-    pub(crate) orchard_shard_ranges: Vec<Range<BlockHeight>>,
-    /// The block ranges that contain all ironwood outputs of complete ironwood shards.
-    ///
-    /// There is an edge case where a range may include two (or more) shards. However, this only occurs when the lower
-    /// shards are already scanned so will cause no issues when punching in the higher scan priorites.
-    pub(crate) ironwood_shard_ranges: Vec<Range<BlockHeight>>,
-    /// Scan targets for relevant transactions to the wallet.
-    pub(crate) scan_targets: BTreeSet<ScanTarget>,
-    /// Initial sync state.
-    pub(crate) initial_sync_state: InitialSyncState,
-}
-
-impl SyncState {
-    /// Create new `SyncState`
-    #[must_use]
-    pub fn new() -> Self {
-        SyncState {
-            scan_ranges: Vec::new(),
-            sapling_shard_ranges: Vec::new(),
-            orchard_shard_ranges: Vec::new(),
-            ironwood_shard_ranges: Vec::new(),
-            scan_targets: BTreeSet::new(),
-            initial_sync_state: InitialSyncState::new(),
-        }
-    }
-
-    /// Scan ranges
-    #[must_use]
-    pub fn scan_ranges(&self) -> &[ScanRange] {
-        &self.scan_ranges
-    }
-
-    /// Sapling shard ranges
-    #[must_use]
-    pub fn sapling_shard_ranges(&self) -> &[Range<BlockHeight>] {
-        &self.sapling_shard_ranges
-    }
-
-    /// Orchard shard ranges
-    #[must_use]
-    pub fn orchard_shard_ranges(&self) -> &[Range<BlockHeight>] {
-        &self.orchard_shard_ranges
-    }
-
-    /// Ironwood shard ranges
-    #[must_use]
-    pub fn ironwood_shard_ranges(&self) -> &[Range<BlockHeight>] {
-        &self.ironwood_shard_ranges
-    }
-
-    /// Returns true if all scan ranges are scanned.
-    pub(crate) fn scan_complete(&self) -> bool {
-        self.scan_ranges
-            .iter()
-            .all(|scan_range| scan_range.priority() == ScanPriority::Scanned)
-    }
-
-    /// Returns the block height at which all blocks equal to and below this height are scanned.
-    /// Returns `None` if `self.scan_ranges` is empty.
-    #[must_use]
-    pub fn fully_scanned_height(&self) -> Option<BlockHeight> {
-        if let Some(scan_range) = self
-            .scan_ranges
-            .iter()
-            .find(|scan_range| scan_range.priority() != ScanPriority::Scanned)
-        {
-            Some(scan_range.block_range().start - 1)
-        } else {
-            self.scan_ranges
-                .last()
-                .map(|range| range.block_range().end - 1)
-        }
-    }
-
-    /// Returns the highest block height that has been scanned.
-    /// If no scan ranges have been scanned, returns the block below the wallet birthday.
-    /// Returns `None` if `self.scan_ranges` is empty.
-    #[must_use]
-    pub fn highest_scanned_height(&self) -> Option<BlockHeight> {
-        if let Some(last_scanned_range) = self
-            .scan_ranges
-            .iter()
-            .filter(|scan_range| {
-                scan_range.priority() == ScanPriority::Scanned
-                    || scan_range.priority() == ScanPriority::ScannedWithoutMapping
-                    || scan_range.priority() == ScanPriority::RefetchingNullifiers
-            })
-            .next_back()
-        {
-            Some(last_scanned_range.block_range().end - 1)
-        } else {
-            self.wallet_birthday().map(|start| start - 1)
-        }
-    }
-
-    /// Returns the wallet birthday or `None` if `self.scan_ranges` is empty.
-    ///
-    #[must_use]
-    pub fn wallet_birthday(&self) -> Option<BlockHeight> {
-        self.scan_ranges
-            .first()
-            .map(|range| range.block_range().start)
-    }
-
-    /// Returns the last known chain height to the wallet or `None` if `self.scan_ranges` is empty.
-    #[must_use]
-    pub fn last_known_chain_height(&self) -> Option<BlockHeight> {
-        self.scan_ranges
-            .last()
-            .map(|range| range.block_range().end - 1)
-    }
-}
-
-impl Default for SyncState {
     fn default() -> Self {
         Self::new()
     }
@@ -765,17 +633,6 @@ impl WalletTransaction {
         transaction.ironwood_notes = ironwood_notes;
         transaction.outgoing_ironwood_notes = outgoing_ironwood_notes;
         transaction
-    }
-}
-
-#[cfg(feature = "test-features")]
-impl SyncState {
-    /// Creates sync state with the given scan ranges, for tests exercising
-    /// spendability/witness gating without a chain.
-    pub fn new_for_test(scan_ranges: Vec<ScanRange>) -> Self {
-        let mut sync_state = Self::new();
-        sync_state.scan_ranges = scan_ranges;
-        sync_state
     }
 }
 

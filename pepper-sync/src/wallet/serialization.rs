@@ -39,10 +39,10 @@ use crate::{
 };
 
 use super::{
-    InitialSyncState, IronwoodNote, KeyIdInterface, NullifierMap, OrchardNote,
-    OutgoingIronwoodNote, OutgoingNote, OutgoingNoteInterface, OutgoingOrchardNote,
-    OutgoingSaplingNote, OutputId, OutputInterface, SaplingNote, ShardTrees, SyncState,
-    TransparentCoin, TreeBounds, WalletBlock, WalletNote, WalletTransaction, decode_memo_relaxed,
+    IronwoodNote, KeyIdInterface, NullifierMap, OrchardNote, OutgoingIronwoodNote, OutgoingNote,
+    OutgoingNoteInterface, OutgoingOrchardNote, OutgoingSaplingNote, OutputId, OutputInterface,
+    SaplingNote, ShardTrees, SyncState, TransparentCoin, TreeBounds, WalletBlock, WalletNote,
+    WalletTransaction, decode_memo_relaxed,
 };
 
 fn read_string<R: Read>(mut reader: R) -> std::io::Result<String> {
@@ -185,14 +185,13 @@ impl SyncState {
         .into_iter()
         .collect::<BTreeSet<_>>();
 
-        Ok(Self {
+        Ok(Self::from_parts(
             scan_ranges,
             sapling_shard_ranges,
             orchard_shard_ranges,
             ironwood_shard_ranges,
             scan_targets,
-            initial_sync_state: InitialSyncState::new(),
-        })
+        ))
     }
 
     /// Serialize into `writer`
@@ -203,17 +202,9 @@ impl SyncState {
             w.write_u32::<LittleEndian>(scan_range.block_range().end.into())?;
             w.write_u8(scan_range.priority() as u8)
         })?;
-        Vector::write(&mut writer, &self.sapling_shard_ranges, |w, shard_range| {
-            w.write_u32::<LittleEndian>(shard_range.start.into())?;
-            w.write_u32::<LittleEndian>(shard_range.end.into())
-        })?;
-        Vector::write(&mut writer, &self.orchard_shard_ranges, |w, shard_range| {
-            w.write_u32::<LittleEndian>(shard_range.start.into())?;
-            w.write_u32::<LittleEndian>(shard_range.end.into())
-        })?;
         Vector::write(
             &mut writer,
-            &self.ironwood_shard_ranges,
+            self.sapling_shard_ranges(),
             |w, shard_range| {
                 w.write_u32::<LittleEndian>(shard_range.start.into())?;
                 w.write_u32::<LittleEndian>(shard_range.end.into())
@@ -221,7 +212,23 @@ impl SyncState {
         )?;
         Vector::write(
             &mut writer,
-            &self.scan_targets.iter().collect::<Vec<_>>(),
+            self.orchard_shard_ranges(),
+            |w, shard_range| {
+                w.write_u32::<LittleEndian>(shard_range.start.into())?;
+                w.write_u32::<LittleEndian>(shard_range.end.into())
+            },
+        )?;
+        Vector::write(
+            &mut writer,
+            self.ironwood_shard_ranges(),
+            |w, shard_range| {
+                w.write_u32::<LittleEndian>(shard_range.start.into())?;
+                w.write_u32::<LittleEndian>(shard_range.end.into())
+            },
+        )?;
+        Vector::write(
+            &mut writer,
+            &self.scan_targets().iter().collect::<Vec<_>>(),
             |w, &scan_target| scan_target.write(w),
         )
     }
@@ -1379,20 +1386,94 @@ mod tests {
 
     #[test]
     fn sync_state_v4_roundtrip_preserves_ironwood_ranges() {
-        let mut state = SyncState::new();
-        state.ironwood_shard_ranges = vec![
-            BlockHeight::from_u32(100)..BlockHeight::from_u32(200),
-            BlockHeight::from_u32(300)..BlockHeight::from_u32(400),
-        ];
-        state.scan_ranges.push(ScanRange::from_parts(
-            BlockHeight::from_u32(100)..BlockHeight::from_u32(400),
-            ScanPriority::Historic,
-        ));
+        let mut state = SyncState::from_parts(
+            vec![ScanRange::from_parts(
+                BlockHeight::from_u32(100)..BlockHeight::from_u32(400),
+                ScanPriority::Historic,
+            )],
+            Vec::new(),
+            Vec::new(),
+            vec![
+                BlockHeight::from_u32(100)..BlockHeight::from_u32(200),
+                BlockHeight::from_u32(300)..BlockHeight::from_u32(400),
+            ],
+            BTreeSet::new(),
+        );
         let mut bytes = Vec::new();
         state.write(&mut bytes).expect("write should succeed");
         let recovered = SyncState::read(bytes.as_slice()).expect("read should succeed");
-        assert_eq!(recovered.ironwood_shard_ranges, state.ironwood_shard_ranges);
-        assert_eq!(recovered.scan_ranges, state.scan_ranges);
+        assert_eq!(
+            recovered.ironwood_shard_ranges(),
+            state.ironwood_shard_ranges()
+        );
+        assert_eq!(recovered.scan_ranges(), state.scan_ranges());
+    }
+
+    /// Bytes written by `SyncState::write` before the scan scheduler was extracted, for a state with every scan
+    /// priority, shard ranges for each pool (sapling's overlapping at a shard boundary) and two scan targets.
+    const SYNC_STATE_V4_BYTES: &str = "0409640000006e000000026e0000007800000003780000008200000000820000008c000000018c000000960000000496000000a000000005a0000000aa00000006aa000000b400000007b4000000be0000000802640000009600000095000000aa0000000178000000a000000001aa000000b400000002007d00000007070707070707070707070707070707070707070707070707070707070707070000af000000090909090909090909090909090909090909090909090909090909090909090901";
+
+    #[test]
+    fn sync_state_bytes_are_unchanged_by_read_and_write() {
+        let bytes = hex::decode(SYNC_STATE_V4_BYTES).expect("valid hex");
+        let mut state = SyncState::read(bytes.as_slice()).expect("read should succeed");
+
+        let priorities = [
+            ScanPriority::Scanned,
+            ScanPriority::ScannedWithoutMapping,
+            ScanPriority::RefetchingNullifiers,
+            ScanPriority::Scanning,
+            ScanPriority::Historic,
+            ScanPriority::OpenAdjacent,
+            ScanPriority::FoundNote,
+            ScanPriority::ChainTip,
+            ScanPriority::Verify,
+        ];
+        let expected_scan_ranges = (100..)
+            .step_by(10)
+            .zip(priorities)
+            .map(|(start, priority)| {
+                ScanRange::from_parts(
+                    BlockHeight::from_u32(start)..BlockHeight::from_u32(start + 10),
+                    priority,
+                )
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(state.scan_ranges(), expected_scan_ranges);
+        assert_eq!(
+            state.sapling_shard_ranges(),
+            [
+                BlockHeight::from_u32(100)..BlockHeight::from_u32(150),
+                BlockHeight::from_u32(149)..BlockHeight::from_u32(170),
+            ]
+        );
+        assert_eq!(
+            state.orchard_shard_ranges(),
+            [BlockHeight::from_u32(120)..BlockHeight::from_u32(160)]
+        );
+        assert_eq!(
+            state.ironwood_shard_ranges(),
+            [BlockHeight::from_u32(170)..BlockHeight::from_u32(180)]
+        );
+        assert_eq!(
+            state.scan_targets().iter().copied().collect::<Vec<_>>(),
+            [
+                ScanTarget {
+                    block_height: BlockHeight::from_u32(125),
+                    txid: TxId::from_bytes([7; 32]),
+                    narrow_scan_area: false,
+                },
+                ScanTarget {
+                    block_height: BlockHeight::from_u32(175),
+                    txid: TxId::from_bytes([9; 32]),
+                    narrow_scan_area: true,
+                },
+            ]
+        );
+
+        let mut written = Vec::new();
+        state.write(&mut written).expect("write should succeed");
+        assert_eq!(hex::encode(written), SYNC_STATE_V4_BYTES);
     }
 
     // Helper: build a minimal v1 NullifierMap byte blob (no ironwood BTreeMap).

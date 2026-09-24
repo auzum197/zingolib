@@ -2723,6 +2723,7 @@ dependencies = [
  "lightwallet-protocol",
  "memuse",
  "orchard",
+ "proptest",
  "rayon",
  "sapling-crypto",
  "shardtree",

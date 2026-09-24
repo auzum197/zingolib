@@ -32,7 +32,6 @@ use crate::keys::transparent::TransparentAddressId;
 use crate::scan::ScanResults;
 use crate::scan::task::{Scanner, ScannerState};
 use crate::scan::transactions::scan_transaction;
-use crate::sync::state::truncate_scan_ranges;
 use crate::wallet::traits::{
     ShardTreeTiming, SyncBlocks, SyncNullifiers, SyncOutPoints, SyncShardTrees, SyncTransactions,
     SyncWallet,
@@ -45,10 +44,13 @@ use crate::witness::LocatedTreeData;
 
 #[cfg(not(feature = "darkside_test"))]
 use crate::witness;
+#[cfg(not(feature = "darkside_test"))]
+use zingo_netutils::lightwallet_protocol::SubtreeRoot;
 
 #[cfg(not(feature = "darkside_test"))]
 pub(crate) mod transparent;
 
+pub(crate) mod scheduler;
 pub(crate) mod spend;
 pub(crate) mod state;
 
@@ -395,7 +397,7 @@ where
         .wallet_birthday()
         .expect("scan ranges must be non-empty after initialisation");
     let initial_scan_plan = sync_state.scan_ranges().to_vec();
-    let initial_sync_state = &sync_state.initial_sync_state;
+    let initial_sync_state = sync_state.initial_sync_state();
     let wallet_tree_bounds = &initial_sync_state.wallet_tree_bounds;
     events.emit(SyncEvent::SessionStarted {
         sync_start_height: initial_sync_state.sync_start_height,
@@ -507,7 +509,7 @@ where
                         let initial_sync_state = wallet_guard
                             .get_sync_state()
                             .map_err(SyncError::WalletError)?
-                            .initial_sync_state
+                            .initial_sync_state()
                             .clone();
                         wallet_guard
                             .set_save_flag()
@@ -557,7 +559,7 @@ where
     let initial_sync_state = wallet_guard
         .get_sync_state()
         .map_err(SyncError::WalletError)?
-        .initial_sync_state
+        .initial_sync_state()
         .clone();
     // once sync is complete, all nullifiers will have been re-fetched so this note metadata can be discarded.
     for transaction in wallet_guard
@@ -656,12 +658,10 @@ where
             // The wallet reported height is above the current proxy height
             // reset to the proxy height.
             truncate_wallet_data(wallet, chain_height)?;
-            truncate_scan_ranges(
-                chain_height,
-                wallet
-                    .get_sync_state_mut()
-                    .map_err(SyncError::WalletError)?,
-            );
+            wallet
+                .get_sync_state_mut()
+                .map_err(SyncError::WalletError)?
+                .truncate_scan_ranges(chain_height);
             return Ok(chain_height);
         }
         // The last wallet reported height is equal or below the proxy height.
@@ -712,9 +712,9 @@ where
         .map_err(SyncStatusError::WalletError)?;
 
     Ok(SyncStatus {
-        scan_ranges: sync_state.scan_ranges.clone(),
-        sync_start_height: sync_state.initial_sync_state.sync_start_height,
-        total_blocks_scanned: state::calculate_scanned_blocks(sync_state),
+        scan_ranges: sync_state.scan_ranges().to_vec(),
+        sync_start_height: sync_state.initial_sync_state().sync_start_height,
+        total_blocks_scanned: sync_state.calculate_scanned_blocks(),
         total_sapling_outputs_scanned,
         total_orchard_outputs_scanned,
         total_ironwood_outputs_scanned,
@@ -829,9 +829,7 @@ where
 /// incoming notes (change), only the nullifier will be mapped and this transaction will be scanned when the
 /// transaction containing the spent notes is scanned instead.
 pub fn add_scan_targets(sync_state: &mut SyncState, scan_targets: &[ScanTarget]) {
-    for scan_target in scan_targets {
-        sync_state.scan_targets.insert(*scan_target);
-    }
+    sync_state.add_scan_targets(scan_targets.iter().copied());
 }
 
 /// Resets the spending transaction field of all outputs that were previously spent but became unspent due to a
@@ -980,7 +978,7 @@ where
                 let full_refetching_nullifiers_range = wallet
                     .get_sync_state()
                     .map_err(SyncError::WalletError)?
-                    .scan_ranges
+                    .scan_ranges()
                     .iter()
                     .find(|&wallet_scan_range| {
                         wallet_scan_range
@@ -1034,7 +1032,7 @@ where
                 let first_unscanned_range = wallet
                     .get_sync_state()
                     .map_err(SyncError::WalletError)?
-                    .scan_ranges
+                    .scan_ranges()
                     .iter()
                     .find(|scan_range| scan_range.priority() != ScanPriority::Scanned)
                     .expect("the scan range being processed is not yet set to scanned so at least one unscanned range must exist");
@@ -1048,12 +1046,10 @@ where
                     // in this rare edge case, a scanned `ScannedWithoutMapping` range was the highest priority yet it was not the first unscanned range so it must be discarded to avoid missing spends
 
                     // reset scan range from `RefetchingNullifiers` to `ScannedWithoutMapping`
-                    state::reset_refetching_nullifiers_scan_range(
-                        wallet
-                            .get_sync_state_mut()
-                            .map_err(SyncError::WalletError)?,
-                        scan_range.block_range().clone(),
-                    );
+                    wallet
+                        .get_sync_state_mut()
+                        .map_err(SyncError::WalletError)?
+                        .reset_refetching_nullifiers_scan_range(scan_range.block_range().clone());
                     tracing::debug!(
                         "Nullifiers discarded and will be re-fetched to avoid missing spends."
                     );
@@ -1072,13 +1068,13 @@ where
                 )
                 .await?;
 
-                state::set_scanned_scan_range(
-                    wallet
-                        .get_sync_state_mut()
-                        .map_err(SyncError::WalletError)?,
-                    scan_range.block_range().clone(),
-                    true, // NOTE: although nullifiers are not actually added to the wallet's nullifier map for efficiency, there is effectively no difference as spends are still updated using the `additional_nullifier_map` and would be removed on the following cleanup (`remove_irrelevant_data`) due to `ScannedWithoutMapping` ranges always being the first non-scanned range and therefore always raise the wallet's fully scanned height after processing.
-                );
+                wallet
+                    .get_sync_state_mut()
+                    .map_err(SyncError::WalletError)?
+                    .set_scanned_scan_range(
+                        scan_range.block_range().clone(),
+                        true, // NOTE: although nullifiers are not actually added to the wallet's nullifier map for efficiency, there is effectively no difference as spends are still updated using the `additional_nullifier_map` and would be removed on the following cleanup (`remove_irrelevant_data`) due to `ScannedWithoutMapping` ranges always being the first non-scanned range and therefore always raise the wallet's fully scanned height after processing.
+                    );
             } else {
                 // output counts are tree-size deltas summed over the batch's scanned blocks,
                 // computed before `scanned_blocks` is moved into the wallet.
@@ -1226,28 +1222,18 @@ where
                 add_scanned_blocks(wallet, scanned_blocks, &scan_range)
                     .map_err(SyncError::WalletError)?;
 
-                state::set_scanned_scan_range(
-                    wallet
-                        .get_sync_state_mut()
-                        .map_err(SyncError::WalletError)?,
-                    scan_range.block_range().clone(),
-                    map_nullifiers,
-                );
-                state::merge_scan_ranges(
-                    wallet
-                        .get_sync_state_mut()
-                        .map_err(SyncError::WalletError)?,
-                    ScanPriority::ScannedWithoutMapping,
-                );
+                let sync_state = wallet
+                    .get_sync_state_mut()
+                    .map_err(SyncError::WalletError)?;
+                sync_state.set_scanned_scan_range(scan_range.block_range().clone(), map_nullifiers);
+                sync_state.merge_scan_ranges(ScanPriority::ScannedWithoutMapping);
             }
 
             let cleanup_started = Instant::now();
-            state::merge_scan_ranges(
-                wallet
-                    .get_sync_state_mut()
-                    .map_err(SyncError::WalletError)?,
-                ScanPriority::Scanned,
-            );
+            wallet
+                .get_sync_state_mut()
+                .map_err(SyncError::WalletError)?
+                .merge_scan_ranges(ScanPriority::Scanned);
             remove_irrelevant_data(wallet).map_err(SyncError::WalletError)?;
             commit_timing.cleanup += cleanup_started.elapsed();
             tracing::debug!("Scan results processed.");
@@ -1277,21 +1263,14 @@ where
                     .expect("scan ranges should be non-empty in this scope");
 
                 // reset scan range from `Scanning` to `Verify`
-                state::set_scan_priority(
-                    sync_state,
-                    scan_range.block_range(),
-                    ScanPriority::Verify,
-                );
+                sync_state.set_scan_priority(scan_range.block_range(), ScanPriority::Verify);
 
                 // extend verification range to VERIFY_BLOCK_RANGE_SIZE blocks below current verification range
-                let current_reorg_detection_start_height = state::set_verify_scan_range(
-                    sync_state,
-                    height - 1,
-                    state::VerifyEnd::VerifyHighest,
-                )
-                .block_range()
-                .start;
-                state::merge_scan_ranges(sync_state, ScanPriority::Verify);
+                let current_reorg_detection_start_height = sync_state
+                    .set_verify_scan_range(height - 1, scheduler::VerifyEnd::VerifyHighest)
+                    .block_range()
+                    .start;
+                sync_state.merge_scan_ranges(ScanPriority::Verify);
 
                 if initial_reorg_detection_start_height - current_reorg_detection_start_height
                     > MAX_REORG_ALLOWANCE
@@ -1467,12 +1446,10 @@ where
         })
         .collect::<Vec<_>>();
     truncate_wallet_data(wallet, consensus::H0)?;
-    truncate_scan_ranges(
-        consensus::H0,
-        wallet
-            .get_sync_state_mut()
-            .map_err(SyncError::WalletError)?,
-    );
+    wallet
+        .get_sync_state_mut()
+        .map_err(SyncError::WalletError)?
+        .truncate_scan_ranges(consensus::H0);
     wallet
         .get_wallet_transactions_mut()
         .map_err(SyncError::WalletError)?
@@ -1511,21 +1488,18 @@ where
         .highest_scanned_height()
         .expect("scan ranges should not be empty in this scope");
     for transaction in transactions.values() {
-        state::update_found_note_shard_priority(
+        sync_state.update_found_note_shard_priority(
             consensus_parameters,
-            sync_state,
             ShieldedPool::Sapling,
             transaction,
         );
-        state::update_found_note_shard_priority(
+        sync_state.update_found_note_shard_priority(
             consensus_parameters,
-            sync_state,
             ShieldedPool::Orchard,
             transaction,
         );
-        state::update_found_note_shard_priority(
+        sync_state.update_found_note_shard_priority(
             consensus_parameters,
-            sync_state,
             ShieldedPool::Ironwood,
             transaction,
         );
@@ -1686,8 +1660,7 @@ where
         .retain(|_, scan_target| scan_target.block_height > fully_scanned_height);
     wallet
         .get_sync_state_mut()?
-        .scan_targets
-        .retain(|scan_target| scan_target.block_height > fully_scanned_height);
+        .remove_scanned_scan_targets(fully_scanned_height);
     remove_irrelevant_blocks(wallet)?;
 
     Ok(())
@@ -1830,24 +1803,21 @@ where
     let sync_state = wallet
         .get_sync_state_mut()
         .map_err(SyncError::WalletError)?;
-    state::add_shard_ranges(
+    sync_state.add_shard_ranges(
         consensus_parameters,
         ShieldedPool::Sapling,
-        sync_state,
-        &sapling_subtree_roots,
+        subtree_completing_heights(&sapling_subtree_roots),
     );
-    state::add_shard_ranges(
+    sync_state.add_shard_ranges(
         consensus_parameters,
         ShieldedPool::Orchard,
-        sync_state,
-        &orchard_subtree_roots,
+        subtree_completing_heights(&orchard_subtree_roots),
     );
     if !ironwood_subtree_roots.is_empty() {
-        state::add_shard_ranges(
+        sync_state.add_shard_ranges(
             consensus_parameters,
             ShieldedPool::Ironwood,
-            sync_state,
-            &ironwood_subtree_roots,
+            subtree_completing_heights(&ironwood_subtree_roots),
         );
     }
 
@@ -1871,6 +1841,20 @@ where
     )?;
 
     Ok(())
+}
+
+#[cfg(not(feature = "darkside_test"))]
+fn subtree_completing_heights(
+    subtree_roots: &[SubtreeRoot],
+) -> impl Iterator<Item = BlockHeight> + '_ {
+    subtree_roots.iter().map(|subtree_root| {
+        BlockHeight::from_u32(
+            subtree_root
+                .completing_block_height
+                .try_into()
+                .expect("overflow should never occur"),
+        )
+    })
 }
 
 async fn add_initial_frontier<W>(
@@ -2169,10 +2153,7 @@ mod test {
                 BlockHeight::from_u32(1)..BlockHeight::from_u32(range_end),
                 ScanPriority::Scanning,
             );
-            let sync_state = SyncState {
-                scan_ranges: vec![scan_range.clone()],
-                ..Default::default()
-            };
+            let sync_state = SyncState::new_for_test(vec![scan_range.clone()]);
             let mut wallet = MockWalletBuilder::new()
                 .sync_state(sync_state)
                 .create_mock_wallet();
@@ -2254,19 +2235,16 @@ mod test {
             );
             // the processed range is mid-scan in the wallet's state, with a higher range already
             // scanned so no shard tree checkpoints are added (no fetcher in this test)
-            let sync_state = SyncState {
-                scan_ranges: vec![
-                    ScanRange::from_parts(
-                        BlockHeight::from_u32(1)..BlockHeight::from_u32(10),
-                        ScanPriority::Scanning,
-                    ),
-                    ScanRange::from_parts(
-                        BlockHeight::from_u32(10)..BlockHeight::from_u32(1001),
-                        ScanPriority::Scanned,
-                    ),
-                ],
-                ..Default::default()
-            };
+            let sync_state = SyncState::new_for_test(vec![
+                ScanRange::from_parts(
+                    BlockHeight::from_u32(1)..BlockHeight::from_u32(10),
+                    ScanPriority::Scanning,
+                ),
+                ScanRange::from_parts(
+                    BlockHeight::from_u32(10)..BlockHeight::from_u32(1001),
+                    ScanPriority::Scanned,
+                ),
+            ]);
             let mut wallet = MockWalletBuilder::new()
                 .sync_state(sync_state)
                 .create_mock_wallet();
@@ -2398,10 +2376,7 @@ mod test {
                     DEFAULT_START_HEIGHT..LAST_KNOWN_HEIGHT,
                     crate::sync::ScanPriority::Scanned,
                 )];
-                let state = SyncState {
-                    scan_ranges: lkch,
-                    ..Default::default()
-                };
+                let state = SyncState::new_for_test(lkch);
                 let builder = crate::mocks::MockWalletBuilder::new();
                 let mut test_wallet = builder.sync_state(state).create_mock_wallet();
                 let res =
@@ -2429,10 +2404,7 @@ mod test {
                     BlockHeight::from_u32(6)..BlockHeight::from_u32(10),
                     crate::sync::ScanPriority::Scanned,
                 )];
-                let state = SyncState {
-                    scan_ranges: lkch,
-                    ..Default::default()
-                };
+                let state = SyncState::new_for_test(lkch);
                 let builder = crate::mocks::MockWalletBuilder::new();
                 let mut test_wallet = builder.sync_state(state).create_mock_wallet();
                 let chain_height = BlockHeight::from_u32(4);
@@ -2450,10 +2422,7 @@ mod test {
                     BlockHeight::from_u32(1)..BlockHeight::from_u32(10),
                     crate::sync::ScanPriority::Scanned,
                 )];
-                let state = SyncState {
-                    scan_ranges: lkch,
-                    ..Default::default()
-                };
+                let state = SyncState::new_for_test(lkch);
                 let builder = crate::mocks::MockWalletBuilder::new();
                 let mut _test_wallet = builder.sync_state(state).create_mock_wallet();
             }
@@ -2466,10 +2435,7 @@ mod test {
                     BlockHeight::from_u32(1)..BlockHeight::from_u32(10),
                     crate::sync::ScanPriority::Scanned,
                 )];
-                let state = SyncState {
-                    scan_ranges: lkch,
-                    ..Default::default()
-                };
+                let state = SyncState::new_for_test(lkch);
                 let builder = crate::mocks::MockWalletBuilder::new();
                 let mut _test_wallet = builder.sync_state(state).create_mock_wallet();
             }
@@ -2480,10 +2446,7 @@ mod test {
                     BlockHeight::from_u32(1)..BlockHeight::from_u32(10),
                     crate::sync::ScanPriority::Scanned,
                 )];
-                let state = SyncState {
-                    scan_ranges: lkch,
-                    ..Default::default()
-                };
+                let state = SyncState::new_for_test(lkch);
                 let builder = crate::mocks::MockWalletBuilder::new();
                 let mut _test_wallet = builder.sync_state(state).create_mock_wallet();
             }
