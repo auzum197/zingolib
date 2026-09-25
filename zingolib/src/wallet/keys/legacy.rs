@@ -17,15 +17,15 @@ use zcash_keys::{
 };
 use zcash_transparent::address::TransparentAddress;
 
-use zingolib_common::serialization::ReadableWriteable;
+use zingolib_common::{
+    chain::ChainType,
+    keys::{
+        KEY_TYPE_EMPTY, KEY_TYPE_SPEND, KEY_TYPE_VIEW, KeyError, ReceiverSelection, UnifiedKeyStore,
+    },
+    serialization::ReadableWriteable,
+};
 
-use super::unified::{
-    KEY_TYPE_EMPTY, KEY_TYPE_SPEND, KEY_TYPE_VIEW, ReceiverSelection, UnifiedKeyStore,
-};
-use crate::{
-    config::ChainType,
-    wallet::{error::KeyError, legacy::WitnessTrees},
-};
+use crate::wallet::legacy::WitnessTrees;
 
 pub mod extended_transparent;
 

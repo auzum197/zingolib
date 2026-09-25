@@ -5817,13 +5817,23 @@ dependencies = [
 name = "zingolib-common"
 version = "0.1.0"
 dependencies = [
+ "bip0039",
+ "bip32",
  "byteorder",
+ "orchard",
  "rand 0.8.7",
+ "sapling-crypto",
+ "serde",
+ "thiserror 2.0.19",
  "tracing",
  "zcash_address",
+ "zcash_client_backend",
  "zcash_encoding",
  "zcash_keys",
  "zcash_protocol",
+ "zcash_transparent",
+ "zingo_common_components",
+ "zip32",
 ]
 
 [[package]]
