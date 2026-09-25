@@ -38,6 +38,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `config::DEFAULT_EVENT_CHANNEL_CAPACITY`). Serialized version incremented to 2.
 
 ### Changed
+- `keys::transparent::TransparentScope`: now defined in `zingolib_common::keys` and re-exported.
 - wallet types and `config::SyncConfig` / `config::PerformanceLevel`: inherent `read` and
   `write` replaced by `zingolib_common::serialization::ReadableWriteable` impls. Reading now
   rejects layout versions newer than the crate knows, and `write` takes `&self` for

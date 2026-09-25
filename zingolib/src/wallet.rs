@@ -1,10 +1,6 @@
 //! Core module, containing `crate::wallet::LightWallet` with methods for all wallet functionality.
 
 use std::collections::{BTreeMap, HashMap};
-use std::io::{self, Read, Write};
-use std::num::NonZeroU32;
-
-use byteorder::{LittleEndian, ReadBytesExt, WriteBytesExt};
 
 use bip0039::Mnemonic;
 
@@ -17,7 +13,6 @@ use pepper_sync::{
     keys::transparent::TransparentAddressId,
     wallet::{NullifierMap, OutputId, SyncState, WalletBlock, WalletTransaction},
 };
-use zingolib_common::serialization::ReadableWriteable;
 use zingolib_price::PriceList;
 
 use crate::config::{ChainType, WalletConfig};
@@ -25,13 +20,11 @@ use error::{PriceError, WalletError};
 use keys::unified::{UnifiedAddressId, UnifiedKeyStore};
 
 pub mod error;
-pub(crate) mod legacy;
 pub mod utils;
 
 // these mods contain pieces of the impl LightWallet
 pub mod balance;
 pub mod disk;
-pub mod encryption;
 pub mod keys;
 pub mod output;
 pub mod spendable;
@@ -43,49 +36,7 @@ mod zcb_traits;
 pub use pepper_sync::config::{
     PerformanceLevel, SyncConfig, TransparentAddressDiscovery, TransparentAddressDiscoveryScopes,
 };
-
-/// Wallet settings.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct WalletSettings {
-    /// Sync configuration.
-    pub sync_config: pepper_sync::config::SyncConfig,
-    /// Minimum confirmations.
-    pub min_confirmations: NonZeroU32,
-}
-
-impl Default for WalletSettings {
-    fn default() -> Self {
-        Self {
-            sync_config: SyncConfig::default(),
-            min_confirmations: NonZeroU32::try_from(3).expect("hard-coded non-zero integer"),
-        }
-    }
-}
-
-impl WalletSettings {
-    /// Unversioned: the sync config followed by the minimum confirmations. Layout changes
-    /// are gated by the wallet file version.
-    pub fn read<R: Read>(mut reader: R) -> io::Result<Self> {
-        let sync_config = SyncConfig::read(&mut reader, ())?;
-        let min_confirmations =
-            NonZeroU32::try_from(reader.read_u32::<LittleEndian>()?).map_err(|e| {
-                io::Error::new(
-                    io::ErrorKind::InvalidData,
-                    format!("minimum confirmations must be non-zero. {e}"),
-                )
-            })?;
-        Ok(Self {
-            sync_config,
-            min_confirmations,
-        })
-    }
-
-    /// Serialize into `writer`
-    pub fn write<W: Write>(&self, mut writer: W) -> io::Result<()> {
-        self.sync_config.write(&mut writer, ())?;
-        writer.write_u32::<LittleEndian>(self.min_confirmations.into())
-    }
-}
+pub use zingolib_file_format::{WalletSettings, encryption};
 
 /// Provides necessary information to recover the wallet without the wallet file.
 #[derive(Clone, Debug, PartialEq, serde::Serialize)]

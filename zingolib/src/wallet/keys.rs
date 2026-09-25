@@ -15,8 +15,6 @@ use zip32::DiversifierIndex;
 
 use super::{LightWallet, error::KeyError};
 
-pub mod legacy;
-
 /// Re-exported from `zingolib_common::keys`.
 pub mod unified {
     pub use zingolib_common::keys::{ReceiverSelection, UnifiedAddressId, UnifiedKeyStore};

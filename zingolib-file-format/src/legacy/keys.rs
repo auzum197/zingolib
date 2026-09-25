@@ -25,7 +25,7 @@ use zingolib_common::{
     serialization::ReadableWriteable,
 };
 
-use crate::wallet::legacy::WitnessTrees;
+use crate::legacy::WitnessTrees;
 
 pub mod extended_transparent;
 
@@ -89,8 +89,7 @@ impl ReadableWriteable<ChainType, ChainType> for WalletCapability {
                 // USK is re-derived later from seed due to missing BIP0032 transparent extended private key data
                 let orchard_sk = orchard::keys::SpendingKey::decode(&mut reader)?;
                 let sapling_sk = sapling_crypto::zip32::ExtendedSpendingKey::read(&mut reader)?;
-                let transparent_sk =
-                    super::legacy::extended_transparent::ExtendedPrivKey::read(&mut reader, ())?;
+                let transparent_sk = extended_transparent::ExtendedPrivKey::read(&mut reader, ())?;
                 let usk = legacy_sks_to_usk(&orchard_sk, &sapling_sk, &transparent_sk)
                     .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e.to_string()))?;
                 Self {
@@ -108,8 +107,8 @@ impl ReadableWriteable<ChainType, ChainType> for WalletCapability {
                     sapling_crypto::zip32::ExtendedSpendingKey,
                 >::read(&mut reader, ())?;
                 let transparent_capability = Capability::<
-                    super::legacy::extended_transparent::ExtendedPubKey,
-                    super::legacy::extended_transparent::ExtendedPrivKey,
+                    extended_transparent::ExtendedPubKey,
+                    extended_transparent::ExtendedPrivKey,
                 >::read(&mut reader, ())?;
 
                 let orchard_fvk = match &orchard_capability {
@@ -131,13 +130,11 @@ impl ReadableWriteable<ChainType, ChainType> for WalletCapability {
                 {
                     // In the case of loading from viewing keys:
                     // Create the UFVK from FVKs.
-                    let ufvk = super::legacy::legacy_fvks_to_ufvk(
-                        orchard_fvk,
-                        sapling_fvk,
-                        transparent_fvk,
-                        &input,
-                    )
-                    .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e.to_string()))?;
+                    let ufvk =
+                        legacy_fvks_to_ufvk(orchard_fvk, sapling_fvk, transparent_fvk, &input)
+                            .map_err(|e| {
+                                io::Error::new(io::ErrorKind::InvalidData, e.to_string())
+                            })?;
                     UnifiedKeyStore::View(Box::new(ufvk))
                 } else if matches!(sapling_capability.clone(), Capability::Spend(_)) {
                     // In the case of loading spending keys:

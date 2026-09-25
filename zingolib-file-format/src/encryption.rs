@@ -1,6 +1,6 @@
 //! Passphrase-based at-rest encryption for the serialized wallet file.
 //!
-//! The entire serialized wallet (the buffer produced by [`crate::wallet::LightWallet::write`])
+//! The entire serialized wallet (the buffer produced by writing a `WalletFileRef`)
 //! is wrapped in a single AEAD envelope:
 //!
 //! ```text
@@ -23,45 +23,8 @@
 //!
 //! ## Example
 //!
-//! Build an encrypted wallet, save it, and reload it. The passphrase is a plain `String`, so
-//! callers don't depend on the `secrecy` crate.
-//!
-//! ```no_run
-//! use std::io::Cursor;
-//!
-//! use zingolib::config::{ChainType, WalletConfig};
-//! use zingolib::wallet::LightWallet;
-//! use zingolib::wallet::encryption::{self, EncryptionConfig};
-//!
-//! # fn demo(chain_type: ChainType, wallet_config: WalletConfig) -> Result<(), Box<dyn std::error::Error>> {
-//! let passphrase = "a strong passphrase".to_string();
-//!
-//! // Encryption is a construction input. Argon2id runs once during construction, and the
-//! // derived key is cached so each later save only pays for the fast symmetric step. For a
-//! // constrained device, use `EncryptionConfig::with_params(passphrase,
-//! // encryption::Argon2Params::with_memory_mib(32))` instead.
-//! let mut wallet = LightWallet::new(
-//!     chain_type,
-//!     wallet_config,
-//!     Some(EncryptionConfig::new(passphrase.clone())),
-//! )?;
-//!
-//! // `save` returns an encrypted envelope, or `None` when nothing changed since the last save.
-//! // Persist these bytes wherever the wallet file lives.
-//! let Some(encrypted) = wallet.save()? else { return Ok(()) };
-//! assert!(encryption::is_encrypted(&encrypted));
-//!
-//! // Later, reload from those bytes with the same passphrase. A wrong or missing passphrase
-//! // returns an error rather than a corrupt wallet.
-//! let reloaded =
-//!     LightWallet::read_encrypted(Cursor::new(&encrypted), chain_type, Some(passphrase))?;
-//! assert!(reloaded.is_encrypted());
-//! # Ok(())
-//! # }
-//! ```
-//!
-//! To encrypt an already-open wallet or rotate the passphrase, use
-//! [`crate::wallet::LightWallet::set_passphrase`] / `change_passphrase`.
+//! See the wallet type in zingolib for a worked example: it takes an [`EncryptionConfig`]
+//! at construction and re-encrypts on every save with the cached session.
 //!
 //! ## Threat model
 //! This protects the wallet file *at rest* (a stolen backup, a discarded disk, a synced
@@ -70,7 +33,7 @@
 //! usage here is defense-in-depth, not a guarantee.
 //!
 //! ## Why the magic can't collide with a plaintext wallet
-//! [`crate::wallet::LightWallet::read`] reads the first 8 bytes as a little-endian `u64`
+//! The plaintext wallet reader takes the first 8 bytes as a little-endian `u64`
 //! version number (currently small values like 39). `MAGIC` read as a `u64-LE` is
 //! `0x31_30_63_6e_45_69_4c_5a`, far outside any real version, so an encrypted file can never
 //! be mistaken for a plaintext one and vice versa.
@@ -80,15 +43,14 @@
 //! wraps the public zingolib API. The passphrase is passed as a plain `String` throughout
 //! (zingolib wraps it in a [`SecretString`] internally), so the FFI layer needs no `secrecy`
 //! dependency. To support encryption from mobile, that layer should:
-//! - **Create encrypted:** call [`crate::lightclient::LightClient::new`] with a create
-//!   [`crate::config::WalletConfig`] variant and
+//! - **Create encrypted:** call `LightClient::new` with a create `WalletConfig` variant and
 //!   `Some(EncryptionConfig::with_params(passphrase, params))`. On a memory-constrained device
 //!   pass `Argon2Params::with_memory_mib(N)` with a smaller `N` (e.g. 19 to 32) instead of the
 //!   64 MiB default.
 //! - **Open encrypted:** call `LightClient::new` with `WalletConfig::Read` and
 //!   `Some(EncryptionConfig::new(passphrase))`. The passphrase decrypts the file, whose KDF
 //!   parameters are read from the header.
-//! - **Save:** [`crate::wallet::LightWallet::save`] already returns encrypted bytes once a
+//! - **Save:** `LightWallet::save` already returns encrypted bytes once a
 //!   passphrase is set, no change required.
 
 use argon2::{Algorithm, Argon2, Params, Version};
@@ -101,11 +63,11 @@ use secrecy::{ExposeSecret, SecretString};
 use zeroize::Zeroizing;
 
 /// 8-byte file magic identifying an encrypted wallet envelope.
-pub(crate) const MAGIC: [u8; 8] = *b"ZiLEnc01";
+pub const MAGIC: [u8; 8] = *b"ZiLEnc01";
 /// The magic interpreted as a little-endian `u64`, matching how
-/// [`crate::wallet::LightWallet::read`] reads the leading version field. Used to detect an
+/// The plaintext wallet reader reads the leading version field. Used to detect an
 /// encrypted file from the version-reader path and return a clear error.
-pub(crate) const MAGIC_AS_VERSION: u64 = u64::from_le_bytes(MAGIC);
+pub const MAGIC_AS_VERSION: u64 = u64::from_le_bytes(MAGIC);
 /// Version of the *envelope* format (independent of the inner wallet serialization version).
 const ENVELOPE_VERSION: u8 = 1;
 /// KDF identifier stored in the header. Only Argon2id is currently supported.
@@ -236,7 +198,7 @@ impl Default for Argon2Params {
 }
 
 /// Encryption configuration supplied when *creating* a wallet (see
-/// [`crate::wallet::LightWallet::new`]). It carries the passphrase and the KDF cost. The
+/// `LightWallet::new`). It carries the passphrase and the KDF cost. The
 /// wallet construction derives the key so the wallet is encrypted from its first save.
 ///
 /// The passphrase is taken as a plain `String` so callers don't depend on the `secrecy` crate.
@@ -264,13 +226,13 @@ impl EncryptionConfig {
     }
 
     /// Run the key derivation, consuming the passphrase and returning the cached session.
-    pub(crate) fn derive(self) -> Result<EncryptionSession, WalletEncryptionError> {
+    pub fn derive(self) -> Result<EncryptionSession, WalletEncryptionError> {
         EncryptionSession::new(&self.passphrase, self.params)
     }
 
     /// Consume the config, returning just the passphrase. Used on the decrypt/open path, where
     /// the KDF parameters come from the file header rather than from this config.
-    pub(crate) fn into_passphrase(self) -> String {
+    pub fn into_passphrase(self) -> String {
         self.passphrase.expose_secret().clone()
     }
 }
@@ -283,7 +245,7 @@ impl EncryptionConfig {
 /// pays for the (cheap) AEAD encryption. The key is zeroized on drop.
 ///
 /// Deliberately NOT `Clone`: the wrapped key should never be duplicated in RAM.
-pub(crate) struct EncryptionSession {
+pub struct EncryptionSession {
     key: Zeroizing<[u8; KEY_LEN]>,
     salt: [u8; SALT_LEN],
     params: Argon2Params,
@@ -302,7 +264,7 @@ impl EncryptionSession {
     /// Derive a fresh session from a passphrase, generating a new random salt.
     ///
     /// Runs Argon2id. Call this only when (re)keying, not on every save.
-    pub(crate) fn new(
+    pub fn new(
         passphrase: &SecretString,
         params: Argon2Params,
     ) -> Result<Self, WalletEncryptionError> {
@@ -338,7 +300,7 @@ impl EncryptionSession {
     ///
     /// A fresh random nonce is generated for every call, so it is safe to reuse the same
     /// session across many saves.
-    pub(crate) fn encrypt(&self, plaintext: &[u8]) -> Result<Vec<u8>, WalletEncryptionError> {
+    pub fn encrypt(&self, plaintext: &[u8]) -> Result<Vec<u8>, WalletEncryptionError> {
         let mut nonce_bytes = [0u8; NONCE_LEN];
         OsRng.fill_bytes(&mut nonce_bytes);
 
@@ -377,7 +339,7 @@ pub fn is_encrypted(bytes: &[u8]) -> bool {
 
 /// Decrypt a wallet envelope, returning the plaintext buffer **and** an [`EncryptionSession`]
 /// the caller should cache so subsequent saves re-encrypt with the same key.
-pub(crate) fn decrypt(
+pub fn decrypt(
     passphrase: &SecretString,
     envelope: &[u8],
 ) -> Result<(Zeroizing<Vec<u8>>, EncryptionSession), WalletEncryptionError> {

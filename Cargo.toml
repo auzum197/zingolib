@@ -2,6 +2,7 @@
 members = [
     "pepper-sync",
     "zingolib-common",
+    "zingolib-file-format",
     "zingolib-price",
     "zingolib",
     "zingolib-tui",
@@ -12,6 +13,7 @@ resolver = "2"
 ### Workspace
 pepper-sync = { path = "pepper-sync" }         # NOTE: for development between releases
 zingolib-common = { path = "zingolib-common" }
+zingolib-file-format = { path = "zingolib-file-format" }
 zingolib-price = { path = "zingolib-price" }
 zingolib = { path = "zingolib" }
 

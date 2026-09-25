@@ -1,3 +1,5 @@
+//! Readers for wallet layouts older than version 32, kept only to migrate old files.
+
 use std::{
     collections::HashMap,
     io::{self, Read, Write},
@@ -25,7 +27,9 @@ use zcash_protocol::{
 use zingo_netutils::lightwallet_protocol::CompactBlock;
 use zingolib_common::{serialization::ReadableWriteable, status::ConfirmationStatus};
 
-use super::keys::legacy::WalletCapability;
+use keys::WalletCapability;
+
+pub mod keys;
 
 /// TODO: Add Doc Comment Here!
 #[derive(Clone, PartialEq)]
@@ -1221,4 +1225,11 @@ impl WalletZecPriceInfo {
             historical_prices_retry_count,
         })
     }
+}
+
+pub(crate) fn read_string<R: Read>(mut reader: R) -> io::Result<String> {
+    let len = reader.read_u64::<LittleEndian>()?;
+    let mut bytes = vec![0; len as usize];
+    reader.read_exact(&mut bytes)?;
+    String::from_utf8(bytes).map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e.to_string()))
 }

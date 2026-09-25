@@ -2,11 +2,11 @@
 use std::io;
 use zcash_protocol::consensus::NetworkConstants;
 
-use crate::config::ClientConfig;
 use ring::hmac::{self, Context, Key};
 use secp256k1::{Error, PublicKey, Secp256k1, SecretKey, SignOnly};
 use std::sync::LazyLock;
 use zcash_encoding::Vector;
+use zingolib_common::chain::ChainType;
 
 use zingolib_common::serialization::ReadableWriteable;
 
@@ -103,7 +103,7 @@ impl ExtendedPrivKey {
     /// TODO: Add Doc Comment Here!
     #[must_use]
     pub fn get_ext_taddr_from_bip39seed(
-        config: &ClientConfig,
+        chain_type: &ChainType,
         bip39_seed: &[u8],
         position: u32,
     ) -> Self {
@@ -114,7 +114,7 @@ impl ExtendedPrivKey {
             .derive_private_key(KeyIndex::hardened_from_normalize_index(44).unwrap())
             .unwrap()
             .derive_private_key(
-                KeyIndex::hardened_from_normalize_index(config.chain_type().coin_type()).unwrap(),
+                KeyIndex::hardened_from_normalize_index(chain_type.coin_type()).unwrap(),
             )
             .unwrap()
             .derive_private_key(KeyIndex::hardened_from_normalize_index(position).unwrap())

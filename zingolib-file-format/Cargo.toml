@@ -1,0 +1,49 @@
+[package]
+name = "zingolib-file-format"
+description = "On-disk layout of the zingolib wallet file: the versioned container, its legacy readers and the encrypted envelope."
+authors = ["<zingo@zingolabs.org>"]
+version = "0.1.0"
+edition = "2024"
+repository = "https://github.com/zingolabs/zingolib"
+homepage = "https://github.com/zingolabs/zingolib"
+license = "MIT"
+
+[badges]
+maintenance = { status = "actively-developed" }
+
+[dependencies]
+append-only-vec = { workspace = true }
+argon2 = { workspace = true }
+bip0039 = { workspace = true }
+bip32 = { workspace = true, features = ["secp256k1-ffi"] }
+bs58 = { workspace = true, features = ["check"] }
+byteorder = { workspace = true }
+chacha20poly1305 = { workspace = true }
+incrementalmerkletree = { workspace = true }
+jubjub = { workspace = true }
+log = { workspace = true }
+orchard = { workspace = true }
+pepper-sync = { workspace = true }
+prost = { workspace = true }
+rand = { workspace = true }
+ring = { workspace = true }
+sapling-crypto = { workspace = true }
+secp256k1 = { workspace = true }
+secrecy = { workspace = true }
+shardtree = { workspace = true, features = ["legacy-api"] }
+thiserror = { workspace = true }
+zcash_address = { workspace = true }
+zcash_client_backend = { workspace = true, features = [
+    "unstable",
+    "unstable-serialization",
+] }
+zcash_encoding = { workspace = true }
+zcash_keys = { workspace = true }
+zcash_primitives = { workspace = true }
+zcash_protocol = { workspace = true }
+zcash_transparent = { workspace = true }
+zeroize = { workspace = true }
+zingo-netutils = { workspace = true }
+zingolib-common = { workspace = true }
+zingolib-price = { workspace = true }
+zip32 = { workspace = true }
