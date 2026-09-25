@@ -60,7 +60,7 @@ The task builds the image if needed, then runs the workspace with the `ci` nexte
 Extra nextest flags can be forwarded after the task name, and the default filter can be changed with `ZINGOLIB_NEXTEST_FILTER`.
 
 ```
-makers container-test -p zingolib-memo
+makers container-test -p zingolib-common
 ZINGOLIB_NEXTEST_FILTER='package(zingolib) & not test(slow)' makers container-test
 makers rerun
 ```

@@ -1,9 +1,8 @@
 [workspace]
 members = [
     "pepper-sync",
-    "zingolib-memo",
+    "zingolib-common",
     "zingolib-price",
-    "zingolib-status",
     "zingolib",
     "zingolib-tui",
 ]
@@ -12,9 +11,8 @@ resolver = "2"
 [workspace.dependencies]
 ### Workspace
 pepper-sync = { path = "pepper-sync" }         # NOTE: for development between releases
-zingolib-memo = { path = "zingolib-memo" }
+zingolib-common = { path = "zingolib-common" }
 zingolib-price = { path = "zingolib-price" }
-zingolib-status = { path = "zingolib-status" }
 zingolib = { path = "zingolib" }
 
 ### Tests and Integration Tests

@@ -157,7 +157,7 @@ mod fast {
             summary::data::{SelfSendWalletEvent, SentWalletEvent, WalletEventKind},
         },
     };
-    use zingolib_status::confirmation_status::ConfirmationStatus;
+    use zingolib_common::status::ConfirmationStatus;
     use zip32::AccountId;
 
     use super::*;
@@ -1507,7 +1507,7 @@ mod slow {
     use zingolib::wallet::summary::data::{
         BasicNoteSummary, OutgoingNoteSummary, SendType, TransactionKind, TransactionSummary,
     };
-    use zingolib_status::confirmation_status::ConfirmationStatus;
+    use zingolib_common::status::ConfirmationStatus;
     use zip32::AccountId;
 
     use super::*;

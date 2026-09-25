@@ -25,7 +25,7 @@ use std::time::Duration;
 use tokio::sync::broadcast;
 use zcash_primitives::transaction::TxId;
 use zcash_protocol::consensus::BlockHeight;
-use zingolib_status::confirmation_status::ConfirmationStatus;
+use zingolib_common::status::ConfirmationStatus;
 
 use crate::sync::{ScanPriority, ScanRange};
 

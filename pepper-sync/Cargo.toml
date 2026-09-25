@@ -23,8 +23,7 @@ test-features = []
 [dependencies]
 # Zingo
 lightwallet-protocol.workspace = true
-zingolib-memo.workspace = true
-zingolib-status.workspace = true
+zingolib-common.workspace = true
 zingo-netutils.workspace = true
 
 # Zcash

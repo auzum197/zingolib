@@ -12,7 +12,7 @@ path = "src/main.rs"
 [dependencies]
 zingolib = { workspace = true }
 pepper-sync = { workspace = true }
-zingolib-status = { workspace = true }
+zingolib-common = { workspace = true }
 zingo_common_components = { workspace = true }
 zip32 = { workspace = true }
 zcash_protocol = { workspace = true }

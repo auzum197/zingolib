@@ -13,7 +13,7 @@ default = ["grpc-proxy"]
 zingolib = { workspace = true, features = ["testutils"] }
 zingo-netutils = { workspace = true }
 zingo-testvectors = { workspace = true }
-zingolib-status = { workspace = true }
+zingolib-common = { workspace = true }
 
 zcash_client_backend = { workspace = true, features = [
     "lightwalletd-tonic-transport",
