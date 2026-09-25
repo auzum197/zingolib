@@ -10,6 +10,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Deprecated
 
 ### Added
+- `wallet::OutputId`, `keys::KeyId` and `keys::transparent::TransparentAddressId`: unversioned
+  `read` and `write`, replacing the field-by-field encoding repeated in every note writer.
 - `events` module: push-based sync event stream so consumers subscribe to committed
   events instead of polling `sync_status` under the wallet lock.
   - `events::SyncEvent` - `SessionStarted`, `BatchScanStarted`, `BatchScanCompleted`,

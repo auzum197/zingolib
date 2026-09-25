@@ -18,7 +18,6 @@ use zcash_primitives::transaction::TxId;
 use zcash_protocol::consensus::{self, BlockHeight};
 use zcash_transparent::keys::NonHardenedChildIndex;
 
-use zingo_common_components::protocol::ActivationHeights;
 use zingo_netutils::lightwallet_protocol::TreeState;
 use zingolib_common::serialization::ReadableWriteable;
 use zingolib_price::PriceList;
@@ -507,17 +506,7 @@ impl WalletFile {
 
     fn read_v32<R: Read>(mut reader: R, chain_type: ChainType, version: u64) -> io::Result<Self> {
         if version >= 41 {
-            let saved_network = match reader.read_u8()? {
-                0 => ChainType::Mainnet,
-                1 => ChainType::Testnet,
-                2 => ChainType::Regtest(ActivationHeights::default()),
-                other => {
-                    return Err(Error::new(
-                        ErrorKind::InvalidData,
-                        format!("invalid chain type index stored in wallet file: {}", other,),
-                    ));
-                }
-            };
+            let saved_network = ChainType::read(&mut reader)?;
             if saved_network.to_string() != chain_type.to_string() {
                 return Err(Error::new(
                     ErrorKind::InvalidData,
@@ -582,17 +571,9 @@ impl WalletFile {
         };
 
         let mut unified_addresses = Vector::read(&mut reader, |r| {
-            let account_id = zip32::AccountId::try_from(r.read_u32::<LittleEndian>()?)
-                .expect("only valid account ids are stored");
-            let address_index = r.read_u32::<LittleEndian>()?;
-            let receivers = ReceiverSelection::read(r, ())?;
-
             Ok((
-                UnifiedAddressId {
-                    account_id,
-                    address_index,
-                },
-                receivers,
+                UnifiedAddressId::read(&mut *r)?,
+                ReceiverSelection::read(r, ())?,
             ))
         })?
         .into_iter()
@@ -650,15 +631,12 @@ impl WalletFile {
         let shard_trees = ShardTrees::read(&mut reader, ())?;
         let sync_state = SyncState::read(&mut reader, ())?;
 
-        let wallet_settings = if version >= 33 {
+        let wallet_settings = if version >= 38 {
+            WalletSettings::read(&mut reader)?
+        } else if version >= 33 {
             WalletSettings {
                 sync_config: SyncConfig::read(&mut reader, ())?,
-                min_confirmations: if version >= 38 {
-                    NonZeroU32::try_from(reader.read_u32::<LittleEndian>()?)
-                        .expect("only valid non-zero u32s stored")
-                } else {
-                    NonZeroU32::try_from(3).expect("hard-coded non-zero integer")
-                },
+                min_confirmations: NonZeroU32::try_from(3).expect("hard-coded non-zero integer"),
             }
         } else {
             WalletSettings {
@@ -708,11 +686,7 @@ impl WalletFileRef<'_> {
         consensus_parameters: &impl consensus::Parameters,
     ) -> io::Result<()> {
         writer.write_u64::<LittleEndian>(WalletFile::VERSION)?;
-        writer.write_u8(match self.chain_type {
-            ChainType::Mainnet => 0,
-            ChainType::Testnet => 1,
-            ChainType::Regtest(_) => 2,
-        })?;
+        self.chain_type.write(&mut writer)?;
         let seed_bytes = match self.mnemonic {
             Some(m) => m.clone().into_entropy(),
             None => vec![],
@@ -732,8 +706,7 @@ impl WalletFileRef<'_> {
             &mut writer,
             &self.unified_addresses.iter().collect::<Vec<_>>(),
             |w, (address_id, receivers)| {
-                w.write_u32::<LittleEndian>(address_id.account_id.into())?;
-                w.write_u32::<LittleEndian>(address_id.address_index)?;
+                address_id.write(&mut *w)?;
                 receivers.write(w, ())
             },
         )?;
@@ -763,8 +736,7 @@ impl WalletFileRef<'_> {
         )?;
         self.shard_trees.write(&mut writer, ())?;
         self.sync_state.write(&mut writer, ())?;
-        self.wallet_settings.sync_config.write(&mut writer, ())?;
-        writer.write_u32::<LittleEndian>(self.wallet_settings.min_confirmations.into())?;
+        self.wallet_settings.write(&mut writer)?;
         self.price_list.write(&mut writer, ())
     }
 }

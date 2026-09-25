@@ -3,7 +3,7 @@
 use std::io::{self, Read, Write};
 
 use bip0039::Mnemonic;
-use byteorder::{ReadBytesExt, WriteBytesExt};
+use byteorder::{LittleEndian, ReadBytesExt, WriteBytesExt};
 
 use pepper_sync::keys::transparent::TransparentScope;
 use zcash_address::unified::{Encoding as _, Ufvk};
@@ -29,6 +29,29 @@ pub(crate) const KEY_TYPE_SPEND: u8 = 2;
 pub struct UnifiedAddressId {
     pub account_id: AccountId,
     pub address_index: u32,
+}
+
+impl UnifiedAddressId {
+    /// Unversioned: the account id followed by the address index.
+    pub fn read<R: Read>(mut reader: R) -> io::Result<Self> {
+        let account_id = AccountId::try_from(reader.read_u32::<LittleEndian>()?).map_err(|e| {
+            io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!("failed to read account id. {e}"),
+            )
+        })?;
+        let address_index = reader.read_u32::<LittleEndian>()?;
+        Ok(Self {
+            account_id,
+            address_index,
+        })
+    }
+
+    /// Serialize into `writer`
+    pub fn write<W: Write>(&self, mut writer: W) -> io::Result<()> {
+        writer.write_u32::<LittleEndian>(self.account_id.into())?;
+        writer.write_u32::<LittleEndian>(self.address_index)
+    }
 }
 
 /// In-memory store for wallet spending or viewing keys
