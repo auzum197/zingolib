@@ -59,6 +59,78 @@ fn write_string<W: Write>(mut writer: W, str: &str) -> std::io::Result<()> {
     writer.write_all(str.as_bytes())
 }
 
+impl OutputId {
+    /// Unversioned, like [`TxId`]: the txid followed by the output index.
+    pub fn read<R: Read>(mut reader: R) -> std::io::Result<Self> {
+        let txid = TxId::read(&mut reader)?;
+        let output_index = reader.read_u32::<LittleEndian>()?;
+        Ok(Self::new(txid, output_index))
+    }
+
+    /// Serialize into `writer`
+    pub fn write<W: Write>(&self, mut writer: W) -> std::io::Result<()> {
+        self.txid().write(&mut writer)?;
+        writer.write_u32::<LittleEndian>(self.output_index())
+    }
+}
+
+impl KeyId {
+    /// Unversioned: the account id followed by the scope tag.
+    pub fn read<R: Read>(mut reader: R) -> std::io::Result<Self> {
+        let account_id =
+            zip32::AccountId::try_from(reader.read_u32::<LittleEndian>()?).map_err(|e| {
+                std::io::Error::new(
+                    std::io::ErrorKind::InvalidData,
+                    format!("failed to read account id. {e}"),
+                )
+            })?;
+        let scope = match reader.read_u8()? {
+            0 => Ok(zip32::Scope::External),
+            1 => Ok(zip32::Scope::Internal),
+            _ => Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                "invalid scope value",
+            )),
+        }?;
+        Ok(Self::from_parts(account_id, scope))
+    }
+
+    /// Serialize into `writer`
+    pub fn write<W: Write>(&self, mut writer: W) -> std::io::Result<()> {
+        writer.write_u32::<LittleEndian>(self.account_id.into())?;
+        writer.write_u8(self.scope as u8)
+    }
+}
+
+impl TransparentAddressId {
+    /// Unversioned: the account id, the scope tag, then the address index.
+    pub fn read<R: Read>(mut reader: R) -> std::io::Result<Self> {
+        let account_id =
+            zip32::AccountId::try_from(reader.read_u32::<LittleEndian>()?).map_err(|e| {
+                std::io::Error::new(
+                    std::io::ErrorKind::InvalidData,
+                    format!("failed to read account id. {e}"),
+                )
+            })?;
+        let scope = TransparentScope::try_from(reader.read_u8()?)?;
+        let address_index = NonHardenedChildIndex::from_index(reader.read_u32::<LittleEndian>()?)
+            .ok_or_else(|| {
+            std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                "transparent address index is hardened",
+            )
+        })?;
+        Ok(Self::new(account_id, scope, address_index))
+    }
+
+    /// Serialize into `writer`
+    pub fn write<W: Write>(&self, mut writer: W) -> std::io::Result<()> {
+        writer.write_u32::<LittleEndian>(self.account_id().into())?;
+        writer.write_u8(self.scope() as u8)?;
+        writer.write_u32::<LittleEndian>(self.address_index().index())
+    }
+}
+
 impl ReadableWriteable for ScanTarget {
     const VERSION: u8 = 0;
 
@@ -494,17 +566,16 @@ impl ReadableWriteable for TransparentCoin {
     fn read<R: Read>(mut reader: R, _input: ()) -> std::io::Result<Self> {
         let version = Self::get_version(&mut reader)?;
 
-        let txid = TxId::read(&mut reader)?;
-        let output_index = if version >= 1 {
-            reader.read_u32::<LittleEndian>()?
+        let output_id = if version >= 1 {
+            OutputId::read(&mut reader)?
         } else {
-            u32::from(reader.read_u16::<LittleEndian>()?)
+            OutputId::new(
+                TxId::read(&mut reader)?,
+                u32::from(reader.read_u16::<LittleEndian>()?),
+            )
         };
 
-        let account_id = zip32::AccountId::try_from(reader.read_u32::<LittleEndian>()?)
-            .expect("only valid account ids written");
-        let scope = TransparentScope::try_from(reader.read_u8()?)?;
-        let address_index = reader.read_u32::<LittleEndian>()?;
+        let key_id = TransparentAddressId::read(&mut reader)?;
 
         let address = read_string(&mut reader)?;
         let script = Script::read(&mut reader)?;
@@ -513,13 +584,8 @@ impl ReadableWriteable for TransparentCoin {
         let spending_transaction = Optional::read(&mut reader, TxId::read)?;
 
         Ok(Self {
-            output_id: OutputId { txid, output_index },
-            key_id: TransparentAddressId::new(
-                account_id,
-                scope,
-                NonHardenedChildIndex::from_index(address_index)
-                    .expect("only non-hardened child indexes should be written"),
-            ),
+            output_id,
+            key_id,
             address,
             value,
             script,
@@ -530,12 +596,9 @@ impl ReadableWriteable for TransparentCoin {
     fn write<W: Write>(&self, mut writer: W, _input: ()) -> std::io::Result<()> {
         writer.write_u8(Self::VERSION)?;
 
-        self.output_id.txid().write(&mut writer)?;
-        writer.write_u32::<LittleEndian>(self.output_id.output_index())?;
+        self.output_id.write(&mut writer)?;
 
-        writer.write_u32::<LittleEndian>(self.key_id.account_id().into())?;
-        writer.write_u8(self.key_id.scope() as u8)?;
-        writer.write_u32::<LittleEndian>(self.key_id.address_index().index())?;
+        self.key_id.write(&mut writer)?;
 
         write_string(&mut writer, &self.address)?;
         self.script.write(&mut writer)?;
@@ -581,28 +644,16 @@ impl ReadableWriteable for SaplingNote {
     fn read<R: Read>(mut reader: R, _input: ()) -> std::io::Result<Self> {
         let version = Self::get_version(&mut reader)?;
 
-        let txid = TxId::read(&mut reader)?;
-        let output_index = if version >= 2 {
-            reader.read_u32::<LittleEndian>()?
+        let output_id = if version >= 2 {
+            OutputId::read(&mut reader)?
         } else {
-            u32::from(reader.read_u16::<LittleEndian>()?)
+            OutputId::new(
+                TxId::read(&mut reader)?,
+                u32::from(reader.read_u16::<LittleEndian>()?),
+            )
         };
 
-        let account_id =
-            zip32::AccountId::try_from(reader.read_u32::<LittleEndian>()?).map_err(|e| {
-                std::io::Error::new(
-                    std::io::ErrorKind::InvalidData,
-                    format!("failed to read account id. {e}"),
-                )
-            })?;
-        let scope = match reader.read_u8()? {
-            0 => Ok(zip32::Scope::External),
-            1 => Ok(zip32::Scope::Internal),
-            _ => Err(std::io::Error::new(
-                std::io::ErrorKind::InvalidData,
-                "invalid scope value",
-            )),
-        }?;
+        let key_id = KeyId::read(&mut reader)?;
 
         let mut address_bytes = [0u8; 43];
         reader.read_exact(&mut address_bytes)?;
@@ -657,8 +708,8 @@ impl ReadableWriteable for SaplingNote {
         let refetch_nullifier_ranges = read_refetch_nullifier_ranges(&mut reader, version)?;
 
         Ok(Self {
-            output_id: OutputId::new(txid, output_index),
-            key_id: KeyId::from_parts(account_id, scope),
+            output_id,
+            key_id,
             note: sapling_crypto::Note::from_parts(recipient, value, rseed),
             nullifier,
             position,
@@ -672,11 +723,9 @@ impl ReadableWriteable for SaplingNote {
     fn write<W: Write>(&self, mut writer: W, _input: ()) -> std::io::Result<()> {
         writer.write_u8(Self::VERSION)?;
 
-        self.output_id.txid().write(&mut writer)?;
-        writer.write_u32::<LittleEndian>(self.output_id.output_index())?;
+        self.output_id.write(&mut writer)?;
 
-        writer.write_u32::<LittleEndian>(self.key_id.account_id.into())?;
-        writer.write_u8(self.key_id.scope as u8)?;
+        self.key_id.write(&mut writer)?;
 
         writer.write_all(&self.note.recipient().to_bytes())?;
         writer.write_u64::<LittleEndian>(self.value())?;
@@ -715,28 +764,16 @@ fn read_orchard_protocol_note<R: Read, P>(
     version: u8,
     note_version: orchard::note::NoteVersion,
 ) -> std::io::Result<WalletNote<orchard::Note, orchard::note::Nullifier, P>> {
-    let txid = TxId::read(&mut reader)?;
-    let output_index = if version >= 2 {
-        reader.read_u32::<LittleEndian>()?
+    let output_id = if version >= 2 {
+        OutputId::read(&mut reader)?
     } else {
-        u32::from(reader.read_u16::<LittleEndian>()?)
+        OutputId::new(
+            TxId::read(&mut reader)?,
+            u32::from(reader.read_u16::<LittleEndian>()?),
+        )
     };
 
-    let account_id =
-        zip32::AccountId::try_from(reader.read_u32::<LittleEndian>()?).map_err(|e| {
-            std::io::Error::new(
-                std::io::ErrorKind::InvalidData,
-                format!("failed to read account id. {e}"),
-            )
-        })?;
-    let scope = match reader.read_u8()? {
-        0 => Ok(zip32::Scope::External),
-        1 => Ok(zip32::Scope::Internal),
-        _ => Err(std::io::Error::new(
-            std::io::ErrorKind::InvalidData,
-            "invalid scope value",
-        )),
-    }?;
+    let key_id = KeyId::read(&mut reader)?;
 
     let mut address_bytes = [0u8; 43];
     reader.read_exact(&mut address_bytes)?;
@@ -774,8 +811,8 @@ fn read_orchard_protocol_note<R: Read, P>(
     let refetch_nullifier_ranges = read_refetch_nullifier_ranges(&mut reader, version)?;
 
     Ok(WalletNote {
-        output_id: OutputId::new(txid, output_index),
-        key_id: KeyId::from_parts(account_id, scope),
+        output_id,
+        key_id,
         note: orchard::note::Note::from_parts(recipient, value, rho, rseed, note_version)
             .expect("should be a valid orchard note"),
         nullifier,
@@ -792,11 +829,9 @@ fn write_orchard_protocol_note<W: Write, P>(
     note: &WalletNote<orchard::Note, orchard::note::Nullifier, P>,
     mut writer: W,
 ) -> std::io::Result<()> {
-    note.output_id.txid().write(&mut writer)?;
-    writer.write_u32::<LittleEndian>(note.output_id.output_index())?;
+    note.output_id.write(&mut writer)?;
 
-    writer.write_u32::<LittleEndian>(note.key_id.account_id.into())?;
-    writer.write_u8(note.key_id.scope as u8)?;
+    note.key_id.write(&mut writer)?;
 
     writer.write_all(&note.note.recipient().to_raw_address_bytes())?;
     writer.write_u64::<LittleEndian>(note.note.value().inner())?;
@@ -853,28 +888,16 @@ impl<P: consensus::Parameters> ReadableWriteable<&P, &P> for OutgoingSaplingNote
     fn read<R: Read>(mut reader: R, consensus_parameters: &P) -> std::io::Result<Self> {
         let version = <Self as ReadableWriteable<&P, &P>>::get_version(&mut reader)?;
 
-        let txid = TxId::read(&mut reader)?;
-        let output_index = if version >= 1 {
-            reader.read_u32::<LittleEndian>()?
+        let output_id = if version >= 1 {
+            OutputId::read(&mut reader)?
         } else {
-            u32::from(reader.read_u16::<LittleEndian>()?)
+            OutputId::new(
+                TxId::read(&mut reader)?,
+                u32::from(reader.read_u16::<LittleEndian>()?),
+            )
         };
 
-        let account_id =
-            zip32::AccountId::try_from(reader.read_u32::<LittleEndian>()?).map_err(|e| {
-                std::io::Error::new(
-                    std::io::ErrorKind::InvalidData,
-                    format!("failed to read account id. {e}"),
-                )
-            })?;
-        let scope = match reader.read_u8()? {
-            0 => Ok(zip32::Scope::External),
-            1 => Ok(zip32::Scope::Internal),
-            _ => Err(std::io::Error::new(
-                std::io::ErrorKind::InvalidData,
-                "invalid scope value",
-            )),
-        }?;
+        let key_id = KeyId::read(&mut reader)?;
 
         let mut address_bytes = [0u8; 43];
         reader.read_exact(&mut address_bytes)?;
@@ -918,8 +941,8 @@ impl<P: consensus::Parameters> ReadableWriteable<&P, &P> for OutgoingSaplingNote
         })?;
 
         Ok(Self {
-            output_id: OutputId::new(txid, output_index),
-            key_id: KeyId::from_parts(account_id, scope),
+            output_id,
+            key_id,
             note: sapling_crypto::Note::from_parts(recipient, value, rseed),
             memo,
             recipient_full_unified_address: recipient_unified_address,
@@ -930,11 +953,9 @@ impl<P: consensus::Parameters> ReadableWriteable<&P, &P> for OutgoingSaplingNote
     fn write<W: Write>(&self, mut writer: W, consensus_parameters: &P) -> std::io::Result<()> {
         writer.write_u8(<Self as ReadableWriteable<&P, &P>>::VERSION)?;
 
-        self.output_id.txid().write(&mut writer)?;
-        writer.write_u32::<LittleEndian>(self.output_id.output_index())?;
+        self.output_id.write(&mut writer)?;
 
-        writer.write_u32::<LittleEndian>(self.key_id.account_id.into())?;
-        writer.write_u8(self.key_id.scope as u8)?;
+        self.key_id.write(&mut writer)?;
 
         writer.write_all(&self.note.recipient().to_bytes())?;
         writer.write_u64::<LittleEndian>(self.value())?;
@@ -969,28 +990,16 @@ fn read_orchard_protocol_outgoing_note<R: Read, P>(
     consensus_parameters: &impl consensus::Parameters,
     note_version: orchard::note::NoteVersion,
 ) -> std::io::Result<OutgoingNote<orchard::Note, P>> {
-    let txid = TxId::read(&mut reader)?;
-    let output_index = if version >= 1 {
-        reader.read_u32::<LittleEndian>()?
+    let output_id = if version >= 1 {
+        OutputId::read(&mut reader)?
     } else {
-        u32::from(reader.read_u16::<LittleEndian>()?)
+        OutputId::new(
+            TxId::read(&mut reader)?,
+            u32::from(reader.read_u16::<LittleEndian>()?),
+        )
     };
 
-    let account_id =
-        zip32::AccountId::try_from(reader.read_u32::<LittleEndian>()?).map_err(|e| {
-            std::io::Error::new(
-                std::io::ErrorKind::InvalidData,
-                format!("failed to read account id. {e}"),
-            )
-        })?;
-    let scope = match reader.read_u8()? {
-        0 => Ok(zip32::Scope::External),
-        1 => Ok(zip32::Scope::Internal),
-        _ => Err(std::io::Error::new(
-            std::io::ErrorKind::InvalidData,
-            "invalid scope value",
-        )),
-    }?;
+    let key_id = KeyId::read(&mut reader)?;
 
     let mut address_bytes = [0u8; 43];
     reader.read_exact(&mut address_bytes)?;
@@ -1021,8 +1030,8 @@ fn read_orchard_protocol_outgoing_note<R: Read, P>(
     })?;
 
     Ok(OutgoingNote {
-        output_id: OutputId::new(txid, output_index),
-        key_id: KeyId::from_parts(account_id, scope),
+        output_id,
+        key_id,
         note: orchard::note::Note::from_parts(recipient, value, rho, rseed, note_version)
             .expect("should be a valid orchard note"),
         memo,
@@ -1037,11 +1046,9 @@ fn write_orchard_protocol_outgoing_note<W: Write, P>(
     mut writer: W,
     consensus_parameters: &impl consensus::Parameters,
 ) -> std::io::Result<()> {
-    note.output_id.txid().write(&mut writer)?;
-    writer.write_u32::<LittleEndian>(note.output_id.output_index())?;
+    note.output_id.write(&mut writer)?;
 
-    writer.write_u32::<LittleEndian>(note.key_id.account_id.into())?;
-    writer.write_u8(note.key_id.scope as u8)?;
+    note.key_id.write(&mut writer)?;
 
     writer.write_all(&note.note.recipient().to_raw_address_bytes())?;
     writer.write_u64::<LittleEndian>(note.note.value().inner())?;

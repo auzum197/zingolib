@@ -97,11 +97,7 @@ impl LightWallet {
         Vector::write(
             &mut writer,
             &self.transparent_addresses.keys().collect::<Vec<_>>(),
-            |w, address_id| {
-                w.write_u32::<LittleEndian>(address_id.account_id().into())?;
-                w.write_u8(address_id.scope() as u8)?;
-                w.write_u32::<LittleEndian>(address_id.address_index().index())
-            },
+            |w, address_id| address_id.write(w),
         )?;
         Vector::write(
             &mut writer,
@@ -118,8 +114,7 @@ impl LightWallet {
             &mut writer,
             &self.outpoint_map.iter().collect::<Vec<_>>(),
             |w, &(&output_id, &scan_target)| {
-                output_id.txid().write(&mut *w)?;
-                w.write_u32::<LittleEndian>(output_id.output_index())?;
+                output_id.write(&mut *w)?;
                 scan_target.write(w, ())
             },
         )?;
@@ -509,26 +504,25 @@ impl LightWallet {
         .into_iter()
         .collect::<BTreeMap<_, _>>();
         let mut transparent_addresses = Vector::read(&mut reader, |r| {
-            let account_id = zip32::AccountId::try_from(r.read_u32::<LittleEndian>()?)
-                .expect("only valid account ids are stored");
-            let scope = TransparentScope::try_from(r.read_u8()?)?;
-            let address_index = NonHardenedChildIndex::from_index(r.read_u32::<LittleEndian>()?)
-                .expect("only non-hardened child indexes should be written");
+            let address_id = TransparentAddressId::read(r)?;
 
             Ok((
-                TransparentAddressId::new(account_id, scope, address_index),
+                address_id,
                 transparent::encode_address(
                     &chain_type,
                     unified_key_store
-                        .get(&account_id)
+                        .get(&address_id.account_id())
                         .ok_or(Error::new(
                             ErrorKind::InvalidData,
                             format!(
                                 "unified addresses found for account {} but was account not found",
-                                u32::from(account_id)
+                                u32::from(address_id.account_id())
                             ),
                         ))?
-                        .generate_transparent_address(address_index, scope)
+                        .generate_transparent_address(
+                            address_id.address_index(),
+                            address_id.scope(),
+                        )
                         .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?,
                 ),
             ))
@@ -590,11 +584,13 @@ impl LightWallet {
                 .collect::<HashMap<_, _>>();
         let nullifier_map = NullifierMap::read(&mut reader, ())?;
         let outpoint_map = Vector::read(&mut reader, |mut r| {
-            let outpoint_txid = TxId::read(&mut r)?;
-            let output_index = if version >= 40 {
-                r.read_u32::<LittleEndian>()?
+            let output_id = if version >= 40 {
+                OutputId::read(&mut r)?
             } else {
-                u32::from(r.read_u16::<LittleEndian>()?)
+                OutputId::new(
+                    TxId::read(&mut r)?,
+                    u32::from(r.read_u16::<LittleEndian>()?),
+                )
             };
             let scan_target = if version >= 37 {
                 ScanTarget::read(r, ())?
@@ -609,7 +605,7 @@ impl LightWallet {
                 }
             };
 
-            Ok((OutputId::new(outpoint_txid, output_index), scan_target))
+            Ok((output_id, scan_target))
         })?
         .into_iter()
         .collect::<BTreeMap<_, _>>();
