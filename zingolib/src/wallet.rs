@@ -8,9 +8,7 @@ use bip0039::Mnemonic;
 use zcash_keys::address::UnifiedAddress;
 use zcash_primitives::transaction::TxId;
 use zcash_protocol::consensus::{BlockHeight, Parameters};
-use zcash_transparent::keys::NonHardenedChildIndex;
 
-use pepper_sync::keys::transparent::{self, TransparentScope};
 use pepper_sync::wallet::{ScanTarget, ShardTrees};
 use pepper_sync::{
     keys::transparent::TransparentAddressId,
@@ -19,7 +17,7 @@ use pepper_sync::{
 use zingolib_price::PriceList;
 
 use crate::config::{ChainType, WalletConfig};
-use error::{KeyError, PriceError, WalletError};
+use error::{PriceError, WalletError};
 use keys::unified::{UnifiedAddressId, UnifiedKeyStore};
 
 pub mod error;
@@ -201,39 +199,11 @@ impl LightWallet {
             ));
         }
 
-        let unified_key = unified_key_store
-            .get(&zip32::AccountId::ZERO)
-            .expect("account 0 must exist");
-        let mut unified_addresses = BTreeMap::new();
-        if let Some(receivers) = unified_key.default_receivers() {
-            let unified_address_id = UnifiedAddressId {
-                account_id: zip32::AccountId::ZERO,
-                address_index: 0,
-            };
-            let first_unified_address = unified_key
-                .generate_unified_address(unified_address_id.address_index, receivers)?;
-            unified_addresses.insert(unified_address_id, first_unified_address.clone());
-        }
-
-        let mut transparent_addresses = BTreeMap::new();
-        let transparent_address_id = TransparentAddressId::new(
-            zip32::AccountId::ZERO,
-            TransparentScope::External,
-            NonHardenedChildIndex::ZERO,
+        let (unified_addresses, transparent_addresses) = disk::first_addresses(
+            unified_key_store
+                .get(&zip32::AccountId::ZERO)
+                .expect("account 0 must exist"),
         );
-        match unified_key.generate_transparent_address(
-            transparent_address_id.address_index(),
-            transparent_address_id.scope(),
-        ) {
-            Ok(first_transparent_address) => {
-                transparent_addresses.insert(
-                    transparent_address_id,
-                    transparent::encode_address(&chain_type, first_transparent_address),
-                );
-            }
-            Err(KeyError::NoViewCapability) => (),
-            Err(e) => return Err(e.into()),
-        }
 
         // Derive the at-rest encryption key now (once), if requested, so the first save is
         // already encrypted.
@@ -241,9 +211,8 @@ impl LightWallet {
             .map(encryption::EncryptionConfig::derive)
             .transpose()?;
 
-        Ok(Self {
-            current_version: LightWallet::serialized_version(),
-            read_version: LightWallet::serialized_version(),
+        let mut wallet = Self::from_file(disk::WalletFile {
+            read_version: Self::serialized_version(),
             chain_type,
             mnemonic,
             birthday: BlockHeight::from_u32(birthday.into()),
@@ -258,11 +227,11 @@ impl LightWallet {
             sync_state: SyncState::new(),
             wallet_settings,
             price_list: PriceList::new(),
-            save_required: true,
-            #[cfg(any(test, feature = "testutils"))]
-            send_proposal: None,
-            encryption,
-        })
+        })?;
+        wallet.save_required = true;
+        wallet.encryption = encryption;
+
+        Ok(wallet)
     }
 
     /// Returns current wallet version.

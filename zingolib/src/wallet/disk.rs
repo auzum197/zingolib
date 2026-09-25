@@ -1,7 +1,7 @@
 //! This mod contains write and read functionality of impl `LightWallet`
 
 use std::{
-    collections::{BTreeMap, HashMap},
+    collections::{BTreeMap, BTreeSet, HashMap},
     io::{self, Error, ErrorKind, Read, Write},
     num::NonZeroU32,
 };
@@ -46,83 +46,219 @@ use pepper_sync::{
     },
 };
 
+/// Decoded contents of a wallet file. Every field is public so the wallet can be
+/// assembled from it without the file layer knowing anything about [`LightWallet`].
+pub struct WalletFile {
+    /// Layout version the file was read with.
+    pub read_version: u64,
+    /// Network the wallet belongs to.
+    pub chain_type: ChainType,
+    /// Seed phrase, absent for wallets built from keys.
+    pub mnemonic: Option<Mnemonic>,
+    /// First block that can hold wallet activity.
+    pub birthday: BlockHeight,
+    /// Keys per account.
+    pub unified_key_store: BTreeMap<AccountId, UnifiedKeyStore>,
+    /// Receiver selection per unified address, from which the address is re-derived.
+    pub unified_addresses: BTreeMap<UnifiedAddressId, ReceiverSelection>,
+    /// Derivation paths of the transparent addresses in use.
+    pub transparent_addresses: BTreeSet<TransparentAddressId>,
+    /// Blocks with wallet activity.
+    pub wallet_blocks: BTreeMap<BlockHeight, WalletBlock>,
+    /// Transactions with wallet activity.
+    pub wallet_transactions: HashMap<TxId, WalletTransaction>,
+    /// Nullifiers of wallet notes.
+    pub nullifier_map: NullifierMap,
+    /// Outpoints awaiting targeted scanning.
+    pub outpoint_map: BTreeMap<OutputId, ScanTarget>,
+    /// Note commitment trees.
+    pub shard_trees: ShardTrees,
+    /// Scan progress.
+    pub sync_state: SyncState,
+    /// Sync and confirmation settings.
+    pub wallet_settings: WalletSettings,
+    /// Cached ZEC prices.
+    pub price_list: PriceList,
+}
+
+/// Borrowed view of what goes into a wallet file, so a wallet can be written without
+/// cloning its collections.
+pub struct WalletFileRef<'a> {
+    /// Network the wallet belongs to.
+    pub chain_type: ChainType,
+    /// Seed phrase, absent for wallets built from keys.
+    pub mnemonic: Option<&'a Mnemonic>,
+    /// First block that can hold wallet activity.
+    pub birthday: BlockHeight,
+    /// Keys per account.
+    pub unified_key_store: &'a BTreeMap<AccountId, UnifiedKeyStore>,
+    /// Receiver selection per unified address.
+    pub unified_addresses: BTreeMap<UnifiedAddressId, ReceiverSelection>,
+    /// Derivation paths of the transparent addresses in use.
+    pub transparent_addresses: BTreeSet<TransparentAddressId>,
+    /// Blocks with wallet activity.
+    pub wallet_blocks: &'a BTreeMap<BlockHeight, WalletBlock>,
+    /// Transactions with wallet activity.
+    pub wallet_transactions: &'a HashMap<TxId, WalletTransaction>,
+    /// Nullifiers of wallet notes.
+    pub nullifier_map: &'a NullifierMap,
+    /// Outpoints awaiting targeted scanning.
+    pub outpoint_map: &'a BTreeMap<OutputId, ScanTarget>,
+    /// Note commitment trees.
+    pub shard_trees: &'a ShardTrees,
+    /// Scan progress.
+    pub sync_state: &'a SyncState,
+    /// Sync and confirmation settings.
+    pub wallet_settings: &'a WalletSettings,
+    /// Cached ZEC prices.
+    pub price_list: &'a PriceList,
+}
+
+/// The address set every wallet starts with: the default unified address of account 0
+/// and its first external transparent address. Address derivation later drops the
+/// transparent entry when the keys cannot view transparent funds.
+pub(crate) fn first_addresses(
+    unified_key: &UnifiedKeyStore,
+) -> (
+    BTreeMap<UnifiedAddressId, ReceiverSelection>,
+    BTreeSet<TransparentAddressId>,
+) {
+    let mut unified_addresses = BTreeMap::new();
+    if let Some(receivers) = unified_key.default_receivers() {
+        unified_addresses.insert(
+            UnifiedAddressId {
+                account_id: AccountId::ZERO,
+                address_index: 0,
+            },
+            receivers,
+        );
+    }
+    let transparent_addresses = BTreeSet::from([TransparentAddressId::new(
+        AccountId::ZERO,
+        TransparentScope::External,
+        NonHardenedChildIndex::ZERO,
+    )]);
+    (unified_addresses, transparent_addresses)
+}
+
 impl LightWallet {
     /// Changes in version 41:
     /// `ChainType` serialized as u8 instead of string to decouple from fmt::Display and reduce bytes stored.
     #[must_use]
     pub const fn serialized_version() -> u64 {
-        41
+        WalletFile::VERSION
     }
 
     /// Serialize into `writer`
     pub fn write<W: Write>(
-        &mut self,
-        mut writer: W,
+        &self,
+        writer: W,
         consensus_parameters: &impl consensus::Parameters,
     ) -> io::Result<()> {
-        writer.write_u64::<LittleEndian>(Self::serialized_version())?;
-        writer.write_u8(match self.chain_type() {
-            ChainType::Mainnet => 0,
-            ChainType::Testnet => 1,
-            ChainType::Regtest(_) => 2,
-        })?;
-        let seed_bytes = match &self.mnemonic {
-            Some(m) => m.clone().into_entropy(),
-            None => vec![],
+        WalletFileRef {
+            chain_type: self.chain_type,
+            mnemonic: self.mnemonic.as_ref(),
+            birthday: self.birthday,
+            unified_key_store: &self.unified_key_store,
+            unified_addresses: self
+                .unified_addresses
+                .iter()
+                .map(|(address_id, address)| {
+                    (
+                        *address_id,
+                        ReceiverSelection {
+                            orchard: address.orchard().is_some(),
+                            sapling: address.sapling().is_some(),
+                        },
+                    )
+                })
+                .collect(),
+            transparent_addresses: self.transparent_addresses.keys().copied().collect(),
+            wallet_blocks: &self.wallet_blocks,
+            wallet_transactions: &self.wallet_transactions,
+            nullifier_map: &self.nullifier_map,
+            outpoint_map: &self.outpoint_map,
+            shard_trees: &self.shard_trees,
+            sync_state: &self.sync_state,
+            wallet_settings: &self.wallet_settings,
+            price_list: &self.price_list,
+        }
+        .write(writer, consensus_parameters)
+    }
+
+    /// Derives the wallet's addresses from the keys and address ids held in `file`.
+    pub(crate) fn from_file(file: WalletFile) -> Result<Self, KeyError> {
+        let WalletFile {
+            read_version,
+            chain_type,
+            mnemonic,
+            birthday,
+            unified_key_store,
+            unified_addresses,
+            transparent_addresses,
+            wallet_blocks,
+            wallet_transactions,
+            nullifier_map,
+            outpoint_map,
+            shard_trees,
+            sync_state,
+            wallet_settings,
+            price_list,
+        } = file;
+
+        let key_store = |account_id: AccountId| {
+            unified_key_store
+                .get(&account_id)
+                .ok_or(KeyError::NoAccountKeys)
         };
-        Vector::write(&mut writer, &seed_bytes, |w, byte| w.write_u8(*byte))?;
-        writer.write_u32::<LittleEndian>(self.birthday.into())?;
-        Vector::write(
-            &mut writer,
-            &self.unified_key_store.iter().collect::<Vec<_>>(),
-            |w, (account_id, unified_key)| {
-                w.write_u32::<LittleEndian>(u32::from(**account_id))?;
-                unified_key.write(w, self.chain_type)
-            },
-        )?;
-        // TODO: also store receiver selections in encoded memos.
-        Vector::write(
-            &mut writer,
-            &self.unified_addresses.iter().collect::<Vec<_>>(),
-            |w, (address_id, address)| {
-                w.write_u32::<LittleEndian>(address_id.account_id.into())?;
-                w.write_u32::<LittleEndian>(address_id.address_index)?;
-                ReceiverSelection {
-                    orchard: address.orchard().is_some(),
-                    sapling: address.sapling().is_some(),
+
+        let unified_addresses = unified_addresses
+            .into_iter()
+            .map(|(address_id, receivers)| {
+                let address = key_store(address_id.account_id)?
+                    .generate_unified_address(address_id.address_index, receivers)?;
+                Ok((address_id, address))
+            })
+            .collect::<Result<BTreeMap<_, _>, KeyError>>()?;
+
+        let mut encoded_transparent_addresses = BTreeMap::new();
+        for address_id in transparent_addresses {
+            match key_store(address_id.account_id())?
+                .generate_transparent_address(address_id.address_index(), address_id.scope())
+            {
+                Ok(address) => {
+                    encoded_transparent_addresses.insert(
+                        address_id,
+                        transparent::encode_address(&chain_type, address),
+                    );
                 }
-                .write(w, ())
-            },
-        )?;
-        Vector::write(
-            &mut writer,
-            &self.transparent_addresses.keys().collect::<Vec<_>>(),
-            |w, address_id| address_id.write(w),
-        )?;
-        Vector::write(
-            &mut writer,
-            &self.wallet_blocks.values().collect::<Vec<_>>(),
-            |w, &block| block.write(w, ()),
-        )?;
-        Vector::write(
-            &mut writer,
-            &self.wallet_transactions.values().collect::<Vec<_>>(),
-            |w, &transaction| transaction.write(w, consensus_parameters),
-        )?;
-        self.nullifier_map.write(&mut writer, ())?;
-        Vector::write(
-            &mut writer,
-            &self.outpoint_map.iter().collect::<Vec<_>>(),
-            |w, &(&output_id, &scan_target)| {
-                output_id.write(&mut *w)?;
-                scan_target.write(w, ())
-            },
-        )?;
-        self.shard_trees.write(&mut writer, ())?;
-        self.sync_state.write(&mut writer, ())?;
-        self.wallet_settings.sync_config.write(&mut writer, ())?;
-        writer.write_u32::<LittleEndian>(self.wallet_settings.min_confirmations.into())?;
-        self.price_list.write(&mut writer, ())
+                Err(KeyError::NoViewCapability) => (),
+                Err(e) => return Err(e),
+            }
+        }
+
+        Ok(Self {
+            current_version: Self::serialized_version(),
+            read_version,
+            chain_type,
+            mnemonic,
+            birthday,
+            unified_key_store,
+            unified_addresses,
+            transparent_addresses: encoded_transparent_addresses,
+            wallet_blocks,
+            wallet_transactions,
+            nullifier_map,
+            outpoint_map,
+            shard_trees,
+            sync_state,
+            wallet_settings,
+            price_list,
+            #[cfg(any(test, feature = "testutils"))]
+            send_proposal: None,
+            save_required: false,
+            encryption: None,
+        })
     }
 
     /// Deserialize into `reader`
@@ -162,6 +298,18 @@ impl LightWallet {
     }
 
     // TODO: update to return WalletError
+    pub fn read<R: Read>(reader: R, chain_type: ChainType) -> io::Result<Self> {
+        Self::from_file(WalletFile::read(reader, chain_type)?)
+            .map_err(|e| Error::new(ErrorKind::InvalidData, e))
+    }
+}
+
+impl WalletFile {
+    /// Changes in version 41:
+    /// `ChainType` serialized as u8 instead of string to decouple from fmt::Display and reduce bytes stored.
+    pub const VERSION: u64 = 41;
+
+    /// Deserialize into `reader`
     pub fn read<R: Read>(mut reader: R, chain_type: ChainType) -> io::Result<Self> {
         let version = reader.read_u64::<LittleEndian>()?;
         info!("Reading wallet version {version}");
@@ -305,47 +453,10 @@ impl LightWallet {
             }
         }
 
+        let (unified_addresses, transparent_addresses) =
+            first_addresses(&wallet_capability.unified_key_store);
         let mut unified_key_store = BTreeMap::new();
         unified_key_store.insert(zip32::AccountId::ZERO, wallet_capability.unified_key_store);
-        let unified_key = unified_key_store
-            .get(&zip32::AccountId::ZERO)
-            .expect("account 0 must exist");
-        let mut unified_addresses = BTreeMap::new();
-        if let Some(receivers) = unified_key.default_receivers() {
-            let unified_address_id = UnifiedAddressId {
-                account_id: zip32::AccountId::ZERO,
-                address_index: 0,
-            };
-            let first_unified_address = unified_key
-                .generate_unified_address(unified_address_id.address_index, receivers)
-                .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
-            unified_addresses.insert(unified_address_id, first_unified_address.clone());
-        }
-
-        let mut transparent_addresses = BTreeMap::new();
-        let transparent_address_id = TransparentAddressId::new(
-            zip32::AccountId::ZERO,
-            TransparentScope::External,
-            NonHardenedChildIndex::ZERO,
-        );
-        match unified_key.generate_transparent_address(
-            transparent_address_id.address_index(),
-            transparent_address_id.scope(),
-        ) {
-            Ok(first_transparent_address) => {
-                transparent_addresses.insert(
-                    transparent_address_id,
-                    transparent::encode_address(&chain_type, first_transparent_address),
-                );
-            }
-            Err(KeyError::NoViewCapability) => (),
-            Err(e) => {
-                return Err(Error::new(
-                    ErrorKind::InvalidData,
-                    format!("failed to create transparent address. {e}"),
-                ));
-            }
-        }
 
         // setup targetted scanning from zingo 1.x transaction data
         let mut sync_state = SyncState::new();
@@ -368,26 +479,20 @@ impl LightWallet {
                 .collect::<Vec<_>>(),
         );
 
-        let lw = Self {
-            current_version: LightWallet::serialized_version(),
+        Ok(Self {
             read_version: version,
+            chain_type,
             mnemonic,
             birthday,
             unified_key_store,
-            price_list: PriceList::new(),
+            unified_addresses,
+            transparent_addresses,
             wallet_blocks: BTreeMap::new(),
             wallet_transactions: HashMap::new(),
             nullifier_map: NullifierMap::new(),
             outpoint_map: BTreeMap::new(),
             shard_trees: ShardTrees::new(),
             sync_state,
-            transparent_addresses,
-            unified_addresses,
-            chain_type,
-            #[cfg(any(test, feature = "testutils"))]
-            send_proposal: None,
-            save_required: false,
-            encryption: None,
             wallet_settings: WalletSettings {
                 sync_config: SyncConfig {
                     transparent_address_discovery: TransparentAddressDiscovery::minimal(),
@@ -396,9 +501,8 @@ impl LightWallet {
                 },
                 min_confirmations: NonZeroU32::try_from(3).unwrap(),
             },
-        };
-
-        Ok(lw)
+            price_list: PriceList::new(),
+        })
     }
 
     fn read_v32<R: Read>(mut reader: R, chain_type: ChainType, version: u64) -> io::Result<Self> {
@@ -488,89 +592,23 @@ impl LightWallet {
                     account_id,
                     address_index,
                 },
-                unified_key_store
-                    .get(&account_id)
-                    .ok_or(Error::new(
-                        ErrorKind::InvalidData,
-                        format!(
-                            "unified addresses found for account {} but was account not found",
-                            u32::from(account_id)
-                        ),
-                    ))?
-                    .generate_unified_address(address_index, receivers)
-                    .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?,
+                receivers,
             ))
         })?
         .into_iter()
         .collect::<BTreeMap<_, _>>();
-        let mut transparent_addresses = Vector::read(&mut reader, |r| {
-            let address_id = TransparentAddressId::read(r)?;
-
-            Ok((
-                address_id,
-                transparent::encode_address(
-                    &chain_type,
-                    unified_key_store
-                        .get(&address_id.account_id())
-                        .ok_or(Error::new(
-                            ErrorKind::InvalidData,
-                            format!(
-                                "unified addresses found for account {} but was account not found",
-                                u32::from(address_id.account_id())
-                            ),
-                        ))?
-                        .generate_transparent_address(
-                            address_id.address_index(),
-                            address_id.scope(),
-                        )
-                        .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?,
-                ),
-            ))
-        })?
-        .into_iter()
-        .collect::<BTreeMap<_, _>>();
+        let mut transparent_addresses =
+            Vector::read(&mut reader, |r| TransparentAddressId::read(r))?
+                .into_iter()
+                .collect::<BTreeSet<_>>();
 
         // reset zingo 2.0 test version addresses
         if version < 36 {
-            let unified_key = unified_key_store
-                .get(&zip32::AccountId::ZERO)
-                .expect("account 0 must exist");
-            unified_addresses = BTreeMap::new();
-            if let Some(receivers) = unified_key.default_receivers() {
-                let unified_address_id = UnifiedAddressId {
-                    account_id: zip32::AccountId::ZERO,
-                    address_index: 0,
-                };
-                let first_unified_address = unified_key
-                    .generate_unified_address(unified_address_id.address_index, receivers)
-                    .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
-                unified_addresses.insert(unified_address_id, first_unified_address.clone());
-            }
-
-            transparent_addresses = BTreeMap::new();
-            let transparent_address_id = TransparentAddressId::new(
-                zip32::AccountId::ZERO,
-                TransparentScope::External,
-                NonHardenedChildIndex::ZERO,
+            (unified_addresses, transparent_addresses) = first_addresses(
+                unified_key_store
+                    .get(&zip32::AccountId::ZERO)
+                    .expect("account 0 must exist"),
             );
-            match unified_key.generate_transparent_address(
-                transparent_address_id.address_index(),
-                transparent_address_id.scope(),
-            ) {
-                Ok(first_transparent_address) => {
-                    transparent_addresses.insert(
-                        transparent_address_id,
-                        transparent::encode_address(&chain_type, first_transparent_address),
-                    );
-                }
-                Err(KeyError::NoViewCapability) => (),
-                Err(e) => {
-                    return Err(Error::new(
-                        ErrorKind::InvalidData,
-                        format!("failed to create transparent address. {e}"),
-                    ));
-                }
-            }
         }
 
         let wallet_blocks = Vector::read(&mut reader, |r| WalletBlock::read(r, ()))?
@@ -640,7 +678,6 @@ impl LightWallet {
         };
 
         Ok(Self {
-            current_version: LightWallet::serialized_version(),
             read_version: version,
             chain_type,
             mnemonic,
@@ -656,13 +693,78 @@ impl LightWallet {
             sync_state,
             wallet_settings,
             price_list,
-            #[cfg(any(test, feature = "testutils"))]
-            send_proposal: None,
-            save_required: false,
-            encryption: None,
         })
     }
 }
 
 #[cfg(any(test, feature = "testutils"))]
 pub mod testing;
+
+impl WalletFileRef<'_> {
+    /// Serialize into `writer`
+    pub fn write<W: Write>(
+        &self,
+        mut writer: W,
+        consensus_parameters: &impl consensus::Parameters,
+    ) -> io::Result<()> {
+        writer.write_u64::<LittleEndian>(WalletFile::VERSION)?;
+        writer.write_u8(match self.chain_type {
+            ChainType::Mainnet => 0,
+            ChainType::Testnet => 1,
+            ChainType::Regtest(_) => 2,
+        })?;
+        let seed_bytes = match self.mnemonic {
+            Some(m) => m.clone().into_entropy(),
+            None => vec![],
+        };
+        Vector::write(&mut writer, &seed_bytes, |w, byte| w.write_u8(*byte))?;
+        writer.write_u32::<LittleEndian>(self.birthday.into())?;
+        Vector::write(
+            &mut writer,
+            &self.unified_key_store.iter().collect::<Vec<_>>(),
+            |w, (account_id, unified_key)| {
+                w.write_u32::<LittleEndian>(u32::from(**account_id))?;
+                unified_key.write(w, self.chain_type)
+            },
+        )?;
+        // TODO: also store receiver selections in encoded memos.
+        Vector::write(
+            &mut writer,
+            &self.unified_addresses.iter().collect::<Vec<_>>(),
+            |w, (address_id, receivers)| {
+                w.write_u32::<LittleEndian>(address_id.account_id.into())?;
+                w.write_u32::<LittleEndian>(address_id.address_index)?;
+                receivers.write(w, ())
+            },
+        )?;
+        Vector::write(
+            &mut writer,
+            &self.transparent_addresses.iter().collect::<Vec<_>>(),
+            |w, address_id| address_id.write(w),
+        )?;
+        Vector::write(
+            &mut writer,
+            &self.wallet_blocks.values().collect::<Vec<_>>(),
+            |w, &block| block.write(w, ()),
+        )?;
+        Vector::write(
+            &mut writer,
+            &self.wallet_transactions.values().collect::<Vec<_>>(),
+            |w, &transaction| transaction.write(w, consensus_parameters),
+        )?;
+        self.nullifier_map.write(&mut writer, ())?;
+        Vector::write(
+            &mut writer,
+            &self.outpoint_map.iter().collect::<Vec<_>>(),
+            |w, &(&output_id, &scan_target)| {
+                output_id.write(&mut *w)?;
+                scan_target.write(w, ())
+            },
+        )?;
+        self.shard_trees.write(&mut writer, ())?;
+        self.sync_state.write(&mut writer, ())?;
+        self.wallet_settings.sync_config.write(&mut writer, ())?;
+        writer.write_u32::<LittleEndian>(self.wallet_settings.min_confirmations.into())?;
+        self.price_list.write(&mut writer, ())
+    }
+}
