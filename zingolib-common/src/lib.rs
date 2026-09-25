@@ -4,4 +4,5 @@
 #![forbid(unsafe_code)]
 
 pub mod memo;
+pub mod serialization;
 pub mod status;

@@ -1,22 +1,26 @@
-//! Provides unifying interfaces for transaction management across Sapling and Orchard
+//! Versioned binary encoding shared by every type persisted in the wallet file.
+
 use std::io::{self, Read, Write};
 
 use byteorder::ReadBytesExt;
 use tracing::{Level, event, instrument};
 
-/// TODO: Add Doc Comment Here!
+/// Binary encoding with a leading version byte.
+///
+/// Implementors write `VERSION` first and branch on the byte read back so older
+/// layouts stay readable. `ReadInput` and `WriteInput` carry context such as
+/// consensus parameters or the chain type.
 pub trait ReadableWriteable<ReadInput = (), WriteInput = ()>: Sized {
-    /// TODO: Add Doc Comment Here!
+    /// Layout version written by `write` and the newest one `read` accepts.
     const VERSION: u8;
 
-    /// TODO: Add Doc Comment Here!
+    /// Decode from `reader`.
     fn read<R: Read>(reader: R, input: ReadInput) -> io::Result<Self>;
 
-    /// TODO: Add Doc Comment Here!
+    /// Encode into `writer`.
     fn write<W: Write>(&self, writer: W, input: WriteInput) -> io::Result<()>;
 
-    /// Reads a serialized version of the struct from `reader`, and returns the
-    /// struct version. Else, returns an `io::Error` with `io::ErrorKind::InvalidData`.
+    /// Reads the version byte, rejecting layouts newer than `VERSION`.
     #[instrument(level = "info", skip(reader))]
     fn get_version<R: Read>(mut reader: R) -> io::Result<u8> {
         let external_version = reader.read_u8()?;

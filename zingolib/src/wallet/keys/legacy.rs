@@ -17,12 +17,14 @@ use zcash_keys::{
 };
 use zcash_transparent::address::TransparentAddress;
 
+use zingolib_common::serialization::ReadableWriteable;
+
 use super::unified::{
     KEY_TYPE_EMPTY, KEY_TYPE_SPEND, KEY_TYPE_VIEW, ReceiverSelection, UnifiedKeyStore,
 };
 use crate::{
     config::ChainType,
-    wallet::{error::KeyError, legacy::WitnessTrees, traits::ReadableWriteable},
+    wallet::{error::KeyError, legacy::WitnessTrees},
 };
 
 pub mod extended_transparent;
@@ -85,7 +87,7 @@ impl ReadableWriteable<ChainType, ChainType> for WalletCapability {
                 // due to missing BIP0032 transparent extended private key data
                 //
                 // USK is re-derived later from seed due to missing BIP0032 transparent extended private key data
-                let orchard_sk = orchard::keys::SpendingKey::read(&mut reader, ())?;
+                let orchard_sk = orchard::keys::SpendingKey::decode(&mut reader)?;
                 let sapling_sk = sapling_crypto::zip32::ExtendedSpendingKey::read(&mut reader)?;
                 let transparent_sk =
                     super::legacy::extended_transparent::ExtendedPrivKey::read(&mut reader, ())?;
@@ -213,10 +215,14 @@ impl ReadableWriteable<ChainType, ChainType> for WalletCapability {
     }
 }
 
-impl ReadableWriteable for orchard::keys::SpendingKey {
-    const VERSION: u8 = 0; //Not applicable
+/// Decodes a key out of the pre-unified wallet layout. Writing is not supported
+/// since that layout is only read during migration.
+trait LegacyKeyDecode: Sized {
+    fn decode<R: Read>(reader: R) -> io::Result<Self>;
+}
 
-    fn read<R: Read>(mut reader: R, _input: ()) -> io::Result<Self> {
+impl LegacyKeyDecode for orchard::keys::SpendingKey {
+    fn decode<R: Read>(mut reader: R) -> io::Result<Self> {
         let mut data = [0u8; 32];
         reader.read_exact(&mut data)?;
 
@@ -227,9 +233,28 @@ impl ReadableWriteable for orchard::keys::SpendingKey {
             )
         })
     }
+}
 
-    fn write<W: Write>(&self, mut _writer: W, _input: ()) -> io::Result<()> {
-        unimplemented!()
+impl LegacyKeyDecode for orchard::keys::FullViewingKey {
+    fn decode<R: Read>(reader: R) -> io::Result<Self> {
+        Self::read(reader)
+    }
+}
+
+impl LegacyKeyDecode for sapling_crypto::zip32::ExtendedSpendingKey {
+    fn decode<R: Read>(reader: R) -> io::Result<Self> {
+        Self::read(reader)
+    }
+}
+
+impl LegacyKeyDecode for sapling_crypto::zip32::DiversifiableFullViewingKey {
+    fn decode<R: Read>(mut reader: R) -> io::Result<Self> {
+        let mut fvk_bytes = [0u8; 128];
+        reader.read_exact(&mut fvk_bytes)?;
+        Self::from_bytes(&fvk_bytes).ok_or(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "Couldn't read a Sapling Diversifiable Full Viewing Key",
+        ))
     }
 }
 
@@ -245,10 +270,10 @@ pub enum Capability<ViewingKeyType, SpendKeyType> {
     Spend(SpendKeyType),
 }
 
-impl<V, S> ReadableWriteable<(), ()> for Capability<V, S>
+impl<V, S> ReadableWriteable for Capability<V, S>
 where
-    V: ReadableWriteable<(), ()>,
-    S: ReadableWriteable<(), ()>,
+    V: LegacyKeyDecode,
+    S: LegacyKeyDecode,
 {
     const VERSION: u8 = 1;
 
@@ -257,8 +282,8 @@ where
         let capability_type = reader.read_u8()?;
         Ok(match capability_type {
             KEY_TYPE_EMPTY => Capability::None,
-            KEY_TYPE_VIEW => Capability::View(V::read(&mut reader, ())?),
-            KEY_TYPE_SPEND => Capability::Spend(S::read(&mut reader, ())?),
+            KEY_TYPE_VIEW => Capability::View(V::decode(&mut reader)?),
+            KEY_TYPE_SPEND => Capability::Spend(S::decode(&mut reader)?),
             x => {
                 return Err(io::Error::new(
                     io::ErrorKind::InvalidData,
@@ -362,47 +387,4 @@ pub(crate) fn legacy_sks_to_usk(
     usk_bytes.write_all(&account_tkey_bytes)?;
 
     UnifiedSpendingKey::from_bytes(Era::Orchard, &usk_bytes).map_err(|_| KeyError::KeyDecodingError)
-}
-
-impl ReadableWriteable for sapling_crypto::zip32::ExtendedSpendingKey {
-    const VERSION: u8 = 0; //Not applicable
-
-    fn read<R: Read>(reader: R, _input: ()) -> io::Result<Self> {
-        Self::read(reader)
-    }
-
-    fn write<W: Write>(&self, writer: W, _input: ()) -> io::Result<()> {
-        self.write(writer)
-    }
-}
-
-impl ReadableWriteable for sapling_crypto::zip32::DiversifiableFullViewingKey {
-    const VERSION: u8 = 0; //Not applicable
-
-    fn read<R: Read>(mut reader: R, _input: ()) -> io::Result<Self> {
-        let mut fvk_bytes = [0u8; 128];
-        reader.read_exact(&mut fvk_bytes)?;
-        sapling_crypto::zip32::DiversifiableFullViewingKey::from_bytes(&fvk_bytes).ok_or(
-            io::Error::new(
-                io::ErrorKind::InvalidInput,
-                "Couldn't read a Sapling Diversifiable Full Viewing Key",
-            ),
-        )
-    }
-
-    fn write<W: Write>(&self, mut writer: W, _input: ()) -> io::Result<()> {
-        writer.write_all(&self.to_bytes())
-    }
-}
-
-impl ReadableWriteable for orchard::keys::FullViewingKey {
-    const VERSION: u8 = 0; //Not applicable
-
-    fn read<R: Read>(reader: R, _input: ()) -> io::Result<Self> {
-        Self::read(reader)
-    }
-
-    fn write<W: Write>(&self, writer: W, _input: ()) -> io::Result<()> {
-        self.write(writer)
-    }
 }

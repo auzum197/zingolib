@@ -45,6 +45,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `LightClientError`. `zcash_proofs` and the Sapling parameter download are now test-only.
 
 ### Removed
+- `wallet::traits`: `ReadableWriteable` now lives in `zingolib_common::serialization`
 - `LightClientError::SendError`, `lightclient::error::SendError` and `TransmissionError`,
   `wallet::error::CalculateTransactionError`, `ProposeSendError` and `ProposeShieldError`:
   moved to `testutils::send::error`.

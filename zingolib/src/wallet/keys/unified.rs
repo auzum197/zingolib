@@ -18,7 +18,7 @@ use zip32::{AccountId, DiversifierIndex};
 
 use crate::config::ChainType;
 use crate::wallet::error::KeyError;
-use crate::wallet::traits::ReadableWriteable;
+use zingolib_common::serialization::ReadableWriteable;
 
 pub(crate) const KEY_TYPE_EMPTY: u8 = 0;
 pub(crate) const KEY_TYPE_VIEW: u8 = 1;
@@ -240,9 +240,7 @@ impl ReadableWriteable<ChainType, ChainType> for UnifiedKeyStore {
         let _version = Self::get_version(&mut reader)?;
         let key_type = reader.read_u8()?;
         Ok(match key_type {
-            KEY_TYPE_SPEND => {
-                UnifiedKeyStore::Spend(Box::new(UnifiedSpendingKey::read(reader, ())?))
-            }
+            KEY_TYPE_SPEND => UnifiedKeyStore::Spend(Box::new(read_usk(reader)?)),
             KEY_TYPE_VIEW => {
                 UnifiedKeyStore::View(Box::new(UnifiedFullViewingKey::read(reader, input)?))
             }
@@ -261,7 +259,7 @@ impl ReadableWriteable<ChainType, ChainType> for UnifiedKeyStore {
         match self {
             UnifiedKeyStore::Spend(usk) => {
                 writer.write_u8(KEY_TYPE_SPEND)?;
-                usk.write(&mut writer, ())
+                write_usk(usk, &mut writer)
             }
             UnifiedKeyStore::View(ufvk) => {
                 writer.write_u8(KEY_TYPE_VIEW)?;
@@ -271,25 +269,21 @@ impl ReadableWriteable<ChainType, ChainType> for UnifiedKeyStore {
         }
     }
 }
-impl ReadableWriteable for UnifiedSpendingKey {
-    const VERSION: u8 = 0;
+fn read_usk<R: Read>(mut reader: R) -> io::Result<UnifiedSpendingKey> {
+    let len = CompactSize::read(&mut reader)?;
+    let mut usk = vec![0u8; len as usize];
+    reader.read_exact(&mut usk)?;
 
-    fn read<R: Read>(mut reader: R, _input: ()) -> io::Result<Self> {
-        let len = CompactSize::read(&mut reader)?;
-        let mut usk = vec![0u8; len as usize];
-        reader.read_exact(&mut usk)?;
-
-        UnifiedSpendingKey::from_bytes(Era::Orchard, &usk)
-            .map_err(|_| io::Error::new(io::ErrorKind::InvalidData, "USK bytes are invalid"))
-    }
-
-    fn write<W: Write>(&self, mut writer: W, _input: ()) -> io::Result<()> {
-        let usk_bytes = self.to_bytes(Era::Orchard);
-        CompactSize::write(&mut writer, usk_bytes.len())?;
-        writer.write_all(&usk_bytes)?;
-        Ok(())
-    }
+    UnifiedSpendingKey::from_bytes(Era::Orchard, &usk)
+        .map_err(|_| io::Error::new(io::ErrorKind::InvalidData, "USK bytes are invalid"))
 }
+
+fn write_usk<W: Write>(usk: &UnifiedSpendingKey, mut writer: W) -> io::Result<()> {
+    let usk_bytes = usk.to_bytes(Era::Orchard);
+    CompactSize::write(&mut writer, usk_bytes.len())?;
+    writer.write_all(&usk_bytes)
+}
+
 impl ReadableWriteable<ChainType, ChainType> for UnifiedFullViewingKey {
     const VERSION: u8 = 0;
 

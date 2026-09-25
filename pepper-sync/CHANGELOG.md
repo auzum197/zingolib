@@ -36,6 +36,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `config::DEFAULT_EVENT_CHANNEL_CAPACITY`). Serialized version incremented to 2.
 
 ### Changed
+- wallet types and `config::SyncConfig` / `config::PerformanceLevel`: inherent `read` and
+  `write` replaced by `zingolib_common::serialization::ReadableWriteable` impls. Reading now
+  rejects layout versions newer than the crate knows, and `write` takes `&self` for
+  `SyncState` and `ShardTrees`.
 - `sync::sync` fn: added `events: SyncEmitter` parameter.
 - `sync::sync_status` fn: reduced to a reconcile getter returning facts only
   (scan range coverage and cumulative scanned counts). Derived metrics, including

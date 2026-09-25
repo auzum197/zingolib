@@ -20,6 +20,7 @@ use zcash_transparent::keys::NonHardenedChildIndex;
 
 use zingo_common_components::protocol::ActivationHeights;
 use zingo_netutils::lightwallet_protocol::TreeState;
+use zingolib_common::serialization::ReadableWriteable;
 use zingolib_price::PriceList;
 
 use secrecy::SecretString;
@@ -27,8 +28,8 @@ use secrecy::SecretString;
 use super::encryption;
 use super::keys::unified::{ReceiverSelection, UnifiedAddressId};
 use super::{LightWallet, error::KeyError};
+use crate::wallet::legacy::WalletOptions;
 use crate::wallet::{WalletSettings, legacy::WalletZecPriceInfo, utils};
-use crate::wallet::{legacy::WalletOptions, traits::ReadableWriteable};
 use crate::{
     config::ChainType,
     wallet::{
@@ -105,28 +106,28 @@ impl LightWallet {
         Vector::write(
             &mut writer,
             &self.wallet_blocks.values().collect::<Vec<_>>(),
-            |w, &block| block.write(w),
+            |w, &block| block.write(w, ()),
         )?;
         Vector::write(
             &mut writer,
             &self.wallet_transactions.values().collect::<Vec<_>>(),
             |w, &transaction| transaction.write(w, consensus_parameters),
         )?;
-        self.nullifier_map.write(&mut writer)?;
+        self.nullifier_map.write(&mut writer, ())?;
         Vector::write(
             &mut writer,
             &self.outpoint_map.iter().collect::<Vec<_>>(),
             |w, &(&output_id, &scan_target)| {
                 output_id.txid().write(&mut *w)?;
                 w.write_u32::<LittleEndian>(output_id.output_index())?;
-                scan_target.write(w)
+                scan_target.write(w, ())
             },
         )?;
-        self.shard_trees.write(&mut writer)?;
-        self.sync_state.write(&mut writer)?;
-        self.wallet_settings.sync_config.write(&mut writer)?;
+        self.shard_trees.write(&mut writer, ())?;
+        self.sync_state.write(&mut writer, ())?;
+        self.wallet_settings.sync_config.write(&mut writer, ())?;
         writer.write_u32::<LittleEndian>(self.wallet_settings.min_confirmations.into())?;
-        self.price_list.write(&mut writer)
+        self.price_list.write(&mut writer, ())
     }
 
     /// Deserialize into `reader`
@@ -578,7 +579,7 @@ impl LightWallet {
             }
         }
 
-        let wallet_blocks = Vector::read(&mut reader, |r| WalletBlock::read(r))?
+        let wallet_blocks = Vector::read(&mut reader, |r| WalletBlock::read(r, ()))?
             .into_iter()
             .map(|block| (block.block_height(), block))
             .collect::<BTreeMap<_, _>>();
@@ -587,7 +588,7 @@ impl LightWallet {
                 .into_iter()
                 .map(|transaction| (transaction.txid(), transaction))
                 .collect::<HashMap<_, _>>();
-        let nullifier_map = NullifierMap::read(&mut reader)?;
+        let nullifier_map = NullifierMap::read(&mut reader, ())?;
         let outpoint_map = Vector::read(&mut reader, |mut r| {
             let outpoint_txid = TxId::read(&mut r)?;
             let output_index = if version >= 40 {
@@ -596,7 +597,7 @@ impl LightWallet {
                 u32::from(r.read_u16::<LittleEndian>()?)
             };
             let scan_target = if version >= 37 {
-                ScanTarget::read(r)?
+                ScanTarget::read(r, ())?
             } else {
                 let block_height = BlockHeight::from_u32(r.read_u32::<LittleEndian>()?);
                 let txid = TxId::read(&mut r)?;
@@ -612,12 +613,12 @@ impl LightWallet {
         })?
         .into_iter()
         .collect::<BTreeMap<_, _>>();
-        let shard_trees = ShardTrees::read(&mut reader)?;
-        let sync_state = SyncState::read(&mut reader)?;
+        let shard_trees = ShardTrees::read(&mut reader, ())?;
+        let sync_state = SyncState::read(&mut reader, ())?;
 
         let wallet_settings = if version >= 33 {
             WalletSettings {
-                sync_config: SyncConfig::read(&mut reader)?,
+                sync_config: SyncConfig::read(&mut reader, ())?,
                 min_confirmations: if version >= 38 {
                     NonZeroU32::try_from(reader.read_u32::<LittleEndian>()?)
                         .expect("only valid non-zero u32s stored")
@@ -637,7 +638,7 @@ impl LightWallet {
         };
 
         let price_list = if version >= 34 {
-            PriceList::read(&mut reader)?
+            PriceList::read(&mut reader, ())?
         } else {
             PriceList::new()
         };

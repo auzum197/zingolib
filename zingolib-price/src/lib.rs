@@ -13,6 +13,7 @@ use byteorder::{LittleEndian, ReadBytesExt, WriteBytesExt};
 
 use serde::Deserialize;
 use zcash_encoding::{Optional, Vector};
+use zingolib_common::serialization::ReadableWriteable;
 
 /// Errors with price requests and parsing.
 // TODO: remove unused when historical data is implemented
@@ -135,14 +136,13 @@ impl PriceList {
         self.daily_prices
             .retain(|price| relevant_days.contains(&price.time) || price.time >= prune_below);
     }
+}
 
-    fn serialized_version() -> u8 {
-        0
-    }
+impl ReadableWriteable for PriceList {
+    const VERSION: u8 = 0;
 
-    /// Deserialize into `reader`
-    pub fn read<R: Read>(mut reader: R) -> std::io::Result<Self> {
-        let _version = reader.read_u8()?;
+    fn read<R: Read>(mut reader: R, _input: ()) -> std::io::Result<Self> {
+        Self::get_version(&mut reader)?;
 
         let time_last_updated = Optional::read(
             &mut reader,
@@ -168,9 +168,8 @@ impl PriceList {
         })
     }
 
-    /// Serialize into `writer`
-    pub fn write<W: Write>(&self, mut writer: W) -> std::io::Result<()> {
-        writer.write_u8(Self::serialized_version())?;
+    fn write<W: Write>(&self, mut writer: W, _input: ()) -> std::io::Result<()> {
+        writer.write_u8(Self::VERSION)?;
 
         Optional::write(
             &mut writer,

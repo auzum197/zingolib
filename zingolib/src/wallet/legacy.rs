@@ -23,9 +23,9 @@ use zcash_protocol::{
     memo::{Memo, MemoBytes},
 };
 use zingo_netutils::lightwallet_protocol::CompactBlock;
-use zingolib_common::status::ConfirmationStatus;
+use zingolib_common::{serialization::ReadableWriteable, status::ConfirmationStatus};
 
-use super::{keys::legacy::WalletCapability, traits::ReadableWriteable};
+use super::keys::legacy::WalletCapability;
 
 /// TODO: Add Doc Comment Here!
 #[derive(Clone, PartialEq)]
@@ -373,33 +373,26 @@ impl TransactionRecord {
     }
 }
 
-impl ReadableWriteable<(sapling_crypto::Diversifier, &WalletCapability)> for sapling_crypto::Note {
-    const VERSION: u8 = 1;
+fn read_legacy_sapling_note<R: Read>(
+    mut reader: R,
+    diversifier: sapling_crypto::Diversifier,
+    wallet_capability: &WalletCapability,
+) -> io::Result<sapling_crypto::Note> {
+    let _version = reader.read_u8()?;
+    let value = reader.read_u64::<LittleEndian>()?;
+    let rseed = read_sapling_rseed(&mut reader)?;
 
-    fn read<R: Read>(
-        mut reader: R,
-        (diversifier, wallet_capability): (sapling_crypto::Diversifier, &WalletCapability),
-    ) -> io::Result<Self> {
-        let _version = Self::get_version(&mut reader)?;
-        let value = reader.read_u64::<LittleEndian>()?;
-        let rseed = read_sapling_rseed(&mut reader)?;
-
-        Ok(
-            sapling_crypto::zip32::DiversifiableFullViewingKey::try_from(
-                &wallet_capability.unified_key_store,
-            )
-            .expect("to get an fvk from the unified key store")
-            .fvk()
-            .vk
-            .to_payment_address(diversifier)
-            .unwrap()
-            .create_note(sapling_crypto::value::NoteValue::from_raw(value), rseed),
+    Ok(
+        sapling_crypto::zip32::DiversifiableFullViewingKey::try_from(
+            &wallet_capability.unified_key_store,
         )
-    }
-
-    fn write<W: Write>(&self, mut _writer: W, _input: ()) -> io::Result<()> {
-        unimplemented!()
-    }
+        .expect("to get an fvk from the unified key store")
+        .fvk()
+        .vk
+        .to_payment_address(diversifier)
+        .unwrap()
+        .create_note(sapling_crypto::value::NoteValue::from_raw(value), rseed),
+    )
 }
 
 // Reading a note also needs the corresponding address to read from.
@@ -418,46 +411,39 @@ fn read_sapling_rseed<R: Read>(mut reader: R) -> io::Result<sapling_crypto::Rsee
     Ok(r)
 }
 
-impl ReadableWriteable<(orchard::keys::Diversifier, &WalletCapability)> for orchard::note::Note {
-    const VERSION: u8 = 1;
+fn read_legacy_orchard_note<R: Read>(
+    mut reader: R,
+    diversifier: orchard::keys::Diversifier,
+    wallet_capability: &WalletCapability,
+) -> io::Result<orchard::note::Note> {
+    let _version = reader.read_u8()?;
+    let value = reader.read_u64::<LittleEndian>()?;
+    let mut nullifier_bytes = [0; 32];
+    reader.read_exact(&mut nullifier_bytes)?;
+    let rho_nullifier = Option::from(orchard::note::Rho::from_bytes(&nullifier_bytes))
+        .ok_or(io::Error::new(io::ErrorKind::InvalidInput, "Bad Nullifier"))?;
 
-    fn read<R: Read>(
-        mut reader: R,
-        (diversifier, wallet_capability): (orchard::keys::Diversifier, &WalletCapability),
-    ) -> io::Result<Self> {
-        let _version = Self::get_version(&mut reader)?;
-        let value = reader.read_u64::<LittleEndian>()?;
-        let mut nullifier_bytes = [0; 32];
-        reader.read_exact(&mut nullifier_bytes)?;
-        let rho_nullifier = Option::from(orchard::note::Rho::from_bytes(&nullifier_bytes))
-            .ok_or(io::Error::new(io::ErrorKind::InvalidInput, "Bad Nullifier"))?;
+    let mut random_seed_bytes = [0; 32];
+    reader.read_exact(&mut random_seed_bytes)?;
+    let random_seed = Option::from(orchard::note::RandomSeed::from_bytes(
+        random_seed_bytes,
+        &rho_nullifier,
+    ))
+    .ok_or(io::Error::new(
+        io::ErrorKind::InvalidInput,
+        "Nullifier not for note",
+    ))?;
 
-        let mut random_seed_bytes = [0; 32];
-        reader.read_exact(&mut random_seed_bytes)?;
-        let random_seed = Option::from(orchard::note::RandomSeed::from_bytes(
-            random_seed_bytes,
-            &rho_nullifier,
-        ))
-        .ok_or(io::Error::new(
-            io::ErrorKind::InvalidInput,
-            "Nullifier not for note",
-        ))?;
-
-        let fvk = orchard::keys::FullViewingKey::try_from(&wallet_capability.unified_key_store)
-            .expect("to get an fvk from the unified key store");
-        Option::from(orchard::note::Note::from_parts(
-            fvk.address(diversifier, orchard::keys::Scope::External),
-            orchard::value::NoteValue::from_raw(value),
-            rho_nullifier,
-            random_seed,
-            orchard::note::NoteVersion::V2,
-        ))
-        .ok_or(io::Error::new(io::ErrorKind::InvalidInput, "Invalid note"))
-    }
-
-    fn write<W: Write>(&self, mut _writer: W, _input: ()) -> io::Result<()> {
-        unimplemented!()
-    }
+    let fvk = orchard::keys::FullViewingKey::try_from(&wallet_capability.unified_key_store)
+        .expect("to get an fvk from the unified key store");
+    Option::from(orchard::note::Note::from_parts(
+        fvk.address(diversifier, orchard::keys::Scope::External),
+        orchard::value::NoteValue::from_raw(value),
+        rho_nullifier,
+        random_seed,
+        orchard::note::NoteVersion::V2,
+    ))
+    .ok_or(io::Error::new(io::ErrorKind::InvalidInput, "Invalid note"))
 }
 
 /// TODO: Add Doc Comment Here!
@@ -623,7 +609,7 @@ impl
         reader.read_exact(&mut diversifier_bytes)?;
         let diversifier = sapling_crypto::Diversifier(diversifier_bytes);
 
-        let note = sapling_crypto::Note::read(&mut reader, (diversifier, wallet_capability))?;
+        let note = read_legacy_sapling_note(&mut reader, diversifier, wallet_capability)?;
 
         let witnessed_position = match external_version {
             5.. => Optional::read(&mut reader, <R>::read_u64::<LittleEndian>)?.map(Position::from),
@@ -795,7 +781,7 @@ impl
         reader.read_exact(&mut diversifier_bytes)?;
         let diversifier = orchard::keys::Diversifier::from_bytes(diversifier_bytes);
 
-        let note = orchard::Note::read(&mut reader, (diversifier, wallet_capability))?;
+        let note = read_legacy_orchard_note(&mut reader, diversifier, wallet_capability)?;
 
         let witnessed_position = match external_version {
             5.. => Optional::read(&mut reader, <R>::read_u64::<LittleEndian>)?.map(Position::from),
@@ -1106,30 +1092,6 @@ impl<Node: Hashable> WitnessCache<Node> {
     /// TODO: Add Doc Comment Here!
     pub fn last(&self) -> Option<&IncrementalWitness<Node, 32>> {
         self.witnesses.last()
-    }
-}
-
-impl ReadableWriteable for ConfirmationStatus {
-    const VERSION: u8 = 0;
-
-    fn read<R: Read>(mut reader: R, _input: ()) -> io::Result<Self> {
-        let _external_version = Self::get_version(&mut reader);
-        let status = reader.read_u8()?;
-        let height = BlockHeight::from_u32(reader.read_u32::<LittleEndian>()?);
-        match status {
-            0 => Ok(Self::Calculated(height)),
-            1 => Ok(Self::Transmitted(height)),
-            2 => Ok(Self::Mempool(height)),
-            3 => Ok(Self::Confirmed(height)),
-            _ => Err(io::Error::new(
-                io::ErrorKind::InvalidData,
-                "Bad confirmation status",
-            )),
-        }
-    }
-
-    fn write<W: Write>(&self, mut _writer: W, _input: ()) -> io::Result<()> {
-        unimplemented!()
     }
 }
 
