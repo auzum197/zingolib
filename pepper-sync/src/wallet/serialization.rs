@@ -4,16 +4,17 @@ use std::{
     collections::{BTreeMap, BTreeSet},
     io::{Read, Write},
     ops::Range,
+    sync::Arc,
 };
 
 use byteorder::{LittleEndian, ReadBytesExt, WriteBytesExt};
 
-use incrementalmerkletree::{Hashable, Position};
+use incrementalmerkletree::{Hashable, Level, Position};
 use shardtree::{
-    LocatedPrunableTree, ShardTree,
+    LocatedPrunableTree, PrunableTree, RetentionFlags, ShardTree, Tree,
     store::{Checkpoint, ShardStore, TreeState, memory::MemoryShardStore},
 };
-use zcash_client_backend::serialization::shardtree::{read_shard, write_shard};
+use zcash_client_backend::serialization::shardtree::write_shard;
 use zcash_encoding::{Optional, Vector};
 use zcash_primitives::{
     block::BlockHash,
@@ -45,13 +46,49 @@ use super::{
     WalletTransaction, decode_memo_relaxed,
 };
 
+fn invalid_data(message: impl std::fmt::Display) -> std::io::Error {
+    std::io::Error::new(std::io::ErrorKind::InvalidData, message.to_string())
+}
+
+/// Rejects a struct version older than the one the first layout 41 release wrote. Those layouts are
+/// no longer readable, and decoding one with the current layout would misread its fields.
+fn check_oldest_version(version: u8, oldest: u8, name: &str) -> std::io::Result<u8> {
+    if version < oldest {
+        Err(invalid_data(format!(
+            "{name} version {version} predates the oldest readable version {oldest}"
+        )))
+    } else {
+        Ok(version)
+    }
+}
+
+/// Collects decoded entries into a map or set, rejecting repeats. Every writer iterates a map or
+/// set, so a repeat is corruption, and collecting it would silently drop an entry.
+fn collect_unique<T, C: FromIterator<T>>(
+    entries: Vec<T>,
+    len: fn(&C) -> usize,
+    name: &str,
+) -> std::io::Result<C> {
+    let count = entries.len();
+    let collected = entries.into_iter().collect();
+    if len(&collected) == count {
+        Ok(collected)
+    } else {
+        Err(invalid_data(format!("duplicate {name}")))
+    }
+}
+
 fn read_string<R: Read>(mut reader: R) -> std::io::Result<String> {
     let str_len = reader.read_u64::<LittleEndian>()?;
-    let mut str_bytes = vec![0; str_len as usize];
-    reader.read_exact(&mut str_bytes)?;
+    let mut str_bytes = Vec::new();
+    reader.take(str_len).read_to_end(&mut str_bytes)?;
+    if str_bytes.len() as u64 != str_len {
+        return Err(invalid_data(format!(
+            "string length {str_len} runs past the end of the input"
+        )));
+    }
 
-    String::from_utf8(str_bytes)
-        .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e.to_string()))
+    String::from_utf8(str_bytes).map_err(invalid_data)
 }
 
 fn write_string<W: Write>(mut writer: W, str: &str) -> std::io::Result<()> {
@@ -138,7 +175,15 @@ impl ReadableWriteable for ScanTarget {
         Self::get_version(&mut reader)?;
         let block_height = BlockHeight::from_u32(reader.read_u32::<LittleEndian>()?);
         let txid = TxId::read(&mut reader)?;
-        let narrow_scan_area = reader.read_u8()? != 0;
+        let narrow_scan_area = match reader.read_u8()? {
+            0 => false,
+            1 => true,
+            other => {
+                return Err(invalid_data(format!(
+                    "invalid scan target narrow scan area flag {other}"
+                )));
+            }
+        };
 
         Ok(Self {
             block_height,
@@ -160,7 +205,7 @@ impl ReadableWriteable for SyncState {
     const VERSION: u8 = 4;
 
     fn read<R: Read>(mut reader: R, _input: ()) -> std::io::Result<Self> {
-        let version = Self::get_version(&mut reader)?;
+        let version = check_oldest_version(Self::get_version(&mut reader)?, 3, "sync state")?;
         let scan_ranges = Vector::read(&mut reader, |r| {
             let start = BlockHeight::from_u32(r.read_u32::<LittleEndian>()?);
             let end = BlockHeight::from_u32(r.read_u32::<LittleEndian>()?);
@@ -179,9 +224,23 @@ impl ReadableWriteable for SyncState {
                     "invalid scan priority",
                 )),
             }?;
+            if start > end {
+                return Err(invalid_data(format!(
+                    "scan range {start}..{end} ends before it starts"
+                )));
+            }
 
             Ok(ScanRange::from_parts(start..end, priority))
         })?;
+        if let Some(pair) = scan_ranges
+            .windows(2)
+            .find(|pair| pair[0].block_range().end != pair[1].block_range().start)
+        {
+            return Err(invalid_data(format!(
+                "scan ranges {} and {} overlap or leave a gap",
+                pair[0], pair[1]
+            )));
+        }
         let sapling_shard_ranges = Vector::read(&mut reader, |r| {
             let start = BlockHeight::from_u32(r.read_u32::<LittleEndian>()?);
             let end = BlockHeight::from_u32(r.read_u32::<LittleEndian>()?);
@@ -204,9 +263,11 @@ impl ReadableWriteable for SyncState {
         } else {
             Vec::new()
         };
-        let scan_targets = Vector::read(&mut reader, |r| ScanTarget::read(r, ()))?
-            .into_iter()
-            .collect::<BTreeSet<_>>();
+        let scan_targets = collect_unique(
+            Vector::read(&mut reader, |r| ScanTarget::read(r, ()))?,
+            BTreeSet::len,
+            "sync state scan target",
+        )?;
 
         Ok(Self::from_parts(
             scan_ranges,
@@ -274,6 +335,29 @@ impl ReadableWriteable for TreeBounds {
         } else {
             (0, 0)
         };
+        for (pool, initial, last) in [
+            (
+                "sapling",
+                sapling_initial_tree_size,
+                sapling_final_tree_size,
+            ),
+            (
+                "orchard",
+                orchard_initial_tree_size,
+                orchard_final_tree_size,
+            ),
+            (
+                "ironwood",
+                ironwood_initial_tree_size,
+                ironwood_final_tree_size,
+            ),
+        ] {
+            if initial > last {
+                return Err(invalid_data(format!(
+                    "{pool} tree shrinks from {initial} to {last} within a block"
+                )));
+            }
+        }
 
         Ok(Self {
             sapling_initial_tree_size,
@@ -301,48 +385,42 @@ impl ReadableWriteable for NullifierMap {
     const VERSION: u8 = 2;
 
     fn read<R: Read>(mut reader: R, _input: ()) -> std::io::Result<Self> {
-        let version = Self::get_version(&mut reader)?;
-        let sapling = Vector::read(&mut reader, |r| {
-            let mut nullifier_bytes = [0u8; 32];
-            r.read_exact(&mut nullifier_bytes)?;
-            let nullifier =
-                sapling_crypto::Nullifier::from_slice(&nullifier_bytes).map_err(|e| {
-                    std::io::Error::new(
-                        std::io::ErrorKind::InvalidData,
-                        format!("failed to read nullifier. {e}"),
-                    )
-                })?;
-            let scan_target = ScanTarget::read(r, ())?;
-
-            Ok((nullifier, scan_target))
-        })?
-        .into_iter()
-        .collect::<BTreeMap<_, _>>();
-
-        let orchard = Vector::read(&mut reader, |r| {
-            let mut nullifier_bytes = [0u8; 32];
-            r.read_exact(&mut nullifier_bytes)?;
-            let nullifier = orchard::note::Nullifier::from_bytes(&nullifier_bytes)
-                .expect("nullifier bytes should be valid");
-            let scan_target = ScanTarget::read(r, ())?;
-
-            Ok((nullifier, scan_target))
-        })?
-        .into_iter()
-        .collect::<BTreeMap<_, _>>();
-
-        let ironwood = if version >= 2 {
+        let version = check_oldest_version(Self::get_version(&mut reader)?, 1, "nullifier map")?;
+        let sapling = collect_unique(
             Vector::read(&mut reader, |r| {
                 let mut nullifier_bytes = [0u8; 32];
                 r.read_exact(&mut nullifier_bytes)?;
-                let nullifier = orchard::note::Nullifier::from_bytes(&nullifier_bytes)
-                    .expect("nullifier bytes should be valid");
+                let nullifier =
+                    sapling_crypto::Nullifier::from_slice(&nullifier_bytes).map_err(|e| {
+                        std::io::Error::new(
+                            std::io::ErrorKind::InvalidData,
+                            format!("failed to read nullifier. {e}"),
+                        )
+                    })?;
                 let scan_target = ScanTarget::read(r, ())?;
 
                 Ok((nullifier, scan_target))
-            })?
-            .into_iter()
-            .collect::<BTreeMap<_, _>>()
+            })?,
+            BTreeMap::len,
+            "sapling nullifier",
+        )?;
+
+        let orchard = collect_unique(
+            Vector::read(&mut reader, |r| {
+                Ok((read_orchard_nullifier(&mut *r)?, ScanTarget::read(r, ())?))
+            })?,
+            BTreeMap::len,
+            "orchard nullifier",
+        )?;
+
+        let ironwood = if version >= 2 {
+            collect_unique(
+                Vector::read(&mut reader, |r| {
+                    Ok((read_orchard_nullifier(&mut *r)?, ScanTarget::read(r, ())?))
+                })?,
+                BTreeMap::len,
+                "ironwood nullifier",
+            )?
         } else {
             BTreeMap::new()
         };
@@ -500,7 +578,11 @@ impl ReadableWriteable for TransparentCoin {
     const VERSION: u8 = 1;
 
     fn read<R: Read>(mut reader: R, _input: ()) -> std::io::Result<Self> {
-        Self::get_version(&mut reader)?;
+        check_oldest_version(
+            Self::get_version(&mut reader)?,
+            Self::VERSION,
+            "transparent coin",
+        )?;
 
         let output_id = OutputId::read(&mut reader)?;
 
@@ -509,7 +591,7 @@ impl ReadableWriteable for TransparentCoin {
         let address = read_string(&mut reader)?;
         let script = Script::read(&mut reader)?;
         let value = Zatoshis::from_u64(reader.read_u64::<LittleEndian>()?)
-            .expect("only valid values written");
+            .map_err(|e| invalid_data(format!("invalid transparent coin value. {e}")))?;
         let spending_transaction = Optional::read(&mut reader, TxId::read)?;
 
         Ok(Self {
@@ -542,12 +624,67 @@ impl ReadableWriteable for TransparentCoin {
 
 const WALLET_NOTE_VERSION: u8 = 2;
 
+fn read_orchard_nullifier<R: Read>(mut reader: R) -> std::io::Result<orchard::note::Nullifier> {
+    let mut nullifier_bytes = [0u8; 32];
+    reader.read_exact(&mut nullifier_bytes)?;
+    Option::from(orchard::note::Nullifier::from_bytes(&nullifier_bytes))
+        .ok_or_else(|| invalid_data("orchard nullifier is not a canonical field element"))
+}
+
+fn read_sapling_rseed<R: Read>(mut reader: R) -> std::io::Result<sapling_crypto::Rseed> {
+    let rseed_zip212 = reader.read_u8()?;
+    let mut rseed_bytes = [0u8; 32];
+    reader.read_exact(&mut rseed_bytes)?;
+    match rseed_zip212 {
+        0 => Option::from(jubjub::Fr::from_bytes(&rseed_bytes))
+            .map(sapling_crypto::Rseed::BeforeZip212)
+            .ok_or_else(|| invalid_data("sapling rseed is not a canonical scalar")),
+        1 => Ok(sapling_crypto::Rseed::AfterZip212(rseed_bytes)),
+        _ => Err(invalid_data("invalid rseed zip212 byte")),
+    }
+}
+
+/// Reads the recipient, value, rho and rseed of an Orchard-protocol note and checks that they form a
+/// valid note.
+fn read_orchard_protocol_note_parts<R: Read>(
+    mut reader: R,
+    note_version: orchard::note::NoteVersion,
+) -> std::io::Result<orchard::Note> {
+    let mut address_bytes = [0u8; 43];
+    reader.read_exact(&mut address_bytes)?;
+    let recipient = Option::from(orchard::Address::from_raw_address_bytes(&address_bytes))
+        .ok_or_else(|| invalid_data("invalid orchard recipient address"))?;
+    let value = orchard::value::NoteValue::from_raw(reader.read_u64::<LittleEndian>()?);
+    let mut rho_bytes = [0u8; 32];
+    reader.read_exact(&mut rho_bytes)?;
+    let rho = Option::from(orchard::note::Rho::from_bytes(&rho_bytes))
+        .ok_or_else(|| invalid_data("orchard rho is not a canonical field element"))?;
+    let mut rseed_bytes = [0u8; 32];
+    reader.read_exact(&mut rseed_bytes)?;
+    let rseed = Option::from(orchard::note::RandomSeed::from_bytes(rseed_bytes, &rho))
+        .ok_or_else(|| invalid_data("invalid orchard random seed"))?;
+
+    Option::from(orchard::note::Note::from_parts(
+        recipient,
+        value,
+        rho,
+        rseed,
+        note_version,
+    ))
+    .ok_or_else(|| invalid_data("orchard note has no valid commitment"))
+}
+
 fn read_refetch_nullifier_ranges(
     reader: &mut impl Read,
 ) -> std::io::Result<Vec<Range<BlockHeight>>> {
     Vector::read(reader, |r| {
         let start = r.read_u32::<LittleEndian>()?;
         let end = r.read_u32::<LittleEndian>()?;
+        if start > end {
+            return Err(invalid_data(format!(
+                "refetch nullifier range {start}..{end} ends before it starts"
+            )));
+        }
         Ok(BlockHeight::from_u32(start)..BlockHeight::from_u32(end))
     })
 }
@@ -566,7 +703,11 @@ impl ReadableWriteable for SaplingNote {
     const VERSION: u8 = WALLET_NOTE_VERSION;
 
     fn read<R: Read>(mut reader: R, _input: ()) -> std::io::Result<Self> {
-        Self::get_version(&mut reader)?;
+        check_oldest_version(
+            Self::get_version(&mut reader)?,
+            Self::VERSION,
+            "sapling note",
+        )?;
 
         let output_id = OutputId::read(&mut reader)?;
 
@@ -582,21 +723,7 @@ impl ReadableWriteable for SaplingNote {
                 )
             })?;
         let value = sapling_crypto::value::NoteValue::from_raw(reader.read_u64::<LittleEndian>()?);
-        let rseed_zip212 = reader.read_u8()?;
-        let mut rseed_bytes = [0u8; 32];
-        reader.read_exact(&mut rseed_bytes)?;
-        let rseed = match rseed_zip212 {
-            0 => sapling_crypto::Rseed::BeforeZip212(
-                jubjub::Fr::from_bytes(&rseed_bytes).expect("should read valid jubjub bytes"),
-            ),
-            1 => sapling_crypto::Rseed::AfterZip212(rseed_bytes),
-            _ => {
-                return Err(std::io::Error::new(
-                    std::io::ErrorKind::InvalidData,
-                    "invalid rseed zip212 byte",
-                ));
-            }
-        };
+        let rseed = read_sapling_rseed(&mut reader)?;
 
         let nullifier = Optional::read(&mut reader, |r| {
             let mut nullifier_bytes = [0u8; 32];
@@ -684,26 +811,9 @@ fn read_orchard_protocol_note<R: Read, P>(
 
     let key_id = KeyId::read(&mut reader)?;
 
-    let mut address_bytes = [0u8; 43];
-    reader.read_exact(&mut address_bytes)?;
-    let recipient = orchard::Address::from_raw_address_bytes(&address_bytes)
-        .expect("should be a valid address");
-    let value = orchard::value::NoteValue::from_raw(reader.read_u64::<LittleEndian>()?);
-    let mut rho_bytes = [0u8; 32];
-    reader.read_exact(&mut rho_bytes)?;
-    let rho = orchard::note::Rho::from_bytes(&rho_bytes).expect("should be valid rho bytes");
-    let mut rseed_bytes = [0u8; 32];
-    reader.read_exact(&mut rseed_bytes)?;
-    let rseed = orchard::note::RandomSeed::from_bytes(rseed_bytes, &rho)
-        .expect("should be valid random seed bytes");
+    let note = read_orchard_protocol_note_parts(&mut reader, note_version)?;
 
-    let nullifier = Optional::read(&mut reader, |r| {
-        let mut nullifier_bytes = [0u8; 32];
-        r.read_exact(&mut nullifier_bytes)?;
-
-        Ok(orchard::note::Nullifier::from_bytes(&nullifier_bytes)
-            .expect("should be valid nullfiier bytes"))
-    })?;
+    let nullifier = Optional::read(&mut reader, read_orchard_nullifier)?;
     let position = Optional::read(&mut reader, |r| {
         Ok(Position::from(r.read_u64::<LittleEndian>()?))
     })?;
@@ -722,8 +832,7 @@ fn read_orchard_protocol_note<R: Read, P>(
     Ok(WalletNote {
         output_id,
         key_id,
-        note: orchard::note::Note::from_parts(recipient, value, rho, rseed, note_version)
-            .expect("should be a valid orchard note"),
+        note,
         nullifier,
         position,
         memo,
@@ -765,7 +874,11 @@ impl ReadableWriteable for OrchardNote {
     const VERSION: u8 = WALLET_NOTE_VERSION;
 
     fn read<R: Read>(mut reader: R, _input: ()) -> std::io::Result<Self> {
-        Self::get_version(&mut reader)?;
+        check_oldest_version(
+            Self::get_version(&mut reader)?,
+            Self::VERSION,
+            "orchard note",
+        )?;
         read_orchard_protocol_note(reader, orchard::note::NoteVersion::V2)
     }
 
@@ -779,7 +892,11 @@ impl ReadableWriteable for IronwoodNote {
     const VERSION: u8 = WALLET_NOTE_VERSION;
 
     fn read<R: Read>(mut reader: R, _input: ()) -> std::io::Result<Self> {
-        Self::get_version(&mut reader)?;
+        check_oldest_version(
+            Self::get_version(&mut reader)?,
+            Self::VERSION,
+            "ironwood note",
+        )?;
         read_orchard_protocol_note(reader, orchard::note::NoteVersion::V3)
     }
 
@@ -795,7 +912,11 @@ impl<P: consensus::Parameters> ReadableWriteable<&P, &P> for OutgoingSaplingNote
     const VERSION: u8 = OUTGOING_NOTE_VERSION;
 
     fn read<R: Read>(mut reader: R, consensus_parameters: &P) -> std::io::Result<Self> {
-        <Self as ReadableWriteable<&P, &P>>::get_version(&mut reader)?;
+        check_oldest_version(
+            <Self as ReadableWriteable<&P, &P>>::get_version(&mut reader)?,
+            OUTGOING_NOTE_VERSION,
+            "outgoing sapling note",
+        )?;
 
         let output_id = OutputId::read(&mut reader)?;
 
@@ -811,21 +932,7 @@ impl<P: consensus::Parameters> ReadableWriteable<&P, &P> for OutgoingSaplingNote
                 )
             })?;
         let value = sapling_crypto::value::NoteValue::from_raw(reader.read_u64::<LittleEndian>()?);
-        let rseed_zip212 = reader.read_u8()?;
-        let mut rseed_bytes = [0u8; 32];
-        reader.read_exact(&mut rseed_bytes)?;
-        let rseed = match rseed_zip212 {
-            0 => sapling_crypto::Rseed::BeforeZip212(
-                jubjub::Fr::from_bytes(&rseed_bytes).expect("should read valid jubjub bytes"),
-            ),
-            1 => sapling_crypto::Rseed::AfterZip212(rseed_bytes),
-            _ => {
-                return Err(std::io::Error::new(
-                    std::io::ErrorKind::InvalidData,
-                    "invalid rseed zip212 byte",
-                ));
-            }
-        };
+        let rseed = read_sapling_rseed(&mut reader)?;
 
         let mut memo_bytes = [0u8; 512];
         reader.read_exact(&mut memo_bytes)?;
@@ -895,18 +1002,7 @@ fn read_orchard_protocol_outgoing_note<R: Read, P>(
 
     let key_id = KeyId::read(&mut reader)?;
 
-    let mut address_bytes = [0u8; 43];
-    reader.read_exact(&mut address_bytes)?;
-    let recipient = orchard::Address::from_raw_address_bytes(&address_bytes)
-        .expect("should be a valid address");
-    let value = orchard::value::NoteValue::from_raw(reader.read_u64::<LittleEndian>()?);
-    let mut rho_bytes = [0u8; 32];
-    reader.read_exact(&mut rho_bytes)?;
-    let rho = orchard::note::Rho::from_bytes(&rho_bytes).expect("should be valid rho bytes");
-    let mut rseed_bytes = [0u8; 32];
-    reader.read_exact(&mut rseed_bytes)?;
-    let rseed = orchard::note::RandomSeed::from_bytes(rseed_bytes, &rho)
-        .expect("should be valid random seed bytes");
+    let note = read_orchard_protocol_note_parts(&mut reader, note_version)?;
 
     let mut memo_bytes = [0u8; 512];
     reader.read_exact(&mut memo_bytes)?;
@@ -926,8 +1022,7 @@ fn read_orchard_protocol_outgoing_note<R: Read, P>(
     Ok(OutgoingNote {
         output_id,
         key_id,
-        note: orchard::note::Note::from_parts(recipient, value, rho, rseed, note_version)
-            .expect("should be a valid orchard note"),
+        note,
         memo,
         recipient_full_unified_address: recipient_unified_address,
         marker: std::marker::PhantomData,
@@ -963,7 +1058,11 @@ impl<P: consensus::Parameters> ReadableWriteable<&P, &P> for OutgoingOrchardNote
     const VERSION: u8 = OUTGOING_NOTE_VERSION;
 
     fn read<R: Read>(mut reader: R, consensus_parameters: &P) -> std::io::Result<Self> {
-        <Self as ReadableWriteable<&P, &P>>::get_version(&mut reader)?;
+        check_oldest_version(
+            <Self as ReadableWriteable<&P, &P>>::get_version(&mut reader)?,
+            OUTGOING_NOTE_VERSION,
+            "outgoing orchard note",
+        )?;
         read_orchard_protocol_outgoing_note(
             reader,
             consensus_parameters,
@@ -981,7 +1080,11 @@ impl<P: consensus::Parameters> ReadableWriteable<&P, &P> for OutgoingIronwoodNot
     const VERSION: u8 = OUTGOING_NOTE_VERSION;
 
     fn read<R: Read>(mut reader: R, consensus_parameters: &P) -> std::io::Result<Self> {
-        <Self as ReadableWriteable<&P, &P>>::get_version(&mut reader)?;
+        check_oldest_version(
+            <Self as ReadableWriteable<&P, &P>>::get_version(&mut reader)?,
+            OUTGOING_NOTE_VERSION,
+            "outgoing ironwood note",
+        )?;
         read_orchard_protocol_outgoing_note(
             reader,
             consensus_parameters,
@@ -992,6 +1095,54 @@ impl<P: consensus::Parameters> ReadableWriteable<&P, &P> for OutgoingIronwoodNot
     fn write<W: Write>(&self, mut writer: W, consensus_parameters: &P) -> std::io::Result<()> {
         writer.write_u8(<Self as ReadableWriteable<&P, &P>>::VERSION)?;
         write_orchard_protocol_outgoing_note(self, writer, consensus_parameters)
+    }
+}
+
+const SHARD_SER_V1: u8 = 1;
+const SHARD_NIL_TAG: u8 = 0;
+const SHARD_LEAF_TAG: u8 = 1;
+const SHARD_PARENT_TAG: u8 = 2;
+
+/// Same layout as [`zcash_client_backend::serialization::shardtree::read_shard`], but parent nodes
+/// may nest at most `levels` deep. The tree rooted `levels` above the leaves cannot hold anything
+/// deeper, and without the bound a run of parent tags in a corrupt file recurses until the stack
+/// overflows.
+fn read_bounded_shard<H: HashSer, R: Read>(
+    mut reader: R,
+    levels: u8,
+) -> std::io::Result<PrunableTree<H>> {
+    fn read_node<H: HashSer, R: Read>(
+        reader: &mut R,
+        levels: u8,
+    ) -> std::io::Result<PrunableTree<H>> {
+        match reader.read_u8()? {
+            SHARD_PARENT_TAG => {
+                let levels = levels
+                    .checked_sub(1)
+                    .ok_or_else(|| invalid_data("shard parent node sits below the leaf level"))?;
+                let ann = Optional::read(&mut *reader, <H as HashSer>::read)?.map(Arc::new);
+                let left = read_node(reader, levels)?;
+                let right = read_node(reader, levels)?;
+                Ok(Tree::parent(ann, left, right))
+            }
+            SHARD_LEAF_TAG => {
+                let value = <H as HashSer>::read(&mut *reader)?;
+                let bits = reader.read_u8()?;
+                let flags = RetentionFlags::from_bits(bits).ok_or_else(|| {
+                    invalid_data(format!("invalid shard leaf retention flags {bits}"))
+                })?;
+                Ok(Tree::leaf((value, flags)))
+            }
+            SHARD_NIL_TAG => Ok(Tree::empty()),
+            other => Err(invalid_data(format!("unknown shard node tag {other}"))),
+        }
+    }
+
+    match reader.read_u8()? {
+        SHARD_SER_V1 => read_node(&mut reader, levels),
+        other => Err(invalid_data(format!(
+            "unknown shard serialization version {other}"
+        ))),
     }
 }
 
@@ -1039,10 +1190,10 @@ impl ShardTrees {
         mut reader: R,
     ) -> std::io::Result<ShardTree<S, DEPTH, SHARD_HEIGHT>> {
         let shards = Vector::read(&mut reader, |r| {
-            let level = incrementalmerkletree::Level::from(r.read_u8()?);
+            let level = Level::from(r.read_u8()?);
             let index = r.read_u64::<LittleEndian>()?;
             let root_addr = incrementalmerkletree::Address::from_parts(level, index);
-            let shard = read_shard(r)?;
+            let shard = read_bounded_shard(r, SHARD_HEIGHT)?;
 
             LocatedPrunableTree::from_parts(root_addr, shard).map_err(|addr| {
                 std::io::Error::new(
@@ -1052,8 +1203,17 @@ impl ShardTrees {
             })
         })?;
         let mut store = MemoryShardStore::empty();
-        for shard in shards {
-            store.put_shard(shard).expect("infallible");
+        for (position, shard) in shards.into_iter().enumerate() {
+            let root_addr = shard.root_addr();
+            if root_addr.level() != Level::from(SHARD_HEIGHT)
+                || root_addr.index() != position as u64
+                || root_addr.index() >= 1 << (DEPTH - SHARD_HEIGHT)
+            {
+                return Err(invalid_data(format!(
+                    "shard {position} has root address {root_addr:?}"
+                )));
+            }
+            let Ok(()) = store.put_shard(shard);
         }
         let checkpoints = Vector::read(&mut reader, |r| {
             let checkpoint_id = C::from(r.read_u32::<LittleEndian>()?);
@@ -1069,19 +1229,32 @@ impl ShardTrees {
                     ));
                 }
             };
-            let marks_removed =
-                Vector::read(r, |r| r.read_u64::<LittleEndian>().map(Position::from))?;
+            let marks_removed = collect_unique(
+                Vector::read(r, |r| r.read_u64::<LittleEndian>().map(Position::from))?,
+                BTreeSet::len,
+                "checkpoint removed mark",
+            )?;
             Ok((
                 checkpoint_id,
-                Checkpoint::from_parts(tree_state, marks_removed.into_iter().collect()),
+                Checkpoint::from_parts(tree_state, marks_removed),
             ))
         })?;
-        for (checkpoint_id, checkpoint) in checkpoints {
-            store
-                .add_checkpoint(checkpoint_id, checkpoint)
-                .expect("Infallible");
+        if checkpoints.len() > MAX_REORG_ALLOWANCE as usize {
+            return Err(invalid_data(format!(
+                "{} checkpoints exceed the {MAX_REORG_ALLOWANCE} a wallet file keeps",
+                checkpoints.len()
+            )));
         }
-        store.put_cap(read_shard(reader)?).expect("Infallible");
+        if let Some(pair) = checkpoints.windows(2).find(|pair| pair[0].0 >= pair[1].0) {
+            return Err(invalid_data(format!(
+                "checkpoint {:?} follows checkpoint {:?}",
+                pair[1].0, pair[0].0
+            )));
+        }
+        for (checkpoint_id, checkpoint) in checkpoints {
+            let Ok(()) = store.add_checkpoint(checkpoint_id, checkpoint);
+        }
+        let Ok(()) = store.put_cap(read_bounded_shard(reader, DEPTH)?);
 
         Ok(shardtree::ShardTree::new(
             S::from(store),
@@ -1359,6 +1532,358 @@ mod tests {
         let recovered = TreeBounds::read(bytes.as_slice(), ()).expect("read should succeed");
         assert_eq!(recovered.ironwood_initial_tree_size, 5);
         assert_eq!(recovered.ironwood_final_tree_size, 6);
+    }
+
+    fn scan_target_bytes(block_height: u32) -> Vec<u8> {
+        let mut out = Vec::new();
+        ScanTarget {
+            block_height: BlockHeight::from_u32(block_height),
+            txid: TxId::from_bytes([3; 32]),
+            narrow_scan_area: false,
+        }
+        .write(&mut out, ())
+        .unwrap();
+        out
+    }
+
+    #[test]
+    fn scan_target_rejects_a_flag_other_than_zero_or_one() {
+        let mut bytes = scan_target_bytes(500);
+        *bytes.last_mut().unwrap() = 2;
+        assert!(ScanTarget::read(bytes.as_slice(), ()).is_err());
+    }
+
+    #[test]
+    fn string_length_past_the_input_is_an_error_not_an_allocation() {
+        let bytes = [u64::MAX.to_le_bytes().as_slice(), b"zs"].concat();
+        assert!(read_string(bytes.as_slice()).is_err());
+    }
+
+    #[test]
+    fn sync_state_before_version_3_is_rejected() {
+        let mut bytes = v3_sync_state_bytes();
+        bytes[0] = 2;
+        assert!(SyncState::read(bytes.as_slice(), ()).is_err());
+    }
+
+    fn sync_state_bytes(scan_ranges: &[(u32, u32)], scan_targets: &[Vec<u8>]) -> Vec<u8> {
+        let mut out = vec![4];
+        Vector::write(&mut out, scan_ranges, |w, &(start, end)| {
+            w.write_u32::<LittleEndian>(start)?;
+            w.write_u32::<LittleEndian>(end)?;
+            w.write_u8(ScanPriority::Scanned as u8)
+        })
+        .unwrap();
+        out.extend([0, 0, 0]);
+        Vector::write(&mut out, scan_targets, |w, target| w.write_all(target)).unwrap();
+        out
+    }
+
+    #[test]
+    fn sync_state_rejects_a_scan_range_that_ends_before_it_starts() {
+        let bytes = sync_state_bytes(&[(10, 5)], &[]);
+        assert!(SyncState::read(bytes.as_slice(), ()).is_err());
+    }
+
+    #[test]
+    fn sync_state_rejects_scan_ranges_with_a_gap_or_overlap() {
+        for ranges in [[(1, 5), (6, 10)], [(1, 6), (5, 10)]] {
+            let bytes = sync_state_bytes(&ranges, &[]);
+            assert!(SyncState::read(bytes.as_slice(), ()).is_err());
+        }
+        let contiguous = sync_state_bytes(&[(1, 5), (5, 10)], &[]);
+        assert!(SyncState::read(contiguous.as_slice(), ()).is_ok());
+    }
+
+    #[test]
+    fn sync_state_rejects_a_repeated_scan_target() {
+        let target = scan_target_bytes(500);
+        let bytes = sync_state_bytes(&[], &[target.clone(), target]);
+        assert!(SyncState::read(bytes.as_slice(), ()).is_err());
+    }
+
+    #[test]
+    fn tree_bounds_reject_a_tree_that_shrinks() {
+        let bytes = v0_tree_bounds_bytes(5, 4, 0, 0);
+        assert!(TreeBounds::read(bytes.as_slice(), ()).is_err());
+    }
+
+    #[test]
+    fn nullifier_map_before_version_1_is_rejected() {
+        let mut bytes = v1_nullifier_map_bytes();
+        bytes[0] = 0;
+        assert!(NullifierMap::read(bytes.as_slice(), ()).is_err());
+    }
+
+    #[test]
+    fn nullifier_map_rejects_a_non_canonical_orchard_nullifier() {
+        for position in [2, 3] {
+            let mut bytes = vec![2, 0, 0, 0];
+            bytes[position] = 1;
+            let entry = [[0xff; 32].as_slice(), &scan_target_bytes(500)].concat();
+            bytes.splice(position + 1..position + 1, entry);
+            assert!(NullifierMap::read(bytes.as_slice(), ()).is_err());
+        }
+    }
+
+    #[test]
+    fn nullifier_map_rejects_a_repeated_nullifier() {
+        let entry = [[1; 32].as_slice(), &scan_target_bytes(500)].concat();
+        let bytes = [&[1, 2][..], &entry, &entry, &[0]].concat();
+        assert!(NullifierMap::read(bytes.as_slice(), ()).is_err());
+    }
+
+    fn transparent_coin_bytes(version: u8, address_len: u64, value: u64) -> Vec<u8> {
+        let mut out = vec![version];
+        OutputId::new(TxId::from_bytes([1; 32]), 0)
+            .write(&mut out)
+            .unwrap();
+        TransparentAddressId::new(
+            zip32::AccountId::ZERO,
+            TransparentScope::External,
+            NonHardenedChildIndex::ZERO,
+        )
+        .write(&mut out)
+        .unwrap();
+        out.write_u64::<LittleEndian>(address_len).unwrap();
+        out.push(0);
+        out.write_u64::<LittleEndian>(value).unwrap();
+        out.push(0);
+        out
+    }
+
+    #[test]
+    fn transparent_coin_reads_when_well_formed() {
+        let bytes = transparent_coin_bytes(1, 0, 5);
+        assert!(TransparentCoin::read(bytes.as_slice(), ()).is_ok());
+    }
+
+    #[test]
+    fn transparent_coin_rejects_a_value_above_max_money() {
+        let bytes = transparent_coin_bytes(1, 0, u64::MAX);
+        assert!(TransparentCoin::read(bytes.as_slice(), ()).is_err());
+    }
+
+    #[test]
+    fn transparent_coin_rejects_an_address_length_past_the_input() {
+        let bytes = transparent_coin_bytes(1, u64::MAX, 5);
+        assert!(TransparentCoin::read(bytes.as_slice(), ()).is_err());
+    }
+
+    #[test]
+    fn transparent_coin_before_version_1_is_rejected() {
+        let bytes = transparent_coin_bytes(0, 0, 5);
+        assert!(TransparentCoin::read(bytes.as_slice(), ()).is_err());
+    }
+
+    #[test]
+    fn sapling_rseed_rejects_a_non_canonical_scalar() {
+        let bytes = [[0].as_slice(), &[0xff; 32]].concat();
+        assert!(read_sapling_rseed(bytes.as_slice()).is_err());
+    }
+
+    fn orchard_note_prefix(version: u8) -> Vec<u8> {
+        let mut out = vec![version];
+        OutputId::new(TxId::from_bytes([1; 32]), 0)
+            .write(&mut out)
+            .unwrap();
+        KeyId::from_parts(zip32::AccountId::ZERO, zip32::Scope::External)
+            .write(&mut out)
+            .unwrap();
+        out
+    }
+
+    fn orchard_address_bytes() -> [u8; 43] {
+        let spending_key =
+            orchard::keys::SpendingKey::from_zip32_seed(&[0; 32], 1, zip32::AccountId::ZERO)
+                .unwrap();
+        orchard::keys::FullViewingKey::from(&spending_key)
+            .address_at(0u32, orchard::keys::Scope::External)
+            .to_raw_address_bytes()
+    }
+
+    #[test]
+    fn orchard_note_rejects_an_invalid_recipient() {
+        let bytes = [orchard_note_prefix(2), vec![0xff; 43 + 8 + 64]].concat();
+        assert!(OrchardNote::read(bytes.as_slice(), ()).is_err());
+        assert!(IronwoodNote::read(bytes.as_slice(), ()).is_err());
+    }
+
+    #[test]
+    fn orchard_note_rejects_a_non_canonical_rho() {
+        let bytes = [
+            orchard_note_prefix(2),
+            orchard_address_bytes().to_vec(),
+            vec![0; 8],
+            vec![0xff; 32],
+            vec![0; 32],
+        ]
+        .concat();
+        assert!(OrchardNote::read(bytes.as_slice(), ()).is_err());
+    }
+
+    #[test]
+    fn orchard_note_before_version_2_is_rejected() {
+        let bytes = [orchard_note_prefix(1), vec![0; 43 + 8 + 64]].concat();
+        assert!(OrchardNote::read(bytes.as_slice(), ()).is_err());
+    }
+
+    #[test]
+    fn refetch_nullifier_range_that_ends_before_it_starts_is_rejected() {
+        let bytes = [&[1][..], &10u32.to_le_bytes(), &5u32.to_le_bytes()].concat();
+        assert!(read_refetch_nullifier_ranges(&mut bytes.as_slice()).is_err());
+    }
+
+    #[test]
+    fn orchard_nullifier_rejects_a_non_canonical_field_element() {
+        assert!(read_orchard_nullifier([0xff; 32].as_slice()).is_err());
+    }
+
+    #[test]
+    fn outgoing_notes_before_version_1_are_rejected() {
+        let params = zcash_protocol::consensus::MAIN_NETWORK;
+        let bytes = orchard_note_prefix(0);
+        assert!(OutgoingSaplingNote::read(bytes.as_slice(), &params).is_err());
+        assert!(OutgoingOrchardNote::read(bytes.as_slice(), &params).is_err());
+    }
+
+    const EMPTY_TREE: [u8; 4] = [0, 0, SHARD_SER_V1, SHARD_NIL_TAG];
+
+    fn shard_trees_with_sapling(sapling: &[u8]) -> Vec<u8> {
+        [&[1][..], sapling, &EMPTY_TREE, &EMPTY_TREE].concat()
+    }
+
+    fn shard_root(level: u8, index: u64) -> Vec<u8> {
+        [
+            &[level][..],
+            &index.to_le_bytes(),
+            &[SHARD_SER_V1, SHARD_NIL_TAG],
+        ]
+        .concat()
+    }
+
+    fn checkpoint(id: u32, marks_removed: &[u64]) -> Vec<u8> {
+        let mut out = id.to_le_bytes().to_vec();
+        out.push(0);
+        Vector::write(&mut out, marks_removed, |w, mark| {
+            w.write_u64::<LittleEndian>(*mark)
+        })
+        .unwrap();
+        out
+    }
+
+    fn sapling_tree(shards: &[Vec<u8>], checkpoints: &[Vec<u8>]) -> Vec<u8> {
+        let mut out = Vec::new();
+        Vector::write(&mut out, shards, |w, shard| w.write_all(shard)).unwrap();
+        Vector::write(&mut out, checkpoints, |w, checkpoint| {
+            w.write_all(checkpoint)
+        })
+        .unwrap();
+        out.extend([SHARD_SER_V1, SHARD_NIL_TAG]);
+        out
+    }
+
+    #[test]
+    fn shard_trees_read_hand_built_trees() {
+        let tree = sapling_tree(
+            &[shard_root(16, 0), shard_root(16, 1)],
+            &[checkpoint(5, &[1, 2]), checkpoint(6, &[])],
+        );
+        assert!(ShardTrees::read(shard_trees_with_sapling(&tree).as_slice(), ()).is_ok());
+    }
+
+    #[test]
+    fn a_run_of_parent_tags_is_an_error_not_a_stack_overflow() {
+        let parents = [SHARD_PARENT_TAG, 0].repeat(100_000);
+        let in_shard = [&[1, 16][..], &0u64.to_le_bytes(), &[SHARD_SER_V1], &parents].concat();
+        let in_cap = [&[0, 0, SHARD_SER_V1][..], &parents].concat();
+        for tree in [in_shard, in_cap] {
+            assert!(ShardTrees::read(shard_trees_with_sapling(&tree).as_slice(), ()).is_err());
+        }
+    }
+
+    #[test]
+    fn a_far_shard_index_is_an_error_not_an_allocation() {
+        let tree = sapling_tree(&[shard_root(16, 1 << 40)], &[]);
+        assert!(ShardTrees::read(shard_trees_with_sapling(&tree).as_slice(), ()).is_err());
+    }
+
+    #[test]
+    fn shards_must_sit_at_the_shard_level_in_index_order() {
+        for shards in [
+            vec![shard_root(5, 0)],
+            vec![shard_root(16, 1)],
+            vec![shard_root(16, 0), shard_root(16, 0)],
+            vec![shard_root(16, 1), shard_root(16, 0)],
+        ] {
+            let tree = sapling_tree(&shards, &[]);
+            assert!(ShardTrees::read(shard_trees_with_sapling(&tree).as_slice(), ()).is_err());
+        }
+    }
+
+    #[test]
+    fn more_checkpoints_than_the_writer_keeps_are_rejected() {
+        let checkpoints = (0..=MAX_REORG_ALLOWANCE)
+            .map(|id| checkpoint(id, &[]))
+            .collect::<Vec<_>>();
+        let tree = sapling_tree(&[], &checkpoints);
+        assert!(ShardTrees::read(shard_trees_with_sapling(&tree).as_slice(), ()).is_err());
+    }
+
+    #[test]
+    fn repeated_or_unordered_checkpoints_are_rejected() {
+        for checkpoints in [
+            [checkpoint(5, &[]), checkpoint(5, &[])],
+            [checkpoint(6, &[]), checkpoint(5, &[])],
+        ] {
+            let tree = sapling_tree(&[], &checkpoints);
+            assert!(ShardTrees::read(shard_trees_with_sapling(&tree).as_slice(), ()).is_err());
+        }
+    }
+
+    #[test]
+    fn a_repeated_removed_mark_is_rejected() {
+        let tree = sapling_tree(&[], &[checkpoint(5, &[7, 7])]);
+        assert!(ShardTrees::read(shard_trees_with_sapling(&tree).as_slice(), ()).is_err());
+    }
+
+    #[test]
+    fn shardtree_with_leaves_in_two_shards_round_trips_byte_for_byte() {
+        let mut shard_trees = ShardTrees::new();
+        let leaves = |count| {
+            (0..count).map(|_| {
+                (
+                    sapling_crypto::Node::empty_leaf(),
+                    incrementalmerkletree::Retention::Marked,
+                )
+            })
+        };
+        shard_trees
+            .sapling
+            .batch_insert(Position::from(0), leaves(3))
+            .unwrap();
+        shard_trees
+            .sapling
+            .batch_insert(Position::from((1 << 16) + 5), leaves(2))
+            .unwrap();
+        shard_trees
+            .sapling
+            .checkpoint(BlockHeight::from_u32(10))
+            .unwrap();
+        shard_trees
+            .orchard
+            .append(
+                orchard::tree::MerkleHashOrchard::empty_leaf(),
+                incrementalmerkletree::Retention::Marked,
+            )
+            .unwrap();
+
+        let mut written = Vec::new();
+        shard_trees.write(&mut written, ()).unwrap();
+        let read_back = ShardTrees::read(written.as_slice(), ()).unwrap();
+        let mut rewritten = Vec::new();
+        read_back.write(&mut rewritten, ()).unwrap();
+        assert_eq!(rewritten, written);
     }
 
     #[test]
