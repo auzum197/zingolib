@@ -27,7 +27,7 @@ use zcash_protocol::{
 use zcash_transparent::address::Script;
 
 use zcash_transparent::keys::NonHardenedChildIndex;
-use zingolib_common::status::ConfirmationStatus;
+use zingolib_common::{serialization::ReadableWriteable, status::ConfirmationStatus};
 
 use crate::{
     keys::{
@@ -59,14 +59,83 @@ fn write_string<W: Write>(mut writer: W, str: &str) -> std::io::Result<()> {
     writer.write_all(str.as_bytes())
 }
 
-impl ScanTarget {
-    fn serialized_version() -> u8 {
-        0
+impl OutputId {
+    /// Unversioned, like [`TxId`]: the txid followed by the output index.
+    pub fn read<R: Read>(mut reader: R) -> std::io::Result<Self> {
+        let txid = TxId::read(&mut reader)?;
+        let output_index = reader.read_u32::<LittleEndian>()?;
+        Ok(Self::new(txid, output_index))
     }
 
-    /// Deserialize into `reader`
+    /// Serialize into `writer`
+    pub fn write<W: Write>(&self, mut writer: W) -> std::io::Result<()> {
+        self.txid().write(&mut writer)?;
+        writer.write_u32::<LittleEndian>(self.output_index())
+    }
+}
+
+impl KeyId {
+    /// Unversioned: the account id followed by the scope tag.
     pub fn read<R: Read>(mut reader: R) -> std::io::Result<Self> {
-        let _version = reader.read_u8()?;
+        let account_id =
+            zip32::AccountId::try_from(reader.read_u32::<LittleEndian>()?).map_err(|e| {
+                std::io::Error::new(
+                    std::io::ErrorKind::InvalidData,
+                    format!("failed to read account id. {e}"),
+                )
+            })?;
+        let scope = match reader.read_u8()? {
+            0 => Ok(zip32::Scope::External),
+            1 => Ok(zip32::Scope::Internal),
+            _ => Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                "invalid scope value",
+            )),
+        }?;
+        Ok(Self::from_parts(account_id, scope))
+    }
+
+    /// Serialize into `writer`
+    pub fn write<W: Write>(&self, mut writer: W) -> std::io::Result<()> {
+        writer.write_u32::<LittleEndian>(self.account_id.into())?;
+        writer.write_u8(self.scope as u8)
+    }
+}
+
+impl TransparentAddressId {
+    /// Unversioned: the account id, the scope tag, then the address index.
+    pub fn read<R: Read>(mut reader: R) -> std::io::Result<Self> {
+        let account_id =
+            zip32::AccountId::try_from(reader.read_u32::<LittleEndian>()?).map_err(|e| {
+                std::io::Error::new(
+                    std::io::ErrorKind::InvalidData,
+                    format!("failed to read account id. {e}"),
+                )
+            })?;
+        let scope = TransparentScope::try_from(reader.read_u8()?)?;
+        let address_index = NonHardenedChildIndex::from_index(reader.read_u32::<LittleEndian>()?)
+            .ok_or_else(|| {
+            std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                "transparent address index is hardened",
+            )
+        })?;
+        Ok(Self::new(account_id, scope, address_index))
+    }
+
+    /// Serialize into `writer`
+    pub fn write<W: Write>(&self, mut writer: W) -> std::io::Result<()> {
+        writer.write_u32::<LittleEndian>(self.account_id().into())?;
+        writer.write_u8(self.scope() as u8)?;
+        writer.write_u32::<LittleEndian>(self.address_index().index())
+    }
+}
+
+impl ReadableWriteable for ScanTarget {
+    const VERSION: u8 = 0;
+
+    fn read<R: Read>(mut reader: R, _input: ()) -> std::io::Result<Self> {
+        Self::get_version(&mut reader)?;
         let block_height = BlockHeight::from_u32(reader.read_u32::<LittleEndian>()?);
         let txid = TxId::read(&mut reader)?;
         let narrow_scan_area = reader.read_u8()? != 0;
@@ -78,24 +147,20 @@ impl ScanTarget {
         })
     }
 
-    /// Serialize into `writer`
-    pub fn write<W: Write>(&self, writer: &mut W) -> std::io::Result<()> {
-        writer.write_u8(Self::serialized_version())?;
+    fn write<W: Write>(&self, mut writer: W, _input: ()) -> std::io::Result<()> {
+        writer.write_u8(Self::VERSION)?;
         writer.write_u32::<LittleEndian>(self.block_height.into())?;
-        self.txid.write(&mut *writer)?;
+        self.txid.write(&mut writer)?;
         writer.write_u8(u8::from(self.narrow_scan_area))
     }
 }
 
-impl SyncState {
-    fn serialized_version() -> u8 {
-        // Version 4 inserts the ironwood shard ranges after the orchard ones.
-        4
-    }
+impl ReadableWriteable for SyncState {
+    // Version 4 inserts the ironwood shard ranges after the orchard ones.
+    const VERSION: u8 = 4;
 
-    /// Deserialize into `reader`
-    pub fn read<R: Read>(mut reader: R) -> std::io::Result<Self> {
-        let version = reader.read_u8()?;
+    fn read<R: Read>(mut reader: R, _input: ()) -> std::io::Result<Self> {
+        let version = Self::get_version(&mut reader)?;
         let scan_ranges = Vector::read(&mut reader, |r| {
             let start = BlockHeight::from_u32(r.read_u32::<LittleEndian>()?);
             let end = BlockHeight::from_u32(r.read_u32::<LittleEndian>()?);
@@ -170,7 +235,7 @@ impl SyncState {
         };
         let scan_targets = Vector::read(&mut reader, |r| {
             Ok(if version >= 1 {
-                ScanTarget::read(r)?
+                ScanTarget::read(r, ())?
             } else {
                 let block_height = BlockHeight::from_u32(r.read_u32::<LittleEndian>()?);
                 let txid = TxId::read(r)?;
@@ -194,9 +259,8 @@ impl SyncState {
         ))
     }
 
-    /// Serialize into `writer`
-    pub fn write<W: Write>(&mut self, mut writer: W) -> std::io::Result<()> {
-        writer.write_u8(Self::serialized_version())?;
+    fn write<W: Write>(&self, mut writer: W, _input: ()) -> std::io::Result<()> {
+        writer.write_u8(Self::VERSION)?;
         Vector::write(&mut writer, self.scan_ranges(), |w, scan_range| {
             w.write_u32::<LittleEndian>(scan_range.block_range().start.into())?;
             w.write_u32::<LittleEndian>(scan_range.block_range().end.into())?;
@@ -229,20 +293,17 @@ impl SyncState {
         Vector::write(
             &mut writer,
             &self.scan_targets().iter().collect::<Vec<_>>(),
-            |w, &scan_target| scan_target.write(w),
+            |w, &scan_target| scan_target.write(w, ()),
         )
     }
 }
 
-impl TreeBounds {
-    fn serialized_version() -> u8 {
-        // Version 1 appends the ironwood tree sizes.
-        1
-    }
+impl ReadableWriteable for TreeBounds {
+    // Version 1 appends the ironwood tree sizes.
+    const VERSION: u8 = 1;
 
-    /// Deserialize into `reader`
-    pub fn read<R: Read>(mut reader: R) -> std::io::Result<Self> {
-        let version = reader.read_u8()?;
+    fn read<R: Read>(mut reader: R, _input: ()) -> std::io::Result<Self> {
+        let version = Self::get_version(&mut reader)?;
         let sapling_initial_tree_size = reader.read_u32::<LittleEndian>()?;
         let sapling_final_tree_size = reader.read_u32::<LittleEndian>()?;
         let orchard_initial_tree_size = reader.read_u32::<LittleEndian>()?;
@@ -266,9 +327,8 @@ impl TreeBounds {
         })
     }
 
-    /// Serialize into `writer`
-    pub fn write<W: Write>(&self, writer: &mut W) -> std::io::Result<()> {
-        writer.write_u8(Self::serialized_version())?;
+    fn write<W: Write>(&self, mut writer: W, _input: ()) -> std::io::Result<()> {
+        writer.write_u8(Self::VERSION)?;
         writer.write_u32::<LittleEndian>(self.sapling_initial_tree_size)?;
         writer.write_u32::<LittleEndian>(self.sapling_final_tree_size)?;
         writer.write_u32::<LittleEndian>(self.orchard_initial_tree_size)?;
@@ -278,15 +338,12 @@ impl TreeBounds {
     }
 }
 
-impl NullifierMap {
-    fn serialized_version() -> u8 {
-        // Version 2 appends the ironwood nullifier map.
-        2
-    }
+impl ReadableWriteable for NullifierMap {
+    // Version 2 appends the ironwood nullifier map.
+    const VERSION: u8 = 2;
 
-    /// Deserialize into `reader`
-    pub fn read<R: Read>(mut reader: R) -> std::io::Result<Self> {
-        let version = reader.read_u8()?;
+    fn read<R: Read>(mut reader: R, _input: ()) -> std::io::Result<Self> {
+        let version = Self::get_version(&mut reader)?;
         let sapling = Vector::read(&mut reader, |r| {
             let mut nullifier_bytes = [0u8; 32];
             r.read_exact(&mut nullifier_bytes)?;
@@ -298,7 +355,7 @@ impl NullifierMap {
                     )
                 })?;
             let scan_target = if version >= 1 {
-                ScanTarget::read(r)?
+                ScanTarget::read(r, ())?
             } else {
                 let block_height = BlockHeight::from_u32(r.read_u32::<LittleEndian>()?);
                 let txid = TxId::read(r)?;
@@ -321,7 +378,7 @@ impl NullifierMap {
             let nullifier = orchard::note::Nullifier::from_bytes(&nullifier_bytes)
                 .expect("nullifier bytes should be valid");
             let scan_target = if version >= 1 {
-                ScanTarget::read(r)?
+                ScanTarget::read(r, ())?
             } else {
                 let block_height = BlockHeight::from_u32(r.read_u32::<LittleEndian>()?);
                 let txid = TxId::read(r)?;
@@ -344,7 +401,7 @@ impl NullifierMap {
                 r.read_exact(&mut nullifier_bytes)?;
                 let nullifier = orchard::note::Nullifier::from_bytes(&nullifier_bytes)
                     .expect("nullifier bytes should be valid");
-                let scan_target = ScanTarget::read(r)?;
+                let scan_target = ScanTarget::read(r, ())?;
 
                 Ok((nullifier, scan_target))
             })?
@@ -361,15 +418,14 @@ impl NullifierMap {
         })
     }
 
-    /// Serialize into `writer`
-    pub fn write<W: Write>(&self, mut writer: W) -> std::io::Result<()> {
-        writer.write_u8(Self::serialized_version())?;
+    fn write<W: Write>(&self, mut writer: W, _input: ()) -> std::io::Result<()> {
+        writer.write_u8(Self::VERSION)?;
         Vector::write(
             &mut writer,
             &self.sapling.iter().collect::<Vec<_>>(),
             |w, &(&nullifier, &scan_target)| {
                 w.write_all(nullifier.as_ref())?;
-                scan_target.write(w)
+                scan_target.write(w, ())
             },
         )?;
         Vector::write(
@@ -377,7 +433,7 @@ impl NullifierMap {
             &self.orchard.iter().collect::<Vec<_>>(),
             |w, &(&nullifier, &scan_target)| {
                 w.write_all(&nullifier.to_bytes())?;
-                scan_target.write(w)
+                scan_target.write(w, ())
             },
         )?;
         Vector::write(
@@ -385,20 +441,17 @@ impl NullifierMap {
             &self.ironwood.iter().collect::<Vec<_>>(),
             |w, &(&nullifier, &scan_target)| {
                 w.write_all(&nullifier.to_bytes())?;
-                scan_target.write(w)
+                scan_target.write(w, ())
             },
         )
     }
 }
 
-impl WalletBlock {
-    fn serialized_version() -> u8 {
-        0
-    }
+impl ReadableWriteable for WalletBlock {
+    const VERSION: u8 = 0;
 
-    /// Deserialize into `reader`
-    pub fn read<R: Read>(mut reader: R) -> std::io::Result<Self> {
-        let _version = reader.read_u8()?;
+    fn read<R: Read>(mut reader: R, _input: ()) -> std::io::Result<Self> {
+        Self::get_version(&mut reader)?;
         let block_height = BlockHeight::from_u32(reader.read_u32::<LittleEndian>()?);
         let mut block_hash = BlockHash([0u8; 32]);
         reader.read_exact(&mut block_hash.0)?;
@@ -406,7 +459,7 @@ impl WalletBlock {
         reader.read_exact(&mut prev_hash.0)?;
         let time = reader.read_u32::<LittleEndian>()?;
         let txids = Vector::read(&mut reader, |r| TxId::read(r))?;
-        let tree_bounds = TreeBounds::read(&mut reader)?;
+        let tree_bounds = TreeBounds::read(&mut reader, ())?;
 
         Ok(Self {
             block_height,
@@ -418,40 +471,33 @@ impl WalletBlock {
         })
     }
 
-    /// Serialize into `writer`
-    pub fn write<W: Write>(&self, mut writer: W) -> std::io::Result<()> {
-        writer.write_u8(Self::serialized_version())?;
+    fn write<W: Write>(&self, mut writer: W, _input: ()) -> std::io::Result<()> {
+        writer.write_u8(Self::VERSION)?;
         writer.write_u32::<LittleEndian>(self.block_height.into())?;
         writer.write_all(&self.block_hash.0)?;
         writer.write_all(&self.prev_hash.0)?;
         writer.write_u32::<LittleEndian>(self.time)?;
         Vector::write(&mut writer, self.txids(), |w, txid| txid.write(w))?;
-        self.tree_bounds.write(&mut writer)
+        self.tree_bounds.write(&mut writer, ())
     }
 }
 
-impl WalletTransaction {
-    fn serialized_version() -> u8 {
-        // Version 1 appends the ironwood note collections.
-        1
-    }
+impl<P: consensus::Parameters> ReadableWriteable<&P, &P> for WalletTransaction {
+    // Version 1 appends the ironwood note collections.
+    const VERSION: u8 = 1;
 
-    /// Deserialize into `reader`
-    pub fn read<R: Read>(
-        mut reader: R,
-        consensus_parameters: &impl consensus::Parameters,
-    ) -> std::io::Result<Self> {
-        let version = reader.read_u8()?;
+    fn read<R: Read>(mut reader: R, consensus_parameters: &P) -> std::io::Result<Self> {
+        let version = <Self as ReadableWriteable<&P, &P>>::get_version(&mut reader)?;
         let txid = TxId::read(&mut reader)?;
-        let status = ConfirmationStatus::read(&mut reader)?;
+        let status = ConfirmationStatus::read(&mut reader, ())?;
         let transaction = Transaction::read(
             &mut reader,
             consensus::BranchId::for_height(consensus_parameters, status.get_height()),
         )?;
         let datetime = reader.read_u32::<LittleEndian>()?;
-        let transparent_coins = Vector::read(&mut reader, |r| TransparentCoin::read(r))?;
-        let sapling_notes = Vector::read(&mut reader, |r| SaplingNote::read(r))?;
-        let orchard_notes = Vector::read(&mut reader, |r| OrchardNote::read(r))?;
+        let transparent_coins = Vector::read(&mut reader, |r| TransparentCoin::read(r, ()))?;
+        let sapling_notes = Vector::read(&mut reader, |r| SaplingNote::read(r, ()))?;
+        let orchard_notes = Vector::read(&mut reader, |r| OrchardNote::read(r, ()))?;
         let outgoing_sapling_notes = Vector::read(&mut reader, |r| {
             OutgoingSaplingNote::read(r, consensus_parameters)
         })?;
@@ -460,7 +506,7 @@ impl WalletTransaction {
         })?;
         let (ironwood_notes, outgoing_ironwood_notes) = if version >= 1 {
             (
-                Vector::read(&mut reader, |r| IronwoodNote::read(r))?,
+                Vector::read(&mut reader, |r| IronwoodNote::read(r, ()))?,
                 Vector::read(&mut reader, |r| {
                     OutgoingIronwoodNote::read(r, consensus_parameters)
                 })?,
@@ -484,25 +530,20 @@ impl WalletTransaction {
         })
     }
 
-    /// Serialize into `writer`
-    pub fn write<W: Write>(
-        &self,
-        mut writer: W,
-        consensus_parameters: &impl consensus::Parameters,
-    ) -> std::io::Result<()> {
-        writer.write_u8(Self::serialized_version())?;
+    fn write<W: Write>(&self, mut writer: W, consensus_parameters: &P) -> std::io::Result<()> {
+        writer.write_u8(<Self as ReadableWriteable<&P, &P>>::VERSION)?;
         self.txid.write(&mut writer)?;
-        self.status.write(&mut writer)?;
+        self.status.write(&mut writer, ())?;
         self.transaction.write(&mut writer)?;
         writer.write_u32::<LittleEndian>(self.datetime)?;
         Vector::write(&mut writer, self.transparent_coins(), |w, output| {
-            output.write(w)
+            output.write(w, ())
         })?;
         Vector::write(&mut writer, self.sapling_notes(), |w, output| {
-            output.write(w)
+            output.write(w, ())
         })?;
         Vector::write(&mut writer, self.orchard_notes(), |w, output| {
-            output.write(w)
+            output.write(w, ())
         })?;
         Vector::write(&mut writer, self.outgoing_sapling_notes(), |w, output| {
             output.write(w, consensus_parameters)
@@ -511,7 +552,7 @@ impl WalletTransaction {
             output.write(w, consensus_parameters)
         })?;
         Vector::write(&mut writer, self.ironwood_notes(), |w, output| {
-            output.write(w)
+            output.write(w, ())
         })?;
         Vector::write(&mut writer, self.outgoing_ironwood_notes(), |w, output| {
             output.write(w, consensus_parameters)
@@ -519,26 +560,22 @@ impl WalletTransaction {
     }
 }
 
-impl TransparentCoin {
-    fn serialized_version() -> u8 {
-        1
-    }
+impl ReadableWriteable for TransparentCoin {
+    const VERSION: u8 = 1;
 
-    /// Deserialize into `reader`
-    pub fn read<R: Read>(mut reader: R) -> std::io::Result<Self> {
-        let version = reader.read_u8()?;
+    fn read<R: Read>(mut reader: R, _input: ()) -> std::io::Result<Self> {
+        let version = Self::get_version(&mut reader)?;
 
-        let txid = TxId::read(&mut reader)?;
-        let output_index = if version >= 1 {
-            reader.read_u32::<LittleEndian>()?
+        let output_id = if version >= 1 {
+            OutputId::read(&mut reader)?
         } else {
-            u32::from(reader.read_u16::<LittleEndian>()?)
+            OutputId::new(
+                TxId::read(&mut reader)?,
+                u32::from(reader.read_u16::<LittleEndian>()?),
+            )
         };
 
-        let account_id = zip32::AccountId::try_from(reader.read_u32::<LittleEndian>()?)
-            .expect("only valid account ids written");
-        let scope = TransparentScope::try_from(reader.read_u8()?)?;
-        let address_index = reader.read_u32::<LittleEndian>()?;
+        let key_id = TransparentAddressId::read(&mut reader)?;
 
         let address = read_string(&mut reader)?;
         let script = Script::read(&mut reader)?;
@@ -547,13 +584,8 @@ impl TransparentCoin {
         let spending_transaction = Optional::read(&mut reader, TxId::read)?;
 
         Ok(Self {
-            output_id: OutputId { txid, output_index },
-            key_id: TransparentAddressId::new(
-                account_id,
-                scope,
-                NonHardenedChildIndex::from_index(address_index)
-                    .expect("only non-hardened child indexes should be written"),
-            ),
+            output_id,
+            key_id,
             address,
             value,
             script,
@@ -561,16 +593,12 @@ impl TransparentCoin {
         })
     }
 
-    /// Serialize into `writer`
-    pub fn write<W: Write>(&self, mut writer: W) -> std::io::Result<()> {
-        writer.write_u8(Self::serialized_version())?;
+    fn write<W: Write>(&self, mut writer: W, _input: ()) -> std::io::Result<()> {
+        writer.write_u8(Self::VERSION)?;
 
-        self.output_id.txid().write(&mut writer)?;
-        writer.write_u32::<LittleEndian>(self.output_id.output_index())?;
+        self.output_id.write(&mut writer)?;
 
-        writer.write_u32::<LittleEndian>(self.key_id.account_id().into())?;
-        writer.write_u8(self.key_id.scope() as u8)?;
-        writer.write_u32::<LittleEndian>(self.key_id.address_index().index())?;
+        self.key_id.write(&mut writer)?;
 
         write_string(&mut writer, &self.address)?;
         self.script.write(&mut writer)?;
@@ -583,11 +611,7 @@ impl TransparentCoin {
     }
 }
 
-impl<N, Nf: Copy, P> WalletNote<N, Nf, P> {
-    fn serialized_version() -> u8 {
-        2
-    }
-}
+const WALLET_NOTE_VERSION: u8 = 2;
 
 fn read_refetch_nullifier_ranges(
     reader: &mut impl Read,
@@ -614,33 +638,22 @@ fn write_refetch_nullifier_ranges(
     })
 }
 
-impl SaplingNote {
-    /// Deserialize into `reader`
-    pub fn read<R: Read>(mut reader: R) -> std::io::Result<Self> {
-        let version = reader.read_u8()?;
+impl ReadableWriteable for SaplingNote {
+    const VERSION: u8 = WALLET_NOTE_VERSION;
 
-        let txid = TxId::read(&mut reader)?;
-        let output_index = if version >= 2 {
-            reader.read_u32::<LittleEndian>()?
+    fn read<R: Read>(mut reader: R, _input: ()) -> std::io::Result<Self> {
+        let version = Self::get_version(&mut reader)?;
+
+        let output_id = if version >= 2 {
+            OutputId::read(&mut reader)?
         } else {
-            u32::from(reader.read_u16::<LittleEndian>()?)
+            OutputId::new(
+                TxId::read(&mut reader)?,
+                u32::from(reader.read_u16::<LittleEndian>()?),
+            )
         };
 
-        let account_id =
-            zip32::AccountId::try_from(reader.read_u32::<LittleEndian>()?).map_err(|e| {
-                std::io::Error::new(
-                    std::io::ErrorKind::InvalidData,
-                    format!("failed to read account id. {e}"),
-                )
-            })?;
-        let scope = match reader.read_u8()? {
-            0 => Ok(zip32::Scope::External),
-            1 => Ok(zip32::Scope::Internal),
-            _ => Err(std::io::Error::new(
-                std::io::ErrorKind::InvalidData,
-                "invalid scope value",
-            )),
-        }?;
+        let key_id = KeyId::read(&mut reader)?;
 
         let mut address_bytes = [0u8; 43];
         reader.read_exact(&mut address_bytes)?;
@@ -695,8 +708,8 @@ impl SaplingNote {
         let refetch_nullifier_ranges = read_refetch_nullifier_ranges(&mut reader, version)?;
 
         Ok(Self {
-            output_id: OutputId::new(txid, output_index),
-            key_id: KeyId::from_parts(account_id, scope),
+            output_id,
+            key_id,
             note: sapling_crypto::Note::from_parts(recipient, value, rseed),
             nullifier,
             position,
@@ -707,15 +720,12 @@ impl SaplingNote {
         })
     }
 
-    /// Serialize into `writer`
-    pub fn write<W: Write>(&self, mut writer: W) -> std::io::Result<()> {
-        writer.write_u8(Self::serialized_version())?;
+    fn write<W: Write>(&self, mut writer: W, _input: ()) -> std::io::Result<()> {
+        writer.write_u8(Self::VERSION)?;
 
-        self.output_id.txid().write(&mut writer)?;
-        writer.write_u32::<LittleEndian>(self.output_id.output_index())?;
+        self.output_id.write(&mut writer)?;
 
-        writer.write_u32::<LittleEndian>(self.key_id.account_id.into())?;
-        writer.write_u8(self.key_id.scope as u8)?;
+        self.key_id.write(&mut writer)?;
 
         writer.write_all(&self.note.recipient().to_bytes())?;
         writer.write_u64::<LittleEndian>(self.value())?;
@@ -751,32 +761,19 @@ impl SaplingNote {
 /// construction.
 fn read_orchard_protocol_note<R: Read, P>(
     mut reader: R,
+    version: u8,
     note_version: orchard::note::NoteVersion,
 ) -> std::io::Result<WalletNote<orchard::Note, orchard::note::Nullifier, P>> {
-    let version = reader.read_u8()?;
-
-    let txid = TxId::read(&mut reader)?;
-    let output_index = if version >= 2 {
-        reader.read_u32::<LittleEndian>()?
+    let output_id = if version >= 2 {
+        OutputId::read(&mut reader)?
     } else {
-        u32::from(reader.read_u16::<LittleEndian>()?)
+        OutputId::new(
+            TxId::read(&mut reader)?,
+            u32::from(reader.read_u16::<LittleEndian>()?),
+        )
     };
 
-    let account_id =
-        zip32::AccountId::try_from(reader.read_u32::<LittleEndian>()?).map_err(|e| {
-            std::io::Error::new(
-                std::io::ErrorKind::InvalidData,
-                format!("failed to read account id. {e}"),
-            )
-        })?;
-    let scope = match reader.read_u8()? {
-        0 => Ok(zip32::Scope::External),
-        1 => Ok(zip32::Scope::Internal),
-        _ => Err(std::io::Error::new(
-            std::io::ErrorKind::InvalidData,
-            "invalid scope value",
-        )),
-    }?;
+    let key_id = KeyId::read(&mut reader)?;
 
     let mut address_bytes = [0u8; 43];
     reader.read_exact(&mut address_bytes)?;
@@ -814,8 +811,8 @@ fn read_orchard_protocol_note<R: Read, P>(
     let refetch_nullifier_ranges = read_refetch_nullifier_ranges(&mut reader, version)?;
 
     Ok(WalletNote {
-        output_id: OutputId::new(txid, output_index),
-        key_id: KeyId::from_parts(account_id, scope),
+        output_id,
+        key_id,
         note: orchard::note::Note::from_parts(recipient, value, rho, rseed, note_version)
             .expect("should be a valid orchard note"),
         nullifier,
@@ -832,14 +829,9 @@ fn write_orchard_protocol_note<W: Write, P>(
     note: &WalletNote<orchard::Note, orchard::note::Nullifier, P>,
     mut writer: W,
 ) -> std::io::Result<()> {
-    writer
-        .write_u8(WalletNote::<orchard::Note, orchard::note::Nullifier, P>::serialized_version())?;
+    note.output_id.write(&mut writer)?;
 
-    note.output_id.txid().write(&mut writer)?;
-    writer.write_u32::<LittleEndian>(note.output_id.output_index())?;
-
-    writer.write_u32::<LittleEndian>(note.key_id.account_id.into())?;
-    writer.write_u8(note.key_id.scope as u8)?;
+    note.key_id.write(&mut writer)?;
 
     writer.write_all(&note.note.recipient().to_raw_address_bytes())?;
     writer.write_u64::<LittleEndian>(note.note.value().inner())?;
@@ -860,66 +852,52 @@ fn write_orchard_protocol_note<W: Write, P>(
     write_refetch_nullifier_ranges(&mut writer, &note.refetch_nullifier_ranges)
 }
 
-impl OrchardNote {
-    /// Deserialize into `reader`
-    pub fn read<R: Read>(reader: R) -> std::io::Result<Self> {
-        read_orchard_protocol_note(reader, orchard::note::NoteVersion::V2)
+impl ReadableWriteable for OrchardNote {
+    const VERSION: u8 = WALLET_NOTE_VERSION;
+
+    fn read<R: Read>(mut reader: R, _input: ()) -> std::io::Result<Self> {
+        let version = Self::get_version(&mut reader)?;
+        read_orchard_protocol_note(reader, version, orchard::note::NoteVersion::V2)
     }
 
-    /// Serialize into `writer`
-    pub fn write<W: Write>(&self, writer: W) -> std::io::Result<()> {
+    fn write<W: Write>(&self, mut writer: W, _input: ()) -> std::io::Result<()> {
+        writer.write_u8(Self::VERSION)?;
         write_orchard_protocol_note(self, writer)
     }
 }
 
-impl IronwoodNote {
-    /// Deserialize into `reader`
-    pub fn read<R: Read>(reader: R) -> std::io::Result<Self> {
-        read_orchard_protocol_note(reader, orchard::note::NoteVersion::V3)
+impl ReadableWriteable for IronwoodNote {
+    const VERSION: u8 = WALLET_NOTE_VERSION;
+
+    fn read<R: Read>(mut reader: R, _input: ()) -> std::io::Result<Self> {
+        let version = Self::get_version(&mut reader)?;
+        read_orchard_protocol_note(reader, version, orchard::note::NoteVersion::V3)
     }
 
-    /// Serialize into `writer`
-    pub fn write<W: Write>(&self, writer: W) -> std::io::Result<()> {
+    fn write<W: Write>(&self, mut writer: W, _input: ()) -> std::io::Result<()> {
+        writer.write_u8(Self::VERSION)?;
         write_orchard_protocol_note(self, writer)
     }
 }
 
-impl<N, P> OutgoingNote<N, P> {
-    fn serialized_version() -> u8 {
-        1
-    }
-}
+const OUTGOING_NOTE_VERSION: u8 = 1;
 
-impl OutgoingSaplingNote {
-    /// Deserialize into `reader`
-    pub fn read<R: Read>(
-        mut reader: R,
-        consensus_parameters: &impl consensus::Parameters,
-    ) -> std::io::Result<Self> {
-        let version = reader.read_u8()?;
+impl<P: consensus::Parameters> ReadableWriteable<&P, &P> for OutgoingSaplingNote {
+    const VERSION: u8 = OUTGOING_NOTE_VERSION;
 
-        let txid = TxId::read(&mut reader)?;
-        let output_index = if version >= 1 {
-            reader.read_u32::<LittleEndian>()?
+    fn read<R: Read>(mut reader: R, consensus_parameters: &P) -> std::io::Result<Self> {
+        let version = <Self as ReadableWriteable<&P, &P>>::get_version(&mut reader)?;
+
+        let output_id = if version >= 1 {
+            OutputId::read(&mut reader)?
         } else {
-            u32::from(reader.read_u16::<LittleEndian>()?)
+            OutputId::new(
+                TxId::read(&mut reader)?,
+                u32::from(reader.read_u16::<LittleEndian>()?),
+            )
         };
 
-        let account_id =
-            zip32::AccountId::try_from(reader.read_u32::<LittleEndian>()?).map_err(|e| {
-                std::io::Error::new(
-                    std::io::ErrorKind::InvalidData,
-                    format!("failed to read account id. {e}"),
-                )
-            })?;
-        let scope = match reader.read_u8()? {
-            0 => Ok(zip32::Scope::External),
-            1 => Ok(zip32::Scope::Internal),
-            _ => Err(std::io::Error::new(
-                std::io::ErrorKind::InvalidData,
-                "invalid scope value",
-            )),
-        }?;
+        let key_id = KeyId::read(&mut reader)?;
 
         let mut address_bytes = [0u8; 43];
         reader.read_exact(&mut address_bytes)?;
@@ -963,8 +941,8 @@ impl OutgoingSaplingNote {
         })?;
 
         Ok(Self {
-            output_id: OutputId::new(txid, output_index),
-            key_id: KeyId::from_parts(account_id, scope),
+            output_id,
+            key_id,
             note: sapling_crypto::Note::from_parts(recipient, value, rseed),
             memo,
             recipient_full_unified_address: recipient_unified_address,
@@ -972,19 +950,12 @@ impl OutgoingSaplingNote {
         })
     }
 
-    /// Serialize into `writer`
-    pub fn write<W: Write>(
-        &self,
-        mut writer: W,
-        consensus_parameters: &impl consensus::Parameters,
-    ) -> std::io::Result<()> {
-        writer.write_u8(Self::serialized_version())?;
+    fn write<W: Write>(&self, mut writer: W, consensus_parameters: &P) -> std::io::Result<()> {
+        writer.write_u8(<Self as ReadableWriteable<&P, &P>>::VERSION)?;
 
-        self.output_id.txid().write(&mut writer)?;
-        writer.write_u32::<LittleEndian>(self.output_id.output_index())?;
+        self.output_id.write(&mut writer)?;
 
-        writer.write_u32::<LittleEndian>(self.key_id.account_id.into())?;
-        writer.write_u8(self.key_id.scope as u8)?;
+        self.key_id.write(&mut writer)?;
 
         writer.write_all(&self.note.recipient().to_bytes())?;
         writer.write_u64::<LittleEndian>(self.value())?;
@@ -1015,33 +986,20 @@ impl OutgoingSaplingNote {
 /// version fixed at construction.
 fn read_orchard_protocol_outgoing_note<R: Read, P>(
     mut reader: R,
+    version: u8,
     consensus_parameters: &impl consensus::Parameters,
     note_version: orchard::note::NoteVersion,
 ) -> std::io::Result<OutgoingNote<orchard::Note, P>> {
-    let version = reader.read_u8()?;
-
-    let txid = TxId::read(&mut reader)?;
-    let output_index = if version >= 1 {
-        reader.read_u32::<LittleEndian>()?
+    let output_id = if version >= 1 {
+        OutputId::read(&mut reader)?
     } else {
-        u32::from(reader.read_u16::<LittleEndian>()?)
+        OutputId::new(
+            TxId::read(&mut reader)?,
+            u32::from(reader.read_u16::<LittleEndian>()?),
+        )
     };
 
-    let account_id =
-        zip32::AccountId::try_from(reader.read_u32::<LittleEndian>()?).map_err(|e| {
-            std::io::Error::new(
-                std::io::ErrorKind::InvalidData,
-                format!("failed to read account id. {e}"),
-            )
-        })?;
-    let scope = match reader.read_u8()? {
-        0 => Ok(zip32::Scope::External),
-        1 => Ok(zip32::Scope::Internal),
-        _ => Err(std::io::Error::new(
-            std::io::ErrorKind::InvalidData,
-            "invalid scope value",
-        )),
-    }?;
+    let key_id = KeyId::read(&mut reader)?;
 
     let mut address_bytes = [0u8; 43];
     reader.read_exact(&mut address_bytes)?;
@@ -1072,8 +1030,8 @@ fn read_orchard_protocol_outgoing_note<R: Read, P>(
     })?;
 
     Ok(OutgoingNote {
-        output_id: OutputId::new(txid, output_index),
-        key_id: KeyId::from_parts(account_id, scope),
+        output_id,
+        key_id,
         note: orchard::note::Note::from_parts(recipient, value, rho, rseed, note_version)
             .expect("should be a valid orchard note"),
         memo,
@@ -1088,13 +1046,9 @@ fn write_orchard_protocol_outgoing_note<W: Write, P>(
     mut writer: W,
     consensus_parameters: &impl consensus::Parameters,
 ) -> std::io::Result<()> {
-    writer.write_u8(OutgoingNote::<orchard::Note, P>::serialized_version())?;
+    note.output_id.write(&mut writer)?;
 
-    note.output_id.txid().write(&mut writer)?;
-    writer.write_u32::<LittleEndian>(note.output_id.output_index())?;
-
-    writer.write_u32::<LittleEndian>(note.key_id.account_id.into())?;
-    writer.write_u8(note.key_id.scope as u8)?;
+    note.key_id.write(&mut writer)?;
 
     writer.write_all(&note.note.recipient().to_raw_address_bytes())?;
     writer.write_u64::<LittleEndian>(note.note.value().inner())?;
@@ -1111,61 +1065,50 @@ fn write_orchard_protocol_outgoing_note<W: Write, P>(
     Ok(())
 }
 
-impl OutgoingOrchardNote {
-    /// Deserialize into `reader`
-    pub fn read<R: Read>(
-        reader: R,
-        consensus_parameters: &impl consensus::Parameters,
-    ) -> std::io::Result<Self> {
+impl<P: consensus::Parameters> ReadableWriteable<&P, &P> for OutgoingOrchardNote {
+    const VERSION: u8 = OUTGOING_NOTE_VERSION;
+
+    fn read<R: Read>(mut reader: R, consensus_parameters: &P) -> std::io::Result<Self> {
+        let version = <Self as ReadableWriteable<&P, &P>>::get_version(&mut reader)?;
         read_orchard_protocol_outgoing_note(
             reader,
+            version,
             consensus_parameters,
             orchard::note::NoteVersion::V2,
         )
     }
 
-    /// Serialize into `writer`
-    pub fn write<W: Write>(
-        &self,
-        writer: W,
-        consensus_parameters: &impl consensus::Parameters,
-    ) -> std::io::Result<()> {
+    fn write<W: Write>(&self, mut writer: W, consensus_parameters: &P) -> std::io::Result<()> {
+        writer.write_u8(<Self as ReadableWriteable<&P, &P>>::VERSION)?;
         write_orchard_protocol_outgoing_note(self, writer, consensus_parameters)
     }
 }
 
-impl OutgoingIronwoodNote {
-    /// Deserialize into `reader`
-    pub fn read<R: Read>(
-        reader: R,
-        consensus_parameters: &impl consensus::Parameters,
-    ) -> std::io::Result<Self> {
+impl<P: consensus::Parameters> ReadableWriteable<&P, &P> for OutgoingIronwoodNote {
+    const VERSION: u8 = OUTGOING_NOTE_VERSION;
+
+    fn read<R: Read>(mut reader: R, consensus_parameters: &P) -> std::io::Result<Self> {
+        let version = <Self as ReadableWriteable<&P, &P>>::get_version(&mut reader)?;
         read_orchard_protocol_outgoing_note(
             reader,
+            version,
             consensus_parameters,
             orchard::note::NoteVersion::V3,
         )
     }
 
-    /// Serialize into `writer`
-    pub fn write<W: Write>(
-        &self,
-        writer: W,
-        consensus_parameters: &impl consensus::Parameters,
-    ) -> std::io::Result<()> {
+    fn write<W: Write>(&self, mut writer: W, consensus_parameters: &P) -> std::io::Result<()> {
+        writer.write_u8(<Self as ReadableWriteable<&P, &P>>::VERSION)?;
         write_orchard_protocol_outgoing_note(self, writer, consensus_parameters)
     }
 }
 
-impl ShardTrees {
-    fn serialized_version() -> u8 {
-        // Version 1 appends the Ironwood shard tree after the Orchard one.
-        1
-    }
+impl ReadableWriteable for ShardTrees {
+    // Version 1 appends the Ironwood shard tree after the Orchard one.
+    const VERSION: u8 = 1;
 
-    /// Deserialize into `reader`
-    pub fn read<R: Read>(mut reader: R) -> std::io::Result<Self> {
-        let version = reader.read_u8()?;
+    fn read<R: Read>(mut reader: R, _input: ()) -> std::io::Result<Self> {
+        let version = Self::get_version(&mut reader)?;
         let sapling = Self::read_shardtree(&mut reader)?;
         let orchard = Self::read_shardtree(&mut reader)?;
         let ironwood = if version >= 1 {
@@ -1182,16 +1125,17 @@ impl ShardTrees {
         })
     }
 
-    /// Serialize into `writer`
-    pub fn write<W: Write>(&mut self, mut writer: W) -> std::io::Result<()> {
-        writer.write_u8(Self::serialized_version())?;
-        Self::write_shardtree(&mut writer, &mut self.sapling)?;
-        Self::write_shardtree(&mut writer, &mut self.orchard)?;
-        Self::write_shardtree(&mut writer, &mut self.ironwood)?;
+    fn write<W: Write>(&self, mut writer: W, _input: ()) -> std::io::Result<()> {
+        writer.write_u8(Self::VERSION)?;
+        Self::write_shardtree(&mut writer, &self.sapling)?;
+        Self::write_shardtree(&mut writer, &self.orchard)?;
+        Self::write_shardtree(&mut writer, &self.ironwood)?;
 
         Ok(())
     }
+}
 
+impl ShardTrees {
     fn read_shardtree<
         H: Hashable + Clone + HashSer + Eq,
         C: Ord + std::fmt::Debug + Copy + From<u32>,
@@ -1257,13 +1201,13 @@ impl ShardTrees {
     fn write_shardtree<
         H: Hashable + Clone + Eq + HashSer,
         C: Ord + std::fmt::Debug + Copy,
-        S: ShardStore<H = H, CheckpointId = C> + crate::wallet::EmptyShardStore,
+        S: ShardStore<H = H, CheckpointId = C>,
         W: Write,
         const DEPTH: u8,
         const SHARD_HEIGHT: u8,
     >(
         mut writer: W,
-        shardtree: &mut ShardTree<S, DEPTH, SHARD_HEIGHT>,
+        shardtree: &ShardTree<S, DEPTH, SHARD_HEIGHT>,
     ) -> std::io::Result<()>
     where
         u32: From<C>,
@@ -1318,28 +1262,13 @@ impl ShardTrees {
             )
         }
 
-        // Replace original tree with empty tree, and mutate new version into store.
-        let mut store =
-            std::mem::replace(shardtree, shardtree::ShardTree::new(S::empty_store(), 0))
-                .into_store();
+        let store = shardtree.store();
+        write_shards(&mut writer, store)?;
 
-        macro_rules! write_with_error_handling {
-            ($writer: ident, $from: ident) => {
-                if let Err(e) = $writer(&mut writer, &$from) {
-                    *shardtree = shardtree::ShardTree::new(store, MAX_REORG_ALLOWANCE as usize);
-                    return Err(e);
-                }
-            };
-        }
-
-        // Write located prunable trees
-        write_with_error_handling!(write_shards, store);
-
-        // Write checkpoints
         let mut checkpoints = Vec::new();
         let checkpoint_count = store.checkpoint_count().expect("Infallible");
         store
-            .with_checkpoints(checkpoint_count, |checkpoint_id, checkpoint| {
+            .for_each_checkpoint(checkpoint_count, |checkpoint_id, checkpoint| {
                 checkpoints.push((*checkpoint_id, checkpoint.clone()));
                 Ok(())
             })
@@ -1348,13 +1277,9 @@ impl ShardTrees {
             let keep_from = checkpoints.len() - MAX_REORG_ALLOWANCE as usize;
             checkpoints.drain(..keep_from);
         }
-        write_with_error_handling!(write_checkpoints, checkpoints);
+        write_checkpoints(&mut writer, &checkpoints)?;
 
-        // Write cap
-        let cap = store.get_cap().expect("Infallible");
-        write_with_error_handling!(write_shard, cap);
-
-        *shardtree = shardtree::ShardTree::new(store, MAX_REORG_ALLOWANCE as usize);
+        write_shard(&mut writer, &store.get_cap().expect("Infallible"))?;
 
         Ok(())
     }
@@ -1380,13 +1305,13 @@ mod tests {
     #[test]
     fn sync_state_v3_reads_with_empty_ironwood_ranges() {
         let bytes = v3_sync_state_bytes();
-        let sync_state = SyncState::read(bytes.as_slice()).expect("v3 should read cleanly");
+        let sync_state = SyncState::read(bytes.as_slice(), ()).expect("v3 should read cleanly");
         assert!(sync_state.ironwood_shard_ranges().is_empty());
     }
 
     #[test]
     fn sync_state_v4_roundtrip_preserves_ironwood_ranges() {
-        let mut state = SyncState::from_parts(
+        let state = SyncState::from_parts(
             vec![ScanRange::from_parts(
                 BlockHeight::from_u32(100)..BlockHeight::from_u32(400),
                 ScanPriority::Historic,
@@ -1400,8 +1325,8 @@ mod tests {
             BTreeSet::new(),
         );
         let mut bytes = Vec::new();
-        state.write(&mut bytes).expect("write should succeed");
-        let recovered = SyncState::read(bytes.as_slice()).expect("read should succeed");
+        state.write(&mut bytes, ()).expect("write should succeed");
+        let recovered = SyncState::read(bytes.as_slice(), ()).expect("read should succeed");
         assert_eq!(
             recovered.ironwood_shard_ranges(),
             state.ironwood_shard_ranges()
@@ -1416,7 +1341,7 @@ mod tests {
     #[test]
     fn sync_state_bytes_are_unchanged_by_read_and_write() {
         let bytes = hex::decode(SYNC_STATE_V4_BYTES).expect("valid hex");
-        let mut state = SyncState::read(bytes.as_slice()).expect("read should succeed");
+        let state = SyncState::read(bytes.as_slice(), ()).expect("read should succeed");
 
         let priorities = [
             ScanPriority::Scanned,
@@ -1472,7 +1397,7 @@ mod tests {
         );
 
         let mut written = Vec::new();
-        state.write(&mut written).expect("write should succeed");
+        state.write(&mut written, ()).expect("write should succeed");
         assert_eq!(hex::encode(written), SYNC_STATE_V4_BYTES);
     }
 
@@ -1488,7 +1413,7 @@ mod tests {
     #[test]
     fn nullifier_map_v1_reads_with_empty_ironwood_map() {
         let bytes = v1_nullifier_map_bytes();
-        let map = NullifierMap::read(bytes.as_slice()).expect("v1 should read cleanly");
+        let map = NullifierMap::read(bytes.as_slice(), ()).expect("v1 should read cleanly");
         assert!(map.ironwood.is_empty());
     }
 
@@ -1496,8 +1421,8 @@ mod tests {
     fn nullifier_map_v2_roundtrip_preserves_ironwood() {
         let map = NullifierMap::new();
         let mut bytes = Vec::new();
-        map.write(&mut bytes).expect("write should succeed");
-        let recovered = NullifierMap::read(bytes.as_slice()).expect("read should succeed");
+        map.write(&mut bytes, ()).expect("write should succeed");
+        let recovered = NullifierMap::read(bytes.as_slice(), ()).expect("read should succeed");
         assert!(recovered.ironwood.is_empty());
     }
 
@@ -1520,7 +1445,7 @@ mod tests {
     #[test]
     fn tree_bounds_v0_reads_with_zero_ironwood_sizes() {
         let bytes = v0_tree_bounds_bytes(10, 20, 30, 40);
-        let bounds = TreeBounds::read(bytes.as_slice()).expect("v0 should read cleanly");
+        let bounds = TreeBounds::read(bytes.as_slice(), ()).expect("v0 should read cleanly");
         assert_eq!(bounds.sapling_initial_tree_size, 10);
         assert_eq!(bounds.orchard_final_tree_size, 40);
         assert_eq!(bounds.ironwood_initial_tree_size, 0);
@@ -1538,8 +1463,8 @@ mod tests {
             ironwood_final_tree_size: 6,
         };
         let mut bytes = Vec::new();
-        bounds.write(&mut bytes).expect("write should succeed");
-        let recovered = TreeBounds::read(bytes.as_slice()).expect("read should succeed");
+        bounds.write(&mut bytes, ()).expect("write should succeed");
+        let recovered = TreeBounds::read(bytes.as_slice(), ()).expect("read should succeed");
         assert_eq!(recovered.ironwood_initial_tree_size, 5);
         assert_eq!(recovered.ironwood_final_tree_size, 6);
     }
@@ -1569,8 +1494,10 @@ mod tests {
         }
 
         let mut bytes = Vec::new();
-        shard_trees.write(&mut bytes).expect("write should succeed");
-        let roundtripped = ShardTrees::read(bytes.as_slice()).expect("read should succeed");
+        shard_trees
+            .write(&mut bytes, ())
+            .expect("write should succeed");
+        let roundtripped = ShardTrees::read(bytes.as_slice(), ()).expect("read should succeed");
 
         let sapling_store = roundtripped.sapling.store();
         let orchard_store = roundtripped.orchard.store();

@@ -8,7 +8,9 @@ use secp256k1::{Error, PublicKey, Secp256k1, SecretKey, SignOnly};
 use std::sync::LazyLock;
 use zcash_encoding::Vector;
 
-use crate::wallet::traits::ReadableWriteable;
+use zingolib_common::serialization::ReadableWriteable;
+
+use super::LegacyKeyDecode;
 
 static SECP256K1_SIGN_ONLY: LazyLock<Secp256k1<SignOnly>> = LazyLock::new(Secp256k1::signing_only);
 //static SECP256K1_VERIFY_ONLY: LazyLock<Secp256k1<VerifyOnly>> = LazyLock::new(|| Secp256k1::verification_only());
@@ -159,26 +161,15 @@ impl ExtendedPrivKey {
     }
 }
 
-impl ReadableWriteable for SecretKey {
-    const VERSION: u8 = 0; // not applicable
-    fn read<R: std::io::Read>(mut reader: R, (): ()) -> std::io::Result<Self> {
-        let mut secret_key_bytes = [0; 32];
-        reader.read_exact(&mut secret_key_bytes)?;
-        SecretKey::from_byte_array(secret_key_bytes)
-            .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e.to_string()))
-    }
-
-    fn write<W: std::io::Write>(&self, mut _writer: W, _input: ()) -> std::io::Result<()> {
-        unimplemented!()
-    }
-}
-
 impl ReadableWriteable for ExtendedPrivKey {
     const VERSION: u8 = 1;
 
     fn read<R: std::io::Read>(mut reader: R, (): ()) -> std::io::Result<Self> {
         Self::get_version(&mut reader)?;
-        let private_key = SecretKey::read(&mut reader, ())?;
+        let mut private_key = [0; 32];
+        reader.read_exact(&mut private_key)?;
+        let private_key = SecretKey::from_byte_array(private_key)
+            .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e.to_string()))?;
         let chain_code = Vector::read(&mut reader, byteorder::ReadBytesExt::read_u8)?;
         Ok(Self {
             private_key,
@@ -188,6 +179,12 @@ impl ReadableWriteable for ExtendedPrivKey {
 
     fn write<W: std::io::Write>(&self, mut _writer: W, _input: ()) -> std::io::Result<()> {
         unimplemented!()
+    }
+}
+
+impl LegacyKeyDecode for ExtendedPrivKey {
+    fn decode<R: std::io::Read>(reader: R) -> std::io::Result<Self> {
+        Self::read(reader, ())
     }
 }
 
@@ -228,26 +225,15 @@ impl ExtendedPubKey {
     }
 }
 
-impl ReadableWriteable for PublicKey {
-    const VERSION: u8 = 0; // not applicable
-    fn read<R: std::io::Read>(mut reader: R, (): ()) -> std::io::Result<Self> {
-        let mut public_key_bytes = [0; 33];
-        reader.read_exact(&mut public_key_bytes)?;
-        PublicKey::from_slice(&public_key_bytes)
-            .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e.to_string()))
-    }
-
-    fn write<W: std::io::Write>(&self, mut _writer: W, _input: ()) -> std::io::Result<()> {
-        unimplemented!()
-    }
-}
-
 impl ReadableWriteable for ExtendedPubKey {
     const VERSION: u8 = 1;
 
     fn read<R: std::io::Read>(mut reader: R, _input: ()) -> std::io::Result<Self> {
         Self::get_version(&mut reader)?;
-        let public_key = PublicKey::read(&mut reader, ())?;
+        let mut public_key = [0; 33];
+        reader.read_exact(&mut public_key)?;
+        let public_key = PublicKey::from_slice(&public_key)
+            .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e.to_string()))?;
         let chain_code = Vector::read(&mut reader, byteorder::ReadBytesExt::read_u8)?;
         Ok(Self {
             public_key,
@@ -257,6 +243,12 @@ impl ReadableWriteable for ExtendedPubKey {
 
     fn write<W: std::io::Write>(&self, mut _writer: W, _input: ()) -> std::io::Result<()> {
         unimplemented!()
+    }
+}
+
+impl LegacyKeyDecode for ExtendedPubKey {
+    fn decode<R: std::io::Read>(reader: R) -> std::io::Result<Self> {
+        Self::read(reader, ())
     }
 }
 

@@ -10,6 +10,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Deprecated
 
 ### Added
+- `wallet::disk::WalletFile` and `wallet::disk::WalletFileRef`: the decoded contents of a wallet
+  file with public fields, and the borrowed view a wallet is written from. `LightWallet::read`
+  and `LightWallet::write` go through them, so the file layout no longer touches wallet internals.
+- `config::ChainType`, `wallet::WalletSettings` and `wallet::keys::unified::UnifiedAddressId`:
+  `read` and `write` for their wallet-file encoding.
 - `wallet::LightWallet::transaction_summary` and `lightclient::LightClient::transaction_summary`:
   summarize a single transaction by txid, returning `None` if the transaction is not in the wallet.
   Shares the construction path of `transaction_summaries`, so kind/value/fee always agree with the
@@ -22,6 +27,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `moved_to` in the JSON of a transaction summary: the destination pool of a pool move, or null.
 
 ### Changed
+- `LightWallet::write` takes `&self`.
+- `LightWallet::new`: address derivation errors now surface as `WalletError::KeyError` in every
+  case, and a wallet file naming an account without keys fails with `KeyError::NoAccountKeys`.
 - The wallet history API now uses wallet event terminology. `ValueTransfer`,
   `ValueTransferKind`, `SentValueTransfer`, `SelfSendValueTransfer`, `ValueTransfers`, and
   `value_transfers` are now `WalletEvent`, `WalletEventKind`, `SentWalletEvent`,
@@ -45,6 +53,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `LightClientError`. `zcash_proofs` and the Sapling parameter download are now test-only.
 
 ### Removed
+- `wallet::traits`: `ReadableWriteable` now lives in `zingolib_common::serialization`
 - `LightClientError::SendError`, `lightclient::error::SendError` and `TransmissionError`,
   `wallet::error::CalculateTransactionError`, `ProposeSendError` and `ProposeShieldError`:
   moved to `testutils::send::error`.

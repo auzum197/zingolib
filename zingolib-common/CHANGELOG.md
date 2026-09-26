@@ -11,3 +11,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - `memo`: moved from `zingolib-memo` 0.1.1
 - `status`: moved from `zingolib-status` 0.2.1 (previously `confirmation_status`)
+- `serialization::ReadableWriteable`: moved from `zingolib::wallet::traits`. Versioned
+  read/write trait now shared by every persisted type in the workspace.
+
+### Changed
+
+- `status::ConfirmationStatus`: `read` and `write` are now the `ReadableWriteable` impl

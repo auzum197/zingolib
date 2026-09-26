@@ -5819,6 +5819,7 @@ version = "0.1.0"
 dependencies = [
  "byteorder",
  "rand 0.8.7",
+ "tracing",
  "zcash_address",
  "zcash_encoding",
  "zcash_keys",
@@ -5836,6 +5837,7 @@ dependencies = [
  "serde_json",
  "thiserror 2.0.19",
  "zcash_encoding",
+ "zingolib-common",
 ]
 
 [[package]]

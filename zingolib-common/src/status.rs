@@ -7,6 +7,8 @@ use byteorder::{LittleEndian, ReadBytesExt, WriteBytesExt};
 
 use zcash_protocol::consensus::BlockHeight;
 
+use crate::serialization::ReadableWriteable;
+
 /// Transaction confirmation status. As a transaction is created and transmitted to the blockchain, it will move
 /// through each of these states. Received transactions will either be seen in the mempool or scanned from confirmed
 /// blocks. Variant order is logical display order for efficient sorting instead of the order of logical status flow.
@@ -259,14 +261,13 @@ impl ConfirmationStatus {
             Self::Failed(self_height) => *self_height,
         }
     }
+}
 
-    fn serialized_version() -> u8 {
-        1
-    }
+impl ReadableWriteable for ConfirmationStatus {
+    const VERSION: u8 = 1;
 
-    /// Deserialize into `reader`
-    pub fn read<R: Read>(mut reader: R) -> std::io::Result<Self> {
-        let version = reader.read_u8()?;
+    fn read<R: Read>(mut reader: R, _input: ()) -> std::io::Result<Self> {
+        let version = Self::get_version(&mut reader)?;
         let status = reader.read_u8()?;
         let block_height = BlockHeight::from_u32(reader.read_u32::<LittleEndian>()?);
 
@@ -295,9 +296,8 @@ impl ConfirmationStatus {
         }
     }
 
-    /// Serialize into `writer`
-    pub fn write<W: Write>(&self, writer: &mut W) -> std::io::Result<()> {
-        writer.write_u8(Self::serialized_version())?;
+    fn write<W: Write>(&self, mut writer: W, _input: ()) -> std::io::Result<()> {
+        writer.write_u8(Self::VERSION)?;
         writer.write_u8(match self {
             Self::Confirmed(_) => 0,
             Self::Mempool(_) => 1,

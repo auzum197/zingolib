@@ -10,6 +10,7 @@ license = "MIT"
 
 [dependencies]
 zcash_encoding = { workspace = true }
+zingolib-common = { workspace = true }
 
 byteorder = { workspace = true }
 reqwest = { workspace = true, default-features = false, features = [

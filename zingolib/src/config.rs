@@ -9,6 +9,7 @@ use std::{
 use bip0039::{English, Mnemonic};
 use http::uri::InvalidUri;
 
+use byteorder::{ReadBytesExt, WriteBytesExt};
 use zcash_protocol::consensus::{BlockHeight, Parameters};
 
 use pepper_sync::config::{SyncConfig, TransparentAddressDiscovery};
@@ -36,6 +37,31 @@ pub enum ChainType {
     Testnet,
     /// Regtest
     Regtest(ActivationHeights),
+}
+
+impl ChainType {
+    /// Reads the wallet-file tag. Regtest activation heights are not stored, so a regtest
+    /// wallet comes back with the defaults.
+    pub fn read<R: std::io::Read>(mut reader: R) -> std::io::Result<Self> {
+        match reader.read_u8()? {
+            0 => Ok(ChainType::Mainnet),
+            1 => Ok(ChainType::Testnet),
+            2 => Ok(ChainType::Regtest(ActivationHeights::default())),
+            other => Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                format!("invalid chain type index stored in wallet file: {other}"),
+            )),
+        }
+    }
+
+    /// Writes the wallet-file tag.
+    pub fn write<W: std::io::Write>(&self, mut writer: W) -> std::io::Result<()> {
+        writer.write_u8(match self {
+            ChainType::Mainnet => 0,
+            ChainType::Testnet => 1,
+            ChainType::Regtest(_) => 2,
+        })
+    }
 }
 
 impl std::fmt::Display for ChainType {

@@ -5,6 +5,8 @@ use std::io::{Read, Write};
 
 #[cfg(feature = "wallet_essentials")]
 use byteorder::{LittleEndian, ReadBytesExt, WriteBytesExt};
+#[cfg(feature = "wallet_essentials")]
+use zingolib_common::serialization::ReadableWriteable;
 
 /// Default capacity of the sync event broadcast channel.
 ///
@@ -37,14 +39,11 @@ pub enum PerformanceLevel {
 }
 
 #[cfg(feature = "wallet_essentials")]
-impl PerformanceLevel {
-    fn serialized_version() -> u8 {
-        0
-    }
+impl ReadableWriteable for PerformanceLevel {
+    const VERSION: u8 = 0;
 
-    /// Deserialize into `reader`
-    pub fn read<R: Read>(mut reader: R) -> std::io::Result<Self> {
-        let _version = reader.read_u8()?;
+    fn read<R: Read>(mut reader: R, _input: ()) -> std::io::Result<Self> {
+        Self::get_version(&mut reader)?;
 
         Ok(match reader.read_u8()? {
             0 => Self::Low,
@@ -60,9 +59,8 @@ impl PerformanceLevel {
         })
     }
 
-    /// Serialize into `writer`
-    pub fn write<W: Write>(&mut self, mut writer: W) -> std::io::Result<()> {
-        writer.write_u8(Self::serialized_version())?;
+    fn write<W: Write>(&self, mut writer: W, _input: ()) -> std::io::Result<()> {
+        writer.write_u8(Self::VERSION)?;
 
         writer.write_u8(match self {
             Self::Low => 0,
@@ -108,19 +106,16 @@ impl Default for SyncConfig {
 }
 
 #[cfg(feature = "wallet_essentials")]
-impl SyncConfig {
-    fn serialized_version() -> u8 {
-        2
-    }
+impl ReadableWriteable for SyncConfig {
+    const VERSION: u8 = 2;
 
-    /// Deserialize into `reader`
-    pub fn read<R: Read>(mut reader: R) -> std::io::Result<Self> {
-        let version = reader.read_u8()?;
+    fn read<R: Read>(mut reader: R, _input: ()) -> std::io::Result<Self> {
+        let version = Self::get_version(&mut reader)?;
 
         let gap_limit = reader.read_u8()?;
         let scopes = reader.read_u8()?;
         let performance_level = if version >= 1 {
-            PerformanceLevel::read(&mut reader)?
+            PerformanceLevel::read(&mut reader, ())?
         } else {
             PerformanceLevel::High
         };
@@ -143,9 +138,8 @@ impl SyncConfig {
         })
     }
 
-    /// Serialize into `writer`
-    pub fn write<W: Write>(&mut self, mut writer: W) -> std::io::Result<()> {
-        writer.write_u8(Self::serialized_version())?;
+    fn write<W: Write>(&self, mut writer: W, _input: ()) -> std::io::Result<()> {
+        writer.write_u8(Self::VERSION)?;
         writer.write_u8(self.transparent_address_discovery.gap_limit)?;
         let mut scopes = 0;
         if self.transparent_address_discovery.scopes.external {
@@ -158,7 +152,7 @@ impl SyncConfig {
             scopes |= 0b100;
         }
         writer.write_u8(scopes)?;
-        self.performance_level.write(&mut writer)?;
+        self.performance_level.write(&mut writer, ())?;
         writer.write_u64::<LittleEndian>(self.event_channel_capacity as u64)?;
 
         Ok(())
