@@ -37,7 +37,7 @@ pub enum Coverage {
 
 /// The maximal `CompactSize` encodings, tried at every sampled offset so a length prefix a
 /// reader trusts blindly turns into a huge allocation or loop count instead of an error.
-const COMPACT_SIZE_MAX_ENCODINGS: [&[u8]; 3] = [
+pub const COMPACT_SIZE_MAX_ENCODINGS: [&[u8]; 3] = [
     &[0xFD, 0xFF, 0xFF],
     &[0xFE, 0xFF, 0xFF, 0xFF, 0xFF],
     &[0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF],
@@ -170,17 +170,21 @@ fn sample_positions(len: usize, coverage: Coverage) -> Vec<usize> {
         .collect()
 }
 
-/// Asserts the mutated read neither panics nor hangs. Whether it is accepted or rejected is not
-/// asserted: see the [`mutation_sweep`] doc for why that can't be a blanket requirement.
-fn assert_survives(label: &str, kind: &str, offset: usize, bytes: &[u8], passphrase: Option<&str>) {
+/// Checks that reading `bytes` neither panics nor hangs. Whether it is accepted or rejected is
+/// not checked: see the [`mutation_sweep`] doc for why that can't be a blanket requirement.
+pub fn read_survives(bytes: &[u8], passphrase: Option<&str>) -> Result<(), String> {
     match read_outcome(bytes, passphrase) {
-        ReadOutcome::Rejected | ReadOutcome::Accepted => {}
-        ReadOutcome::Panicked(message) => panic!(
-            "{label}: {kind} at offset {offset} panicked instead of returning an error: {message}"
-        ),
-        ReadOutcome::TimedOut => {
-            panic!("{label}: {kind} at offset {offset} did not return within {READ_TIMEOUT:?}")
+        ReadOutcome::Rejected | ReadOutcome::Accepted => Ok(()),
+        ReadOutcome::Panicked(message) => {
+            Err(format!("panicked instead of returning an error: {message}"))
         }
+        ReadOutcome::TimedOut => Err(format!("did not return within {READ_TIMEOUT:?}")),
+    }
+}
+
+fn assert_survives(label: &str, kind: &str, offset: usize, bytes: &[u8], passphrase: Option<&str>) {
+    if let Err(failure) = read_survives(bytes, passphrase) {
+        panic!("{label}: {kind} at offset {offset} {failure}");
     }
 }
 

@@ -605,6 +605,28 @@ impl WalletTransaction {
         self
     }
 
+    /// As [`Self::new_for_test`], with outgoing sapling notes attached.
+    #[must_use]
+    pub fn with_outgoing_sapling_notes_for_test(
+        mut self,
+        outgoing_sapling_notes: Vec<OutgoingSaplingNote>,
+    ) -> Self {
+        self.outgoing_sapling_notes = outgoing_sapling_notes;
+        self
+    }
+
+    /// As [`Self::new_for_test`], with received and outgoing ironwood notes attached.
+    #[must_use]
+    pub fn with_ironwood_notes_for_test(
+        mut self,
+        ironwood_notes: Vec<IronwoodNote>,
+        outgoing_ironwood_notes: Vec<OutgoingIronwoodNote>,
+    ) -> Self {
+        self.ironwood_notes = ironwood_notes;
+        self.outgoing_ironwood_notes = outgoing_ironwood_notes;
+        self
+    }
+
     /// As [`Self::new_for_test`], with received and outgoing orchard notes
     /// attached, for tests exercising summary/value-transfer derivation
     /// without a chain.

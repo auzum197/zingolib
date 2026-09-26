@@ -32,6 +32,7 @@ zip32 = { workspace = true }
 [dev-dependencies]
 hex = { workspace = true }
 incrementalmerkletree = { workspace = true }
+jubjub = { workspace = true }
 orchard = { workspace = true }
 pepper-sync = { workspace = true, features = ["test-features"] }
 proptest = { workspace = true }

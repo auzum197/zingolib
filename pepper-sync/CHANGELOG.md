@@ -43,6 +43,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   above the money range, scan ranges that end before they start or leave gaps, repeated scan
   targets and nullifiers, shard trees with malformed nodes or more checkpoints than the writer
   keeps, and struct versions older than the first release.
+- `WalletTransaction::with_outgoing_sapling_notes_for_test` and `with_ironwood_notes_for_test`
+  under `test-features`, so a test transaction can carry notes in every pool at once.
 - `keys::transparent::TransparentScope`: now defined in `zingolib_common::keys` and re-exported.
 - wallet types and `config::SyncConfig` / `config::PerformanceLevel`: inherent `read` and
   `write` replaced by `zingolib_common::serialization::ReadableWriteable` impls. Reading now
