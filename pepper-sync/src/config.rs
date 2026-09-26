@@ -15,9 +15,6 @@ use zingolib_common::serialization::ReadableWriteable;
 /// initial-sync cadence. A backgrounded subscriber lags and reconciles by design.
 pub const DEFAULT_EVENT_CHANNEL_CAPACITY: usize = 512;
 
-/// Largest event channel capacity read back from a wallet file. The broadcast channel allocates
-/// every slot up front and panics on a capacity of zero, so both ends are checked on read.
-#[cfg(feature = "wallet_essentials")]
 /// Performance level.
 ///
 /// The higher the performance level the higher the memory usage and storage.
