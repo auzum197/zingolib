@@ -1,6 +1,6 @@
 [package]
 name = "zingolib-common"
-description = "Types shared between zingolib and pepper-sync: transaction confirmation status and wallet memo encoding."
+description = "Types shared across the zingolib workspace: chain, keys, memo encoding, confirmation status and the serialization trait."
 authors = ["<zingo@zingolabs.org>"]
 version = "0.1.0"
 edition = "2024"
@@ -12,12 +12,22 @@ license = "MIT"
 maintenance = { status = "actively-developed" }
 
 [dependencies]
+bip0039 = { workspace = true }
+bip32 = { workspace = true }
 byteorder = { workspace = true }
+orchard = { workspace = true }
+sapling-crypto = { workspace = true }
+serde = { workspace = true, features = ["derive"] }
+thiserror = { workspace = true }
 tracing = { workspace = true }
 zcash_address = { workspace = true }
+zcash_client_backend = { workspace = true, features = ["unstable"] }
 zcash_encoding = { workspace = true }
 zcash_keys = { workspace = true }
 zcash_protocol = { workspace = true }
+zcash_transparent = { workspace = true }
+zingo_common_components = { workspace = true }
+zip32 = { workspace = true }
 
 [dev-dependencies]
 rand = { workspace = true }

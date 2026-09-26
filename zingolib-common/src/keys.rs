@@ -1,33 +1,37 @@
-//! TODO: Add Mod Description Here!
+//! Wallet key material: the unified key store, the ids that name addresses derived from it,
+//! and the transparent scope shared with the sync engine.
 
 use std::io::{self, Read, Write};
 
 use bip0039::Mnemonic;
 use byteorder::{LittleEndian, ReadBytesExt, WriteBytesExt};
 
-use pepper_sync::keys::transparent::TransparentScope;
 use zcash_address::unified::{Encoding as _, Ufvk};
 use zcash_client_backend::address::UnifiedAddress;
 use zcash_client_backend::keys::{Era, UnifiedSpendingKey};
 use zcash_encoding::CompactSize;
-use zcash_keys::keys::UnifiedFullViewingKey;
+use zcash_keys::keys::{DerivationError, UnifiedFullViewingKey};
 use zcash_protocol::consensus::{NetworkConstants, Parameters};
 use zcash_transparent::address::TransparentAddress;
-use zcash_transparent::keys::{IncomingViewingKey, NonHardenedChildIndex};
+use zcash_transparent::keys::{IncomingViewingKey, NonHardenedChildIndex, TransparentKeyScope};
 use zip32::{AccountId, DiversifierIndex};
 
-use crate::config::ChainType;
-use crate::wallet::error::KeyError;
-use zingolib_common::serialization::ReadableWriteable;
+use crate::chain::ChainType;
+use crate::serialization::ReadableWriteable;
 
-pub(crate) const KEY_TYPE_EMPTY: u8 = 0;
-pub(crate) const KEY_TYPE_VIEW: u8 = 1;
-pub(crate) const KEY_TYPE_SPEND: u8 = 2;
+/// Wallet-file tag for a key store without keys.
+pub const KEY_TYPE_EMPTY: u8 = 0;
+/// Wallet-file tag for a view-only key store.
+pub const KEY_TYPE_VIEW: u8 = 1;
+/// Wallet-file tag for a spending key store.
+pub const KEY_TYPE_SPEND: u8 = 2;
 
 /// Unique ID for unified addresses.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub struct UnifiedAddressId {
+    /// Account the address was derived for.
     pub account_id: AccountId,
+    /// Index of the address within the account.
     pub address_index: u32,
 }
 
@@ -229,7 +233,7 @@ impl UnifiedKeyStore {
     ///
     /// For example, if 10 is returned, the `sapling_diversifier_index` is associated with the 10th valid sapling
     /// diversifier when incrementing from a diversifier index of 0.
-    pub(crate) fn determine_nth_valid_sapling_diversifier(
+    pub fn determine_nth_valid_sapling_diversifier(
         &self,
         sapling_diversifier_index: DiversifierIndex,
     ) -> Result<u32, KeyError> {
@@ -473,5 +477,112 @@ fn read_write_receiver_selections() {
             .write(receivers_selected_bytes.as_mut_slice(), ())
             .unwrap();
         assert_eq!(i as u8, receivers_selected_bytes[1]);
+    }
+}
+
+/// Child index for the `change` path level in the BIP44 hierarchy (a.k.a. scope/chain).
+#[derive(Debug, Clone, Copy, Hash, PartialEq, Eq, PartialOrd, Ord)]
+pub enum TransparentScope {
+    /// External scope
+    External,
+    /// Internal scope (a.k.a. change)
+    Internal,
+    /// Refund scope (a.k.a. ephemeral)
+    Refund,
+}
+
+impl std::fmt::Display for TransparentScope {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "{}",
+            match self {
+                TransparentScope::External => "external",
+                TransparentScope::Internal => "internal",
+                TransparentScope::Refund => "refund",
+            }
+        )
+    }
+}
+
+impl From<TransparentScope> for TransparentKeyScope {
+    fn from(value: TransparentScope) -> Self {
+        match value {
+            TransparentScope::External => TransparentKeyScope::EXTERNAL,
+            TransparentScope::Internal => TransparentKeyScope::INTERNAL,
+            TransparentScope::Refund => TransparentKeyScope::EPHEMERAL,
+        }
+    }
+}
+
+impl TryFrom<u8> for TransparentScope {
+    type Error = std::io::Error;
+
+    fn try_from(value: u8) -> std::io::Result<Self> {
+        match value {
+            0 => Ok(TransparentScope::External),
+            1 => Ok(TransparentScope::Internal),
+            2 => Ok(TransparentScope::Refund),
+            _ => Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                "invalid scope value",
+            )),
+        }
+    }
+}
+
+/// Errors associated with key and address derivation
+// TODO: make error private as contains external crate types. have public API safe higher level error type i.e. WalletError.
+#[derive(Debug, thiserror::Error)]
+pub enum KeyError {
+    /// Error associated with standard IO
+    #[error("{0}")]
+    IoError(#[from] std::io::Error),
+    /// Invalid account ID
+    #[error("Account ID should be at most 31 bits")]
+    InvalidAccountId(#[from] zip32::TryFromIntError),
+    /// Invalid account ID
+    #[error("No keys found for the given account id. Try adding the account.")]
+    NoAccountKeys,
+    /// Key derivation failed
+    #[error("Key derivation failed")]
+    KeyDerivationError(#[from] DerivationError),
+    /// Key decoding failed
+    #[error("Key decoding failed")]
+    KeyDecodingError,
+    /// Key parsing failed
+    #[error("Key parsing failed. {0}")]
+    KeyParseError(#[from] zcash_address::unified::ParseError),
+    /// No spend capability
+    #[error("No spend capability")]
+    NoSpendCapability,
+    /// No view capability
+    #[error("No view capability")]
+    NoViewCapability,
+    /// Invalid non-hardened child indexes
+    #[error("Outside range of non-hardened child indexes")]
+    InvalidNonHardenedChildIndex,
+    /// Network mismatch
+    #[error("Decoded unified full viewing key does not match current network")]
+    NetworkMismatch,
+    /// Invalid format
+    #[error("Viewing keys must be imported in the unified format")]
+    InvalidFormat,
+    /// Unified address missing shielded receiver
+    #[error("Unified address must contain a shielded receiver")]
+    UnifiedAddressError,
+    /// Transparent address generation failed. Latest transparent address has not received funds.
+    #[error(
+        "Transparent address generation failed. Latest transparent address has not received funds."
+    )]
+    GapError,
+    /// Invalid mnemonic phrase.
+    #[error("Invalid mnemonic phrase: {0}")]
+    InvalidMnemonicPhrase(#[from] bip0039::Error),
+}
+
+impl From<bip32::Error> for KeyError {
+    fn from(value: bip32::Error) -> Self {
+        Self::KeyDerivationError(DerivationError::Transparent(value))
     }
 }

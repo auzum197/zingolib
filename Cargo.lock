@@ -121,12 +121,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "330a5ed07fa54e4702c9d6c4174f74427fc0ef6e214bbd677ae50a5099946470"
 
 [[package]]
-name = "append-only-vec"
-version = "0.1.8"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2114736faba96bcd79595c700d03183f61357b9fbce14852515e59f3bee4ed4a"
-
-[[package]]
 name = "approx"
 version = "0.5.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -338,7 +332,7 @@ dependencies = [
  "hmac 0.13.0-pre.4",
  "rand_core 0.6.4",
  "ripemd 0.2.0-pre.4",
- "secp256k1 0.29.1",
+ "secp256k1",
  "sha2 0.11.0-pre.4",
  "subtle",
  "zeroize",
@@ -373,42 +367,6 @@ name = "bit-vec"
 version = "0.8.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "5e764a1d40d510daf35e07be9eb06e75770908c27d411ee6c92109c9840eaaf7"
-
-[[package]]
-name = "bitcoin-consensus-encoding"
-version = "1.1.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "207311705279250ba465076a1bac4b1ac982855fff73fc5f67e22158ac58cdc9"
-dependencies = [
- "bitcoin-internals",
- "hex-conservative 1.2.0",
- "serde",
-]
-
-[[package]]
-name = "bitcoin-internals"
-version = "0.6.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d573f4cf32996a8dce612e4348cece65a241f1882ed594047c9ba348e8869fa5"
-
-[[package]]
-name = "bitcoin-io"
-version = "0.1.101"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "bb5de036369d1ac59d3c1819ebc4d850f89466f5401c571a285b6ed564a4cb78"
-dependencies = [
- "bitcoin-consensus-encoding",
-]
-
-[[package]]
-name = "bitcoin_hashes"
-version = "0.14.101"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "bca4c7abb40c8817d77403c880988cfd484f23ab2365726afb2f798363e2c4a2"
-dependencies = [
- "bitcoin-io",
- "hex-conservative 0.2.2",
-]
 
 [[package]]
 name = "bitflags"
@@ -1746,24 +1704,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7f24254aa9a54b5c858eaee2f5bccdb46aaf0e486a595ed5fd8f86ba55232a70"
 
 [[package]]
-name = "hex-conservative"
-version = "0.2.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "fda06d18ac606267c40c04e41b9947729bf8b9efe74bd4e82b61a5f26a510b9f"
-dependencies = [
- "arrayvec",
-]
-
-[[package]]
-name = "hex-conservative"
-version = "1.2.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "35431185f361ccf3ffc58254628af5f1f5d5f28531da2e02e5d6c82bbc282a10"
-dependencies = [
- "arrayvec",
-]
-
-[[package]]
 name = "hmac"
 version = "0.12.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3059,7 +2999,7 @@ dependencies = [
  "lazy_static",
  "num-traits",
  "rand 0.8.7",
- "rand_chacha 0.3.1",
+ "rand_chacha",
  "rand_xorshift",
  "regex-syntax",
  "rusty-fork",
@@ -3278,18 +3218,8 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "22f6172bdec972074665ed81ed53b71da00bfc44b65a753cfde883ec4c702a1a"
 dependencies = [
  "libc",
- "rand_chacha 0.3.1",
+ "rand_chacha",
  "rand_core 0.6.4",
-]
-
-[[package]]
-name = "rand"
-version = "0.9.5"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b9ef1d0d795eb7d84685bca4f72f3649f064e6641543d3a8c415898726a57b41"
-dependencies = [
- "rand_chacha 0.9.0",
- "rand_core 0.9.5",
 ]
 
 [[package]]
@@ -3314,31 +3244,12 @@ dependencies = [
 ]
 
 [[package]]
-name = "rand_chacha"
-version = "0.9.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d3022b5f1df60f26e1ffddd6c66e8aa15de382ae63b3a0c1bfc0e4d3e3f325cb"
-dependencies = [
- "ppv-lite86",
- "rand_core 0.9.5",
-]
-
-[[package]]
 name = "rand_core"
 version = "0.6.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ec0be4795e2f6a28069bec0b5ff3e2ac9bafc99e6a9a7dc3547996c5c816922c"
 dependencies = [
  "getrandom 0.2.17",
-]
-
-[[package]]
-name = "rand_core"
-version = "0.9.5"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "76afc826de14238e6e8c374ddcc1fa19e374fd8dd986b0d2af0d02377261d83c"
-dependencies = [
- "getrandom 0.3.4",
 ]
 
 [[package]]
@@ -3909,18 +3820,7 @@ version = "0.29.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9465315bc9d4566e1724f0fffcbcc446268cb522e60f9a27bcded6b19c108113"
 dependencies = [
- "secp256k1-sys 0.10.1",
-]
-
-[[package]]
-name = "secp256k1"
-version = "0.31.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2c3c81b43dc2d8877c216a3fccf76677ee1ebccd429566d3e67447290d0c42b2"
-dependencies = [
- "bitcoin_hashes",
- "rand 0.9.5",
- "secp256k1-sys 0.11.0",
+ "secp256k1-sys",
 ]
 
 [[package]]
@@ -3928,15 +3828,6 @@ name = "secp256k1-sys"
 version = "0.10.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d4387882333d3aa8cb20530a17c69a3752e97837832f34f6dccc760e715001d9"
-dependencies = [
- "cc",
-]
-
-[[package]]
-name = "secp256k1-sys"
-version = "0.11.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "dcb913707158fadaf0d8702c2db0e857de66eb003ccfdda5924b5f5ac98efb38"
 dependencies = [
  "cc",
 ]
@@ -5435,7 +5326,7 @@ dependencies = [
  "rand_core 0.6.4",
  "rayon",
  "sapling-crypto",
- "secp256k1 0.29.1",
+ "secp256k1",
  "secrecy",
  "shardtree",
  "subtle",
@@ -5533,7 +5424,7 @@ dependencies = [
  "rand_core 0.6.4",
  "redjubjub",
  "sapling-crypto",
- "secp256k1 0.29.1",
+ "secp256k1",
  "sha2 0.10.9",
  "zcash_encoding",
  "zcash_note_encryption",
@@ -5589,7 +5480,7 @@ dependencies = [
  "bounded-vec",
  "hex",
  "ripemd 0.1.3",
- "secp256k1 0.29.1",
+ "secp256k1",
  "sha1",
  "sha2 0.10.9",
  "thiserror 2.0.19",
@@ -5618,7 +5509,7 @@ dependencies = [
  "hex",
  "nonempty",
  "ripemd 0.1.3",
- "secp256k1 0.29.1",
+ "secp256k1",
  "sha2 0.10.9",
  "subtle",
  "zcash_address",
@@ -5754,14 +5645,9 @@ source = "git+https://github.com/zingolabs/infrastructure.git?rev=537f84d3d81b22
 name = "zingolib"
 version = "5.0.0"
 dependencies = [
- "append-only-vec",
- "argon2",
  "bech32",
  "bip0039",
- "bip32",
- "bs58",
  "byteorder",
- "chacha20poly1305",
  "chrono",
  "dirs",
  "futures",
@@ -5769,20 +5655,17 @@ dependencies = [
  "http",
  "incrementalmerkletree",
  "itertools 0.14.0",
- "jubjub",
  "log",
  "nonempty",
  "orchard",
  "pepper-sync",
  "portpicker",
  "proptest",
- "prost",
  "rand 0.8.7",
  "ring",
  "rust-embed",
  "rustls 0.23.42",
  "sapling-crypto",
- "secp256k1 0.31.1",
  "secrecy",
  "serde",
  "serde_json",
@@ -5809,6 +5692,7 @@ dependencies = [
  "zingo_test_vectors",
  "zingolib",
  "zingolib-common",
+ "zingolib-file-format",
  "zingolib-price",
  "zip32",
 ]
@@ -5817,13 +5701,48 @@ dependencies = [
 name = "zingolib-common"
 version = "0.1.0"
 dependencies = [
+ "bip0039",
+ "bip32",
  "byteorder",
+ "orchard",
  "rand 0.8.7",
+ "sapling-crypto",
+ "serde",
+ "thiserror 2.0.19",
  "tracing",
  "zcash_address",
+ "zcash_client_backend",
  "zcash_encoding",
  "zcash_keys",
  "zcash_protocol",
+ "zcash_transparent",
+ "zingo_common_components",
+ "zip32",
+]
+
+[[package]]
+name = "zingolib-file-format"
+version = "0.1.0"
+dependencies = [
+ "argon2",
+ "bip0039",
+ "byteorder",
+ "chacha20poly1305",
+ "log",
+ "pepper-sync",
+ "rand 0.8.7",
+ "secrecy",
+ "thiserror 2.0.19",
+ "zcash_encoding",
+ "zcash_keys",
+ "zcash_primitives",
+ "zcash_protocol",
+ "zcash_transparent",
+ "zeroize",
+ "zingo_common_components",
+ "zingolib-common",
+ "zingolib-price",
+ "zip32",
 ]
 
 [[package]]

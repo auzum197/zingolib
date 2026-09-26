@@ -164,50 +164,21 @@ impl ReadableWriteable for SyncState {
         let scan_ranges = Vector::read(&mut reader, |r| {
             let start = BlockHeight::from_u32(r.read_u32::<LittleEndian>()?);
             let end = BlockHeight::from_u32(r.read_u32::<LittleEndian>()?);
-            let priority = match version {
-                3.. => match r.read_u8()? {
-                    0 => Ok(ScanPriority::RefetchingNullifiers),
-                    1 => Ok(ScanPriority::Scanning),
-                    2 => Ok(ScanPriority::Scanned),
-                    3 => Ok(ScanPriority::ScannedWithoutMapping),
-                    4 => Ok(ScanPriority::Historic),
-                    5 => Ok(ScanPriority::OpenAdjacent),
-                    6 => Ok(ScanPriority::FoundNote),
-                    7 => Ok(ScanPriority::ChainTip),
-                    8 => Ok(ScanPriority::Verify),
-                    _ => Err(std::io::Error::new(
-                        std::io::ErrorKind::InvalidData,
-                        "invalid scan priority",
-                    )),
-                }?,
-                2 => match r.read_u8()? {
-                    0 => Ok(ScanPriority::Scanning),
-                    1 => Ok(ScanPriority::Scanned),
-                    2 => Ok(ScanPriority::ScannedWithoutMapping),
-                    3 => Ok(ScanPriority::Historic),
-                    4 => Ok(ScanPriority::OpenAdjacent),
-                    5 => Ok(ScanPriority::FoundNote),
-                    6 => Ok(ScanPriority::ChainTip),
-                    7 => Ok(ScanPriority::Verify),
-                    _ => Err(std::io::Error::new(
-                        std::io::ErrorKind::InvalidData,
-                        "invalid scan priority",
-                    )),
-                }?,
-                0 | 1 => match r.read_u8()? {
-                    0 => Ok(ScanPriority::Scanning),
-                    1 => Ok(ScanPriority::Scanned),
-                    2 => Ok(ScanPriority::Historic),
-                    3 => Ok(ScanPriority::OpenAdjacent),
-                    4 => Ok(ScanPriority::FoundNote),
-                    5 => Ok(ScanPriority::ChainTip),
-                    6 => Ok(ScanPriority::Verify),
-                    _ => Err(std::io::Error::new(
-                        std::io::ErrorKind::InvalidData,
-                        "invalid scan priority",
-                    )),
-                }?,
-            };
+            let priority = match r.read_u8()? {
+                0 => Ok(ScanPriority::RefetchingNullifiers),
+                1 => Ok(ScanPriority::Scanning),
+                2 => Ok(ScanPriority::Scanned),
+                3 => Ok(ScanPriority::ScannedWithoutMapping),
+                4 => Ok(ScanPriority::Historic),
+                5 => Ok(ScanPriority::OpenAdjacent),
+                6 => Ok(ScanPriority::FoundNote),
+                7 => Ok(ScanPriority::ChainTip),
+                8 => Ok(ScanPriority::Verify),
+                _ => Err(std::io::Error::new(
+                    std::io::ErrorKind::InvalidData,
+                    "invalid scan priority",
+                )),
+            }?;
 
             Ok(ScanRange::from_parts(start..end, priority))
         })?;
@@ -233,22 +204,9 @@ impl ReadableWriteable for SyncState {
         } else {
             Vec::new()
         };
-        let scan_targets = Vector::read(&mut reader, |r| {
-            Ok(if version >= 1 {
-                ScanTarget::read(r, ())?
-            } else {
-                let block_height = BlockHeight::from_u32(r.read_u32::<LittleEndian>()?);
-                let txid = TxId::read(r)?;
-
-                ScanTarget {
-                    block_height,
-                    txid,
-                    narrow_scan_area: true,
-                }
-            })
-        })?
-        .into_iter()
-        .collect::<BTreeSet<_>>();
+        let scan_targets = Vector::read(&mut reader, |r| ScanTarget::read(r, ()))?
+            .into_iter()
+            .collect::<BTreeSet<_>>();
 
         Ok(Self::from_parts(
             scan_ranges,
@@ -354,18 +312,7 @@ impl ReadableWriteable for NullifierMap {
                         format!("failed to read nullifier. {e}"),
                     )
                 })?;
-            let scan_target = if version >= 1 {
-                ScanTarget::read(r, ())?
-            } else {
-                let block_height = BlockHeight::from_u32(r.read_u32::<LittleEndian>()?);
-                let txid = TxId::read(r)?;
-
-                ScanTarget {
-                    block_height,
-                    txid,
-                    narrow_scan_area: false,
-                }
-            };
+            let scan_target = ScanTarget::read(r, ())?;
 
             Ok((nullifier, scan_target))
         })?
@@ -377,18 +324,7 @@ impl ReadableWriteable for NullifierMap {
             r.read_exact(&mut nullifier_bytes)?;
             let nullifier = orchard::note::Nullifier::from_bytes(&nullifier_bytes)
                 .expect("nullifier bytes should be valid");
-            let scan_target = if version >= 1 {
-                ScanTarget::read(r, ())?
-            } else {
-                let block_height = BlockHeight::from_u32(r.read_u32::<LittleEndian>()?);
-                let txid = TxId::read(r)?;
-
-                ScanTarget {
-                    block_height,
-                    txid,
-                    narrow_scan_area: false,
-                }
-            };
+            let scan_target = ScanTarget::read(r, ())?;
 
             Ok((nullifier, scan_target))
         })?
@@ -564,16 +500,9 @@ impl ReadableWriteable for TransparentCoin {
     const VERSION: u8 = 1;
 
     fn read<R: Read>(mut reader: R, _input: ()) -> std::io::Result<Self> {
-        let version = Self::get_version(&mut reader)?;
+        Self::get_version(&mut reader)?;
 
-        let output_id = if version >= 1 {
-            OutputId::read(&mut reader)?
-        } else {
-            OutputId::new(
-                TxId::read(&mut reader)?,
-                u32::from(reader.read_u16::<LittleEndian>()?),
-            )
-        };
+        let output_id = OutputId::read(&mut reader)?;
 
         let key_id = TransparentAddressId::read(&mut reader)?;
 
@@ -615,17 +544,12 @@ const WALLET_NOTE_VERSION: u8 = 2;
 
 fn read_refetch_nullifier_ranges(
     reader: &mut impl Read,
-    version: u8,
 ) -> std::io::Result<Vec<Range<BlockHeight>>> {
-    if version >= 1 {
-        Vector::read(reader, |r| {
-            let start = r.read_u32::<LittleEndian>()?;
-            let end = r.read_u32::<LittleEndian>()?;
-            Ok(BlockHeight::from_u32(start)..BlockHeight::from_u32(end))
-        })
-    } else {
-        Ok(Vec::new())
-    }
+    Vector::read(reader, |r| {
+        let start = r.read_u32::<LittleEndian>()?;
+        let end = r.read_u32::<LittleEndian>()?;
+        Ok(BlockHeight::from_u32(start)..BlockHeight::from_u32(end))
+    })
 }
 
 fn write_refetch_nullifier_ranges(
@@ -642,16 +566,9 @@ impl ReadableWriteable for SaplingNote {
     const VERSION: u8 = WALLET_NOTE_VERSION;
 
     fn read<R: Read>(mut reader: R, _input: ()) -> std::io::Result<Self> {
-        let version = Self::get_version(&mut reader)?;
+        Self::get_version(&mut reader)?;
 
-        let output_id = if version >= 2 {
-            OutputId::read(&mut reader)?
-        } else {
-            OutputId::new(
-                TxId::read(&mut reader)?,
-                u32::from(reader.read_u16::<LittleEndian>()?),
-            )
-        };
+        let output_id = OutputId::read(&mut reader)?;
 
         let key_id = KeyId::read(&mut reader)?;
 
@@ -705,7 +622,7 @@ impl ReadableWriteable for SaplingNote {
         })?;
 
         let spending_transaction = Optional::read(&mut reader, TxId::read)?;
-        let refetch_nullifier_ranges = read_refetch_nullifier_ranges(&mut reader, version)?;
+        let refetch_nullifier_ranges = read_refetch_nullifier_ranges(&mut reader)?;
 
         Ok(Self {
             output_id,
@@ -761,17 +678,9 @@ impl ReadableWriteable for SaplingNote {
 /// construction.
 fn read_orchard_protocol_note<R: Read, P>(
     mut reader: R,
-    version: u8,
     note_version: orchard::note::NoteVersion,
 ) -> std::io::Result<WalletNote<orchard::Note, orchard::note::Nullifier, P>> {
-    let output_id = if version >= 2 {
-        OutputId::read(&mut reader)?
-    } else {
-        OutputId::new(
-            TxId::read(&mut reader)?,
-            u32::from(reader.read_u16::<LittleEndian>()?),
-        )
-    };
+    let output_id = OutputId::read(&mut reader)?;
 
     let key_id = KeyId::read(&mut reader)?;
 
@@ -808,7 +717,7 @@ fn read_orchard_protocol_note<R: Read, P>(
     })?;
 
     let spending_transaction = Optional::read(&mut reader, TxId::read)?;
-    let refetch_nullifier_ranges = read_refetch_nullifier_ranges(&mut reader, version)?;
+    let refetch_nullifier_ranges = read_refetch_nullifier_ranges(&mut reader)?;
 
     Ok(WalletNote {
         output_id,
@@ -856,8 +765,8 @@ impl ReadableWriteable for OrchardNote {
     const VERSION: u8 = WALLET_NOTE_VERSION;
 
     fn read<R: Read>(mut reader: R, _input: ()) -> std::io::Result<Self> {
-        let version = Self::get_version(&mut reader)?;
-        read_orchard_protocol_note(reader, version, orchard::note::NoteVersion::V2)
+        Self::get_version(&mut reader)?;
+        read_orchard_protocol_note(reader, orchard::note::NoteVersion::V2)
     }
 
     fn write<W: Write>(&self, mut writer: W, _input: ()) -> std::io::Result<()> {
@@ -870,8 +779,8 @@ impl ReadableWriteable for IronwoodNote {
     const VERSION: u8 = WALLET_NOTE_VERSION;
 
     fn read<R: Read>(mut reader: R, _input: ()) -> std::io::Result<Self> {
-        let version = Self::get_version(&mut reader)?;
-        read_orchard_protocol_note(reader, version, orchard::note::NoteVersion::V3)
+        Self::get_version(&mut reader)?;
+        read_orchard_protocol_note(reader, orchard::note::NoteVersion::V3)
     }
 
     fn write<W: Write>(&self, mut writer: W, _input: ()) -> std::io::Result<()> {
@@ -886,16 +795,9 @@ impl<P: consensus::Parameters> ReadableWriteable<&P, &P> for OutgoingSaplingNote
     const VERSION: u8 = OUTGOING_NOTE_VERSION;
 
     fn read<R: Read>(mut reader: R, consensus_parameters: &P) -> std::io::Result<Self> {
-        let version = <Self as ReadableWriteable<&P, &P>>::get_version(&mut reader)?;
+        <Self as ReadableWriteable<&P, &P>>::get_version(&mut reader)?;
 
-        let output_id = if version >= 1 {
-            OutputId::read(&mut reader)?
-        } else {
-            OutputId::new(
-                TxId::read(&mut reader)?,
-                u32::from(reader.read_u16::<LittleEndian>()?),
-            )
-        };
+        let output_id = OutputId::read(&mut reader)?;
 
         let key_id = KeyId::read(&mut reader)?;
 
@@ -986,18 +888,10 @@ impl<P: consensus::Parameters> ReadableWriteable<&P, &P> for OutgoingSaplingNote
 /// version fixed at construction.
 fn read_orchard_protocol_outgoing_note<R: Read, P>(
     mut reader: R,
-    version: u8,
     consensus_parameters: &impl consensus::Parameters,
     note_version: orchard::note::NoteVersion,
 ) -> std::io::Result<OutgoingNote<orchard::Note, P>> {
-    let output_id = if version >= 1 {
-        OutputId::read(&mut reader)?
-    } else {
-        OutputId::new(
-            TxId::read(&mut reader)?,
-            u32::from(reader.read_u16::<LittleEndian>()?),
-        )
-    };
+    let output_id = OutputId::read(&mut reader)?;
 
     let key_id = KeyId::read(&mut reader)?;
 
@@ -1069,10 +963,9 @@ impl<P: consensus::Parameters> ReadableWriteable<&P, &P> for OutgoingOrchardNote
     const VERSION: u8 = OUTGOING_NOTE_VERSION;
 
     fn read<R: Read>(mut reader: R, consensus_parameters: &P) -> std::io::Result<Self> {
-        let version = <Self as ReadableWriteable<&P, &P>>::get_version(&mut reader)?;
+        <Self as ReadableWriteable<&P, &P>>::get_version(&mut reader)?;
         read_orchard_protocol_outgoing_note(
             reader,
-            version,
             consensus_parameters,
             orchard::note::NoteVersion::V2,
         )
@@ -1088,10 +981,9 @@ impl<P: consensus::Parameters> ReadableWriteable<&P, &P> for OutgoingIronwoodNot
     const VERSION: u8 = OUTGOING_NOTE_VERSION;
 
     fn read<R: Read>(mut reader: R, consensus_parameters: &P) -> std::io::Result<Self> {
-        let version = <Self as ReadableWriteable<&P, &P>>::get_version(&mut reader)?;
+        <Self as ReadableWriteable<&P, &P>>::get_version(&mut reader)?;
         read_orchard_protocol_outgoing_note(
             reader,
-            version,
             consensus_parameters,
             orchard::note::NoteVersion::V3,
         )

@@ -38,6 +38,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `config::DEFAULT_EVENT_CHANNEL_CAPACITY`). Serialized version incremented to 2.
 
 ### Changed
+- `keys::transparent::TransparentScope`: now defined in `zingolib_common::keys` and re-exported.
 - wallet types and `config::SyncConfig` / `config::PerformanceLevel`: inherent `read` and
   `write` replaced by `zingolib_common::serialization::ReadableWriteable` impls. Reading now
   rejects layout versions newer than the crate knows, and `write` takes `&self` for
@@ -49,6 +50,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `sync::SyncStatus`: `Display` impl now summarises raw counts.
 
 ### Removed
+- Struct layouts older than the ones the first pendrake-watch release wrote: scan target and
+  output id fallbacks, `SyncState` scan priorities before layout 3, and the `SyncConfig`
+  defaults for layouts 0 and 1. The Ironwood upgrades (`SyncState` 4, `NullifierMap` 2,
+  `TreeBounds` 1, `WalletTransaction` 1, `ShardTrees` 1) stay readable from their predecessors.
 - `sync::SyncStatus`: removed `percentage_session_blocks_scanned`,
   `percentage_total_blocks_scanned`, `percentage_session_outputs_scanned`,
   `percentage_total_outputs_scanned`, `session_blocks_scanned`,

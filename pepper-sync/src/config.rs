@@ -110,20 +110,12 @@ impl ReadableWriteable for SyncConfig {
     const VERSION: u8 = 2;
 
     fn read<R: Read>(mut reader: R, _input: ()) -> std::io::Result<Self> {
-        let version = Self::get_version(&mut reader)?;
+        Self::get_version(&mut reader)?;
 
         let gap_limit = reader.read_u8()?;
         let scopes = reader.read_u8()?;
-        let performance_level = if version >= 1 {
-            PerformanceLevel::read(&mut reader, ())?
-        } else {
-            PerformanceLevel::High
-        };
-        let event_channel_capacity = if version >= 2 {
-            reader.read_u64::<LittleEndian>()? as usize
-        } else {
-            DEFAULT_EVENT_CHANNEL_CAPACITY
-        };
+        let performance_level = PerformanceLevel::read(&mut reader, ())?;
+        let event_channel_capacity = reader.read_u64::<LittleEndian>()? as usize;
         Ok(Self {
             transparent_address_discovery: TransparentAddressDiscovery {
                 gap_limit,

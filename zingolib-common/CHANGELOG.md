@@ -13,7 +13,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `status`: moved from `zingolib-status` 0.2.1 (previously `confirmation_status`)
 - `serialization::ReadableWriteable`: moved from `zingolib::wallet::traits`. Versioned
   read/write trait now shared by every persisted type in the workspace.
+- `chain::ChainType` and `chain::InvalidChainType`: moved from `zingolib::config`.
+- `keys`: `UnifiedKeyStore`, `UnifiedAddressId`, `ReceiverSelection` and `KeyError` moved from
+  `zingolib::wallet`, and `TransparentScope` moved from `pepper_sync::keys::transparent`.
 
 ### Changed
 
-- `status::ConfirmationStatus`: `read` and `write` are now the `ReadableWriteable` impl
+- `status::ConfirmationStatus`: `read` and `write` are now the `ReadableWriteable` impl.
+  Layout 0 is no longer read.

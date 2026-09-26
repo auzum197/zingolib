@@ -29,7 +29,6 @@ pub mod fee_tables;
 pub mod lightclient;
 pub mod macros;
 pub mod mock_indexer;
-pub mod paths;
 pub mod scenarios;
 pub mod send;
 pub mod synthetic_wallet;
