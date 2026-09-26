@@ -19,4 +19,5 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
-- `status::ConfirmationStatus`: `read` and `write` are now the `ReadableWriteable` impl
+- `status::ConfirmationStatus`: `read` and `write` are now the `ReadableWriteable` impl.
+  Layout 0 is no longer read.

@@ -54,7 +54,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `LightClientError`. `zcash_proofs` and the Sapling parameter download are now test-only.
 
 ### Removed
-- `wallet::legacy` and `wallet::keys::legacy`: moved to `zingolib_file_format::legacy`.
+- `wallet::legacy`, `wallet::keys::legacy`, `wallet::disk::testing::examples` and
+  `testutils::paths`: wallet files older than layout 41 are no longer readable, so the legacy
+  readers, the example wallet files and the tests that loaded them are gone.
 - `config::ChainType`, `wallet::error::KeyError`, `wallet::keys::unified`, `wallet::WalletSettings`
   and `wallet::encryption` are re-exports of `zingolib_common` and `zingolib_file_format` now.
 - `wallet::traits`: `ReadableWriteable` now lives in `zingolib_common::serialization`

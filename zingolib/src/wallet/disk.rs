@@ -55,7 +55,7 @@ use zingolib_common::{
     chain::ChainType,
     keys::{KeyError, ReceiverSelection},
 };
-pub use zingolib_file_format::{WalletFile, WalletFileRef, first_addresses};
+pub use zingolib_file_format::{WalletFile, WalletFileRef};
 
 use super::LightWallet;
 use pepper_sync::{keys::transparent, wallet::KeyIdInterface};

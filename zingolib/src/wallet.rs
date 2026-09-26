@@ -1,6 +1,6 @@
 //! Core module, containing `crate::wallet::LightWallet` with methods for all wallet functionality.
 
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 
 use bip0039::Mnemonic;
 
@@ -17,7 +17,9 @@ use zingolib_price::PriceList;
 
 use crate::config::{ChainType, WalletConfig};
 use error::{PriceError, WalletError};
-use keys::unified::{UnifiedAddressId, UnifiedKeyStore};
+use keys::unified::{ReceiverSelection, UnifiedAddressId, UnifiedKeyStore};
+use pepper_sync::keys::transparent::TransparentScope;
+use zcash_transparent::keys::NonHardenedChildIndex;
 
 pub mod error;
 pub mod utils;
@@ -37,6 +39,33 @@ pub use pepper_sync::config::{
     PerformanceLevel, SyncConfig, TransparentAddressDiscovery, TransparentAddressDiscoveryScopes,
 };
 pub use zingolib_file_format::{WalletSettings, encryption};
+
+/// The address set every wallet starts with: the default unified address of account 0
+/// and its first external transparent address. Address derivation later drops the
+/// transparent entry when the keys cannot view transparent funds.
+fn first_addresses(
+    unified_key: &UnifiedKeyStore,
+) -> (
+    BTreeMap<UnifiedAddressId, ReceiverSelection>,
+    BTreeSet<TransparentAddressId>,
+) {
+    let mut unified_addresses = BTreeMap::new();
+    if let Some(receivers) = unified_key.default_receivers() {
+        unified_addresses.insert(
+            UnifiedAddressId {
+                account_id: zip32::AccountId::ZERO,
+                address_index: 0,
+            },
+            receivers,
+        );
+    }
+    let transparent_addresses = BTreeSet::from([TransparentAddressId::new(
+        zip32::AccountId::ZERO,
+        TransparentScope::External,
+        NonHardenedChildIndex::ZERO,
+    )]);
+    (unified_addresses, transparent_addresses)
+}
 
 /// Provides necessary information to recover the wallet without the wallet file.
 #[derive(Clone, Debug, PartialEq, serde::Serialize)]
@@ -179,7 +208,7 @@ impl LightWallet {
             ));
         }
 
-        let (unified_addresses, transparent_addresses) = disk::first_addresses(
+        let (unified_addresses, transparent_addresses) = first_addresses(
             unified_key_store
                 .get(&zip32::AccountId::ZERO)
                 .expect("account 0 must exist"),

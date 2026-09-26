@@ -352,7 +352,6 @@ impl LightClient {
 #[cfg(test)]
 mod tests {
     use zcash_protocol::consensus::Parameters;
-    use zcash_protocol::{PoolType, ShieldedPool};
     use zingo_test_vectors::seeds;
 
     use super::super::error::ProposeShieldError;
@@ -360,8 +359,6 @@ mod tests {
         config::{ClientConfig, WalletConfig},
         lightclient::LightClient,
         testutils::default_test_wallet_settings,
-        testutils::lightclient::from_inputs::transaction_request_from_send_inputs,
-        wallet::disk::testing::examples,
     };
 
     async fn create_basic_client() -> LightClient {
@@ -423,28 +420,5 @@ mod tests {
                 ])
             ]
         );
-    }
-
-    /// this test loads an example wallet with existing sapling finds
-    #[ignore = "for some reason this is does not work without network, even though it should be possible"]
-    #[tokio::test]
-    async fn example_mainnet_hhcclaltpcckcsslpcnetblr_80b5594ac_propose_100_000_to_self() {
-        let client = examples::NetworkSeedVersion::Mainnet(
-            examples::MainnetSeedVersion::HotelHumor(examples::HotelHumorVersion::Latest),
-        )
-        .load_example_wallet()
-        .await;
-        let mut wallet = client.wallet().write().await;
-
-        let pool = PoolType::Shielded(ShieldedPool::Orchard);
-        let self_address = wallet.get_address(pool);
-
-        let receivers = vec![(self_address.as_str(), 100_000, None)];
-        let request = transaction_request_from_send_inputs(receivers)
-            .expect("actually all of this logic oughta be internal to propose");
-
-        wallet
-            .create_send_proposal(request, zip32::AccountId::ZERO)
-            .expect("can propose from existing data");
     }
 }
