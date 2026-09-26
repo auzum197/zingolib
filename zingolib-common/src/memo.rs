@@ -1,11 +1,8 @@
-//! Zingo-Memo
-//!
 //! Utilities for procedural creation and parsing of the Memo field.
 //!
 //! These memos are not directly exposed to the user,
 //! but instead write down UAs on-chain for recovery after rescan.
 
-#![warn(missing_docs)]
 use std::io::{self, Read, Write};
 
 use zcash_address::unified::{Address, Container, Encoding, Receiver};

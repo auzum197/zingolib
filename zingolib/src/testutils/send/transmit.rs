@@ -12,7 +12,7 @@ use zcash_protocol::consensus::Parameters as _;
 
 use zingo_netutils::Indexer as _;
 use zingo_netutils::lightwallet_protocol::RawTransaction;
-use zingolib_status::confirmation_status::ConfirmationStatus;
+use zingolib_common::status::ConfirmationStatus;
 
 use super::error::{CalculateTransactionError, SendError, TransmissionError};
 use super::proposal::ZingoProposal;

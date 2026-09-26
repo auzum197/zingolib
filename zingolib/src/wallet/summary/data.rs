@@ -5,7 +5,7 @@ use chrono::DateTime;
 use zcash_protocol::{TxId, consensus::BlockHeight};
 
 use pepper_sync::keys::transparent::TransparentScope;
-use zingolib_status::confirmation_status::ConfirmationStatus;
+use zingolib_common::status::ConfirmationStatus;
 
 use crate::wallet::output::SpendStatus;
 

@@ -27,7 +27,7 @@ use zcash_protocol::{
 use zcash_transparent::address::Script;
 
 use zcash_transparent::keys::NonHardenedChildIndex;
-use zingolib_status::confirmation_status::ConfirmationStatus;
+use zingolib_common::status::ConfirmationStatus;
 
 use crate::{
     keys::{

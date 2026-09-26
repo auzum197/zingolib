@@ -1,0 +1,22 @@
+[package]
+name = "zingolib-common"
+description = "Types shared between zingolib and pepper-sync: transaction confirmation status and wallet memo encoding."
+authors = ["<zingo@zingolabs.org>"]
+version = "0.1.0"
+edition = "2024"
+repository = "https://github.com/zingolabs/zingolib"
+homepage = "https://github.com/zingolabs/zingolib"
+license = "MIT"
+
+[badges]
+maintenance = { status = "actively-developed" }
+
+[dependencies]
+byteorder = { workspace = true }
+zcash_address = { workspace = true }
+zcash_encoding = { workspace = true }
+zcash_keys = { workspace = true }
+zcash_protocol = { workspace = true }
+
+[dev-dependencies]
+rand = { workspace = true }

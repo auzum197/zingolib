@@ -2742,8 +2742,7 @@ dependencies = [
  "zcash_protocol",
  "zcash_transparent",
  "zingo-netutils",
- "zingolib-memo",
- "zingolib-status",
+ "zingolib-common",
  "zip32",
 ]
 
@@ -5809,16 +5808,16 @@ dependencies = [
  "zingo_common_components",
  "zingo_test_vectors",
  "zingolib",
- "zingolib-memo",
+ "zingolib-common",
  "zingolib-price",
- "zingolib-status",
  "zip32",
 ]
 
 [[package]]
-name = "zingolib-memo"
-version = "0.1.1"
+name = "zingolib-common"
+version = "0.1.0"
 dependencies = [
+ "byteorder",
  "rand 0.8.7",
  "zcash_address",
  "zcash_encoding",
@@ -5837,14 +5836,6 @@ dependencies = [
  "serde_json",
  "thiserror 2.0.19",
  "zcash_encoding",
-]
-
-[[package]]
-name = "zingolib-status"
-version = "0.2.1"
-dependencies = [
- "byteorder",
- "zcash_protocol",
 ]
 
 [[package]]
@@ -5868,7 +5859,7 @@ dependencies = [
  "zingo_common_components",
  "zingo_test_vectors",
  "zingolib",
- "zingolib-status",
+ "zingolib-common",
  "zip32",
 ]
 
