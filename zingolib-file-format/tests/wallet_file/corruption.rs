@@ -4,17 +4,15 @@
 //! never panic and never hang, and are otherwise free to be accepted or rejected.
 //!
 //! Covers a fresh wallet per chain (plaintext and encrypted) at every offset, and every
-//! `*.dat` vector under `tests/vectors/` at a sample of offsets. The `slow` test samples the
+//! `*.dat` vector under `tests/wallet_file/data/` at a sample of offsets. The `slow` test samples the
 //! vectors densely and is filtered out of the default CI run.
-
-mod support;
 
 use std::path::{Path, PathBuf};
 
 use zingo_common_components::protocol::ActivationHeights;
 use zingolib_common::chain::ChainType;
 
-use support::{Coverage, bytes, fast_session, fresh, mutation_sweep};
+use super::support::{Coverage, bytes, fast_session, fresh, mutation_sweep};
 
 /// Passphrase used for every encrypted fixture in this file, including vector files whose name
 /// marks them as encrypted.
@@ -24,10 +22,10 @@ const PASSPHRASE: &str = "conformance";
 const VECTOR_SAMPLES: usize = 16;
 const VECTOR_SAMPLES_SLOW: usize = 256;
 
-/// `tests/vectors/` is expected to stay small (pinned-release wallet files); this just guards
+/// `tests/wallet_file/data/` is expected to stay small (pinned-release wallet files); this just guards
 /// against an unbounded walk if something unexpected lands there.
 const MAX_VECTOR_FILES: usize = 10_000;
-/// Bounds the recursive walk of `tests/vectors/` so a symlink loop can't spin forever.
+/// Bounds the recursive walk of `tests/wallet_file/data/` so a symlink loop can't spin forever.
 const MAX_WALK_DEPTH: usize = 16;
 
 fn chains() -> [ChainType; 3] {
@@ -71,7 +69,7 @@ fn vector_files_survive_dense_mutations_slow() {
 }
 
 fn sweep_vectors(coverage: Coverage) {
-    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/vectors");
+    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/wallet_file/data");
     if !root.exists() {
         return;
     }
@@ -79,7 +77,7 @@ fn sweep_vectors(coverage: Coverage) {
     let files = wallet_dat_files(&root);
     assert!(
         files.len() <= MAX_VECTOR_FILES,
-        "tests/vectors/ holds {} .dat files, more than the expected cap of {MAX_VECTOR_FILES}",
+        "tests/wallet_file/data/ holds {} .dat files, more than the expected cap of {MAX_VECTOR_FILES}",
         files.len()
     );
 
@@ -104,7 +102,7 @@ fn wallet_dat_files(root: &Path) -> Vec<PathBuf> {
     while let Some((dir, depth)) = stack.pop() {
         assert!(
             depth <= MAX_WALK_DEPTH,
-            "tests/vectors/ nests deeper than {MAX_WALK_DEPTH} levels at {dir:?}"
+            "tests/wallet_file/data/ nests deeper than {MAX_WALK_DEPTH} levels at {dir:?}"
         );
         let entries =
             std::fs::read_dir(&dir).unwrap_or_else(|e| panic!("failed to read {dir:?}: {e}"));

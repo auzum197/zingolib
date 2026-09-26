@@ -2,7 +2,7 @@
 //!
 //! v0.0.1 was built from zingolib `ad66f31e821357ba231608f0c487d92dfc6884e9` and v0.0.2 from
 //! `e645fd031c6f16dc8eb9b8c39287a27f7731ba8b`. Both write layout 41. The files under
-//! `tests/vectors` were written once by a throwaway integration test,
+//! `tests/wallet_file/data` were written once by a throwaway integration test,
 //! `zingolib/tests/pinned_vectors.rs`, run in a scratch worktree of each revision. It built the
 //! scenarios below with that revision's `LightWallet` and pepper-sync test constructors, wrote
 //! the plain copies with `LightWallet::write` and the encrypted copies with `LightWallet::save`
@@ -101,7 +101,7 @@ macro_rules! vectors {
             name: concat!($release, "/", $scenario, "-", $chain, $suffix, ".dat"),
             chain: $chain,
             bytes: include_bytes!(concat!(
-                "vectors/", $release, "/", $scenario, "-", $chain, $suffix, ".dat"
+                "data/", $release, "/", $scenario, "-", $chain, $suffix, ".dat"
             )),
         }
     };

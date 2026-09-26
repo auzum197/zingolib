@@ -5,12 +5,10 @@
 //! confirming the new bytes are correct, refresh the constants below with the ignored
 //! `print_current_hex` test and bump `WalletFile::VERSION`.
 
-mod support;
-
 use zingo_common_components::protocol::ActivationHeights;
 use zingolib_common::chain::ChainType;
 
-use support::{bytes, fresh};
+use super::support::{bytes, fresh};
 
 /// Seed for the mnemonic `fresh` derives its keys from. Fixed so the pinned hex below is
 /// reproducible.

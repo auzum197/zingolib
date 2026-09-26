@@ -6,8 +6,6 @@
 //! private), so both are built the same way a real reader builds them: encode the fields as the
 //! documented wire format and decode with the type's own public `read`.
 
-mod support;
-
 use std::collections::{BTreeMap, BTreeSet};
 use std::num::NonZeroU32;
 use std::ops::Range;
@@ -34,7 +32,7 @@ use zingolib_common::serialization::ReadableWriteable;
 use zingolib_file_format::{WalletFile, WalletSettings};
 use zingolib_price::{Price, PriceList};
 
-use support::{bytes, fresh};
+use super::support::{bytes, fresh};
 
 /// Fixed mnemonic seed for the chain-dependent parts of the wallet (keys, address, mnemonic).
 /// The property under test never varies these, only the fields listed in the module doc.

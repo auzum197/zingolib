@@ -1,7 +1,7 @@
 //! Pins every struct-version constant the wallet file layout depends on.
 //!
 //! A failing assertion here is not a bug to patch quietly: it means a layout changed. That is a
-//! deliberate version bump, and it needs fresh pinned-release vectors under `tests/vectors/`
+//! deliberate version bump, and it needs fresh pinned-release vectors under `tests/wallet_file/data/`
 //! covering both the old and the new layout before this test is updated to match.
 
 use zcash_keys::keys::UnifiedFullViewingKey;
