@@ -94,8 +94,6 @@ async fn open(
     file: Option<&[u8]>,
     encryption: Option<EncryptionConfig>,
 ) -> LightClient {
-    // The client reads its file once, on construction, and nothing here saves to disk, so the
-    // directory can go as soon as the client exists.
     let dir = tempfile::tempdir().expect("a tempdir is creatable");
     if let Some(file) = file {
         std::fs::write(dir.path().join(DEFAULT_WALLET_NAME), file)
@@ -597,7 +595,6 @@ async fn multi() {
         );
     }
 
-    // Transparent coinbase stays out of the balance until it matures.
     let coins = client
         .transaction_summaries(false)
         .await

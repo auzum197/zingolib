@@ -114,7 +114,6 @@ impl ReadableWriteable for SyncConfig {
 
     fn read<R: Read>(mut reader: R, _input: ()) -> std::io::Result<Self> {
         let version = Self::get_version(&mut reader)?;
-        // Older layouts lack fields read below, so decoding one would misread what follows it.
         if version < Self::VERSION {
             return Err(std::io::Error::new(
                 std::io::ErrorKind::InvalidData,
@@ -131,8 +130,6 @@ impl ReadableWriteable for SyncConfig {
             ));
         }
         let performance_level = PerformanceLevel::read(&mut reader, ())?;
-        // A capacity of zero can never have been saved: the broadcast channel refuses it at
-        // wallet construction, before any save.
         let event_channel_capacity = usize::try_from(reader.read_u64::<LittleEndian>()?)
             .ok()
             .filter(|capacity| *capacity > 0)

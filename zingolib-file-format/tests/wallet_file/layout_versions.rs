@@ -21,7 +21,6 @@ use zingolib_price::PriceList;
 
 #[test]
 fn struct_versions_are_pinned() {
-    // pepper-sync
     assert_eq!(
         <ScanTarget as ReadableWriteable>::VERSION,
         0,
@@ -103,7 +102,6 @@ fn struct_versions_are_pinned() {
         "SyncConfig::VERSION"
     );
 
-    // zingolib-common
     assert_eq!(
         <ConfirmationStatus as ReadableWriteable>::VERSION,
         1,
@@ -125,13 +123,11 @@ fn struct_versions_are_pinned() {
         "ReceiverSelection::VERSION"
     );
 
-    // zingolib-price
     assert_eq!(
         <PriceList as ReadableWriteable>::VERSION,
         0,
         "PriceList::VERSION"
     );
 
-    // zingolib-file-format
     assert_eq!(WalletFile::VERSION, 41, "WalletFile::VERSION");
 }

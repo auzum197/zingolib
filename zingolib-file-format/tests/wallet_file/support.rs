@@ -165,8 +165,6 @@ fn sample_positions(len: usize, coverage: Coverage) -> Vec<usize> {
     };
     (0..samples)
         .map(|i| i * (len - 1) / (samples - 1))
-        // Integer rounding can repeat an offset when the sample count is close to len; a
-        // BTreeSet dedupes while keeping the result sorted.
         .collect::<BTreeSet<_>>()
         .into_iter()
         .collect()
@@ -225,7 +223,6 @@ fn read_outcome(bytes: &[u8], passphrase: Option<&str>) -> ReadOutcome {
             }
             None => WalletFile::read_any(bytes.as_slice()).is_err(),
         });
-        // The receiver is gone if we already timed out; that's fine, the thread just exits.
         let _ = tx.send(is_err);
     });
 

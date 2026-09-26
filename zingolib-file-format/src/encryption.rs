@@ -527,7 +527,6 @@ mod tests {
 
     #[test]
     fn lanes_without_enough_memory_are_rejected() {
-        // Every field is inside its bound, but Argon2 needs at least 8 KiB per lane.
         let session = EncryptionSession::new(&pw("pw"), fast_params()).unwrap();
         let mut envelope = session.encrypt(b"data").unwrap();
         envelope[18] = MAX_P_COST;

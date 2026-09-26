@@ -80,7 +80,6 @@ fn collect_unique<T, C: FromIterator<T>>(
 
 fn read_string<R: Read>(mut reader: R) -> std::io::Result<String> {
     let str_len = reader.read_u64::<LittleEndian>()?;
-    // `take` grows the buffer only as bytes arrive, so a corrupt length cannot force a huge allocation.
     let mut str_bytes = Vec::new();
     reader.take(str_len).read_to_end(&mut str_bytes)?;
     if str_bytes.len() as u64 != str_len {
@@ -225,7 +224,6 @@ impl ReadableWriteable for SyncState {
                     "invalid scan priority",
                 )),
             }?;
-            // `ScanRange::from_parts` asserts this.
             if start > end {
                 return Err(invalid_data(format!(
                     "scan range {start}..{end} ends before it starts"
@@ -234,7 +232,6 @@ impl ReadableWriteable for SyncState {
 
             Ok(ScanRange::from_parts(start..end, priority))
         })?;
-        // The scheduler keeps scan ranges contiguous and in height order.
         if let Some(pair) = scan_ranges
             .windows(2)
             .find(|pair| pair[0].block_range().end != pair[1].block_range().start)
@@ -338,7 +335,6 @@ impl ReadableWriteable for TreeBounds {
         } else {
             (0, 0)
         };
-        // Sync subtracts each initial size from its final size, and the scanner only grows a tree.
         for (pool, initial, last) in [
             (
                 "sapling",
@@ -508,8 +504,6 @@ impl<P: consensus::Parameters> ReadableWriteable<&P, &P> for WalletTransaction {
         let version = <Self as ReadableWriteable<&P, &P>>::get_version(&mut reader)?;
         let txid = TxId::read(&mut reader)?;
         let status = ConfirmationStatus::read(&mut reader, ())?;
-        // Only pre-v5 transactions take their branch id from the status height, and it changes
-        // neither how their bytes decode nor their txid, so a bogus height cannot misread them.
         let transaction = Transaction::read(
             &mut reader,
             consensus::BranchId::for_height(consensus_parameters, status.get_height()),
@@ -686,7 +680,6 @@ fn read_refetch_nullifier_ranges(
     Vector::read(reader, |r| {
         let start = r.read_u32::<LittleEndian>()?;
         let end = r.read_u32::<LittleEndian>()?;
-        // Refetch ranges are copies of scan ranges, which never end before they start.
         if start > end {
             return Err(invalid_data(format!(
                 "refetch nullifier range {start}..{end} ends before it starts"
@@ -1212,8 +1205,6 @@ impl ShardTrees {
         let mut store = MemoryShardStore::empty();
         for (position, shard) in shards.into_iter().enumerate() {
             let root_addr = shard.root_addr();
-            // The store fills every index below a shard it is given, so writers emit shard roots
-            // 0, 1, 2, ... in order. Any other index would make `put_shard` allocate up to it.
             if root_addr.level() != Level::from(SHARD_HEIGHT)
                 || root_addr.index() != position as u64
                 || root_addr.index() >= 1 << (DEPTH - SHARD_HEIGHT)
@@ -1248,7 +1239,6 @@ impl ShardTrees {
                 Checkpoint::from_parts(tree_state, marks_removed),
             ))
         })?;
-        // Writers keep only the newest MAX_REORG_ALLOWANCE checkpoints, oldest first.
         if checkpoints.len() > MAX_REORG_ALLOWANCE as usize {
             return Err(invalid_data(format!(
                 "{} checkpoints exceed the {MAX_REORG_ALLOWANCE} a wallet file keeps",
@@ -1627,7 +1617,6 @@ mod tests {
 
     #[test]
     fn nullifier_map_rejects_a_non_canonical_orchard_nullifier() {
-        // Version 2, then the sapling, orchard and ironwood entry counts.
         for position in [2, 3] {
             let mut bytes = vec![2, 0, 0, 0];
             bytes[position] = 1;

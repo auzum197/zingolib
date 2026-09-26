@@ -268,7 +268,6 @@ impl ReadableWriteable for ConfirmationStatus {
 
     fn read<R: Read>(mut reader: R, _input: ()) -> std::io::Result<Self> {
         let version = Self::get_version(&mut reader)?;
-        // Version 0 numbered the statuses differently, so reading it as version 1 would swap them.
         if version < Self::VERSION {
             return Err(std::io::Error::new(
                 std::io::ErrorKind::InvalidData,

@@ -83,8 +83,6 @@ fn receiver_selection_strategy() -> impl Strategy<Value = ReceiverSelection> {
 
 fn unified_addresses_strategy()
 -> impl Strategy<Value = BTreeMap<UnifiedAddressId, ReceiverSelection>> {
-    // The account id must be one `fresh` actually put keys under (AccountId::ZERO): an address
-    // for an account with no keys is rejected by `WalletFile::read`.
     prop::collection::vec(
         (
             Just(AccountId::ZERO),
@@ -118,7 +116,6 @@ fn transparent_scope_strategy() -> impl Strategy<Value = TransparentScope> {
 }
 
 fn transparent_addresses_strategy() -> impl Strategy<Value = BTreeSet<TransparentAddressId>> {
-    // Same account id constraint as unified_addresses_strategy above.
     prop::collection::vec(
         (
             Just(AccountId::ZERO),
@@ -293,8 +290,6 @@ fn build_sync_state(
         w.write_u8(scan_priority_tag(*priority))
     })
     .unwrap();
-    // Sapling, orchard and ironwood shard ranges: empty in every case here, the property under
-    // test only varies scan ranges and scan targets.
     let no_shard_ranges: Vec<Range<BlockHeight>> = Vec::new();
     for _ in 0..3 {
         Vector::write(

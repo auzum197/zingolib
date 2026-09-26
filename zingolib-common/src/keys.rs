@@ -322,7 +322,6 @@ const SAPLING_ASK: std::ops::Range<usize> = 41..73;
 /// and its `ask` checked before `UnifiedSpendingKey::from_bytes` sees it. Anything else malformed
 /// is left for `from_bytes` to reject.
 fn check_sapling_ask(usk: &[u8]) -> io::Result<()> {
-    // The leading four bytes are the era, which `from_bytes` checks.
     let mut items = usk.get(4..).unwrap_or_default();
     loop {
         let (Ok(typecode), Ok(len)) = (
@@ -338,7 +337,6 @@ fn check_sapling_ask(usk: &[u8]) -> io::Result<()> {
             let ask = item
                 .get(SAPLING_ASK)
                 .and_then(|ask| <[u8; 32]>::try_from(ask).ok());
-            // The canonical encoding of zero is all zero bytes, and a Sapling `ask` is never zero.
             return match ask {
                 Some(ask)
                     if ask == [0; 32] || bool::from(jubjub::Fr::from_bytes(&ask).is_none()) =>
@@ -580,7 +578,6 @@ fn receiver_selection_rejects_unknown_bits_and_old_versions() {
 
 #[test]
 fn key_store_length_past_the_input_is_an_error_not_an_allocation() {
-    // Tag 254 prefixes a four-byte CompactSize, here 0x02000000: the largest length it allows.
     let huge_length = [254, 0, 0, 0, 2];
     for key_type in [KEY_TYPE_SPEND, KEY_TYPE_VIEW] {
         let bytes = [&[0, key_type][..], &huge_length, b"short"].concat();

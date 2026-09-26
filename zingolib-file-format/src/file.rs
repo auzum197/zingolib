@@ -249,7 +249,6 @@ impl WalletFile {
             )
         };
         let birthday = BlockHeight::from_u32(reader.read_u32::<LittleEndian>()?);
-        // Wallet creation refuses a birthday below Sapling activation, and sync cannot scan there.
         let sapling_activation = chain_type.activation_height(NetworkUpgrade::Sapling);
         if let Some(activation) = sapling_activation
             && birthday < activation
@@ -285,7 +284,6 @@ impl WalletFile {
             BTreeSet::len,
             "transparent address id",
         )?;
-        // Addresses are only ever derived from an account's keys.
         if let Some(account_id) = unified_addresses
             .keys()
             .map(|address_id| address_id.account_id)
@@ -327,7 +325,6 @@ impl WalletFile {
         )?;
         let shard_trees = ShardTrees::read(&mut reader, ())?;
         let sync_state = SyncState::read(&mut reader, ())?;
-        // The scheduler panics on a scan target below Sapling activation.
         if let Some(activation) = sapling_activation
             && let Some(target) = sync_state
                 .scan_targets()
@@ -430,8 +427,6 @@ impl WalletFileRef<'_> {
             &self.wallet_blocks.values().collect::<Vec<_>>(),
             |w, &block| block.write(w, ()),
         )?;
-        // Transactions live in a HashMap, so they are written in txid order to keep the file
-        // deterministic: the same wallet always produces the same bytes.
         let mut transactions = self.wallet_transactions.values().collect::<Vec<_>>();
         transactions.sort_by_key(|transaction| transaction.txid());
         Vector::write(&mut writer, &transactions, |w, &transaction| {
@@ -819,7 +814,6 @@ mod tests {
     fn wallet_block(height: u32) -> Vec<u8> {
         let mut out = vec![0];
         out.extend(height.to_le_bytes());
-        // Block hash, previous hash, time, no txids, then version 1 tree bounds of all zeros.
         out.extend([0; 68]);
         out.extend([0, 1]);
         out.extend([0; 24]);
@@ -846,7 +840,6 @@ mod tests {
             .unwrap();
         transaction.write(&mut out).unwrap();
         out.extend(0u32.to_le_bytes());
-        // No coins and no notes in any of the seven note collections.
         out.extend([0; 7]);
         out
     }
