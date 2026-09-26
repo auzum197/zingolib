@@ -15,6 +15,9 @@ use zingolib_common::serialization::ReadableWriteable;
 /// initial-sync cadence. A backgrounded subscriber lags and reconciles by design.
 pub const DEFAULT_EVENT_CHANNEL_CAPACITY: usize = 512;
 
+/// Largest event channel capacity read back from a wallet file. The broadcast channel allocates
+/// every slot up front and panics on a capacity of zero, so both ends are checked on read.
+#[cfg(feature = "wallet_essentials")]
 /// Performance level.
 ///
 /// The higher the performance level the higher the memory usage and storage.
@@ -110,12 +113,35 @@ impl ReadableWriteable for SyncConfig {
     const VERSION: u8 = 2;
 
     fn read<R: Read>(mut reader: R, _input: ()) -> std::io::Result<Self> {
-        Self::get_version(&mut reader)?;
+        let version = Self::get_version(&mut reader)?;
+        // Older layouts lack fields read below, so decoding one would misread what follows it.
+        if version < Self::VERSION {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                format!("sync config version {version} is no longer readable"),
+            ));
+        }
 
         let gap_limit = reader.read_u8()?;
         let scopes = reader.read_u8()?;
+        if scopes & !0b111 != 0 {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                format!("unknown transparent address discovery scopes {scopes:#b}"),
+            ));
+        }
         let performance_level = PerformanceLevel::read(&mut reader, ())?;
-        let event_channel_capacity = reader.read_u64::<LittleEndian>()? as usize;
+        // A capacity of zero can never have been saved: the broadcast channel refuses it at
+        // wallet construction, before any save.
+        let event_channel_capacity = usize::try_from(reader.read_u64::<LittleEndian>()?)
+            .ok()
+            .filter(|capacity| *capacity > 0)
+            .ok_or_else(|| {
+                std::io::Error::new(
+                    std::io::ErrorKind::InvalidData,
+                    "event channel capacity must be at least 1",
+                )
+            })?;
         Ok(Self {
             transparent_address_discovery: TransparentAddressDiscovery {
                 gap_limit,
@@ -235,5 +261,49 @@ impl TransparentAddressDiscoveryScopes {
             internal: true,
             refund: true,
         }
+    }
+}
+
+#[cfg(all(test, feature = "wallet_essentials"))]
+mod tests {
+    use super::*;
+
+    fn sync_config_bytes(version: u8, scopes: u8, event_channel_capacity: u64) -> Vec<u8> {
+        let mut out = vec![version, 10, scopes, 0, 2];
+        out.write_u64::<LittleEndian>(event_channel_capacity)
+            .unwrap();
+        out
+    }
+
+    #[test]
+    fn default_config_round_trips() {
+        let mut bytes = Vec::new();
+        SyncConfig::default().write(&mut bytes, ()).unwrap();
+        assert_eq!(
+            SyncConfig::read(bytes.as_slice(), ()).unwrap(),
+            SyncConfig::default()
+        );
+    }
+
+    #[test]
+    fn versions_before_2_are_rejected() {
+        for version in [0, 1] {
+            let bytes = sync_config_bytes(version, 0b101, 512);
+            assert!(SyncConfig::read(bytes.as_slice(), ()).is_err());
+        }
+    }
+
+    #[test]
+    fn unknown_scope_bits_are_rejected() {
+        let bytes = sync_config_bytes(2, 0b1101, 512);
+        assert!(SyncConfig::read(bytes.as_slice(), ()).is_err());
+    }
+
+    #[test]
+    fn event_channel_capacity_of_zero_is_rejected() {
+        let bytes = sync_config_bytes(2, 0b101, 0);
+        assert!(SyncConfig::read(bytes.as_slice(), ()).is_err());
+        let bytes = sync_config_bytes(2, 0b101, 1 << 20);
+        assert!(SyncConfig::read(bytes.as_slice(), ()).is_ok());
     }
 }

@@ -15,6 +15,7 @@ maintenance = { status = "actively-developed" }
 bip0039 = { workspace = true }
 bip32 = { workspace = true }
 byteorder = { workspace = true }
+jubjub = { workspace = true }
 orchard = { workspace = true }
 sapling-crypto = { workspace = true }
 serde = { workspace = true, features = ["derive"] }

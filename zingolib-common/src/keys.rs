@@ -6,7 +6,7 @@ use std::io::{self, Read, Write};
 use bip0039::Mnemonic;
 use byteorder::{LittleEndian, ReadBytesExt, WriteBytesExt};
 
-use zcash_address::unified::{Encoding as _, Ufvk};
+use zcash_address::unified::{Container as _, Encoding as _, Fvk, Ufvk};
 use zcash_client_backend::address::UnifiedAddress;
 use zcash_client_backend::keys::{Era, UnifiedSpendingKey};
 use zcash_encoding::CompactSize;
@@ -296,10 +296,91 @@ impl ReadableWriteable<ChainType, ChainType> for UnifiedKeyStore {
         }
     }
 }
-fn read_usk<R: Read>(mut reader: R) -> io::Result<UnifiedSpendingKey> {
+/// Reads a `CompactSize`-prefixed byte string. `take` grows the buffer only as bytes arrive, so a
+/// corrupt length allocates no more than the input actually holds.
+fn read_compact_bytes<R: Read>(mut reader: R, name: &str) -> io::Result<Vec<u8>> {
     let len = CompactSize::read(&mut reader)?;
-    let mut usk = vec![0u8; len as usize];
-    reader.read_exact(&mut usk)?;
+    let mut bytes = Vec::new();
+    reader.take(len).read_to_end(&mut bytes)?;
+    if bytes.len() as u64 != len {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!("{name} length {len} runs past the end of the input"),
+        ));
+    }
+    Ok(bytes)
+}
+
+/// Unified encoding typecode of a Sapling item.
+const SAPLING_TYPECODE: u64 = 2;
+/// Where `ask` sits in a Sapling extended spending key: after the depth, parent key tag, child
+/// index and chain code.
+const SAPLING_ASK: std::ops::Range<usize> = 41..73;
+
+/// sapling-crypto parses `ask` through `CtOption::and_then`, which runs its closure even for a
+/// non-canonical scalar, and that closure panics on one. So the Sapling item of the key is found
+/// and its `ask` checked before `UnifiedSpendingKey::from_bytes` sees it. Anything else malformed
+/// is left for `from_bytes` to reject.
+fn check_sapling_ask(usk: &[u8]) -> io::Result<()> {
+    // The leading four bytes are the era, which `from_bytes` checks.
+    let mut items = usk.get(4..).unwrap_or_default();
+    loop {
+        let (Ok(typecode), Ok(len)) = (
+            CompactSize::read(&mut items),
+            CompactSize::read_t::<_, usize>(&mut items),
+        ) else {
+            return Ok(());
+        };
+        let Some((item, rest)) = items.split_at_checked(len) else {
+            return Ok(());
+        };
+        if typecode == SAPLING_TYPECODE {
+            let ask = item
+                .get(SAPLING_ASK)
+                .and_then(|ask| <[u8; 32]>::try_from(ask).ok());
+            // The canonical encoding of zero is all zero bytes, and a Sapling `ask` is never zero.
+            return match ask {
+                Some(ask)
+                    if ask == [0; 32] || bool::from(jubjub::Fr::from_bytes(&ask).is_none()) =>
+                {
+                    Err(io::Error::new(
+                        io::ErrorKind::InvalidData,
+                        "sapling spend authorizing key is zero or not a canonical scalar",
+                    ))
+                }
+                _ => Ok(()),
+            };
+        }
+        items = rest;
+    }
+}
+
+/// sapling-crypto parses `ak` through `CtOption::and_then`, which runs its closure even for bytes
+/// that are not a curve point, and that closure panics on them. So the Sapling item of the key is
+/// found and its `ak` checked before `UnifiedFullViewingKey::decode` sees it. Anything else
+/// malformed is left for `decode` to reject.
+fn check_sapling_ak(ufvk_encoded: &str) -> io::Result<()> {
+    let Ok((_, ufvk)) = Ufvk::decode(ufvk_encoded) else {
+        return Ok(());
+    };
+    let not_a_point = ufvk.items().iter().any(|item| match item {
+        Fvk::Sapling(fvk) => <[u8; 32]>::try_from(&fvk[..32])
+            .is_ok_and(|ak| bool::from(jubjub::AffinePoint::from_bytes(ak).is_none())),
+        _ => false,
+    });
+    if not_a_point {
+        Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "sapling spend validating key is not a curve point",
+        ))
+    } else {
+        Ok(())
+    }
+}
+
+fn read_usk<R: Read>(reader: R) -> io::Result<UnifiedSpendingKey> {
+    let usk = read_compact_bytes(reader, "unified spending key")?;
+    check_sapling_ask(&usk)?;
 
     UnifiedSpendingKey::from_bytes(Era::Orchard, &usk)
         .map_err(|_| io::Error::new(io::ErrorKind::InvalidData, "USK bytes are invalid"))
@@ -314,12 +395,11 @@ fn write_usk<W: Write>(usk: &UnifiedSpendingKey, mut writer: W) -> io::Result<()
 impl ReadableWriteable<ChainType, ChainType> for UnifiedFullViewingKey {
     const VERSION: u8 = 0;
 
-    fn read<R: Read>(mut reader: R, input: ChainType) -> io::Result<Self> {
-        let len = CompactSize::read(&mut reader)?;
-        let mut ufvk = vec![0u8; len as usize];
-        reader.read_exact(&mut ufvk)?;
+    fn read<R: Read>(reader: R, input: ChainType) -> io::Result<Self> {
+        let ufvk = read_compact_bytes(reader, "unified full viewing key")?;
         let ufvk_encoded = std::str::from_utf8(&ufvk)
             .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e.to_string()))?;
+        check_sapling_ak(ufvk_encoded)?;
 
         UnifiedFullViewingKey::decode(&input, ufvk_encoded).map_err(|e| {
             io::Error::new(
@@ -444,8 +524,20 @@ impl ReadableWriteable for ReceiverSelection {
     const VERSION: u8 = 2;
 
     fn read<R: Read>(mut reader: R, _input: ()) -> io::Result<Self> {
-        let _version = Self::get_version(&mut reader)?;
+        let version = Self::get_version(&mut reader)?;
+        if version < Self::VERSION {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!("receiver selection version {version} is no longer readable"),
+            ));
+        }
         let receivers = reader.read_u8()?;
+        if receivers & !0b11 != 0 {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!("unknown receiver selection bits {receivers:#b}"),
+            ));
+        }
         Ok(Self {
             orchard: receivers & 0b1 != 0,
             sapling: receivers & 0b10 != 0,
@@ -478,6 +570,87 @@ fn read_write_receiver_selections() {
             .unwrap();
         assert_eq!(i as u8, receivers_selected_bytes[1]);
     }
+}
+
+#[test]
+fn receiver_selection_rejects_unknown_bits_and_old_versions() {
+    assert!(ReceiverSelection::read([2, 0b100].as_slice(), ()).is_err());
+    assert!(ReceiverSelection::read([1, 0b01].as_slice(), ()).is_err());
+}
+
+#[test]
+fn key_store_length_past_the_input_is_an_error_not_an_allocation() {
+    // Tag 254 prefixes a four-byte CompactSize, here 0x02000000: the largest length it allows.
+    let huge_length = [254, 0, 0, 0, 2];
+    for key_type in [KEY_TYPE_SPEND, KEY_TYPE_VIEW] {
+        let bytes = [&[0, key_type][..], &huge_length, b"short"].concat();
+        assert!(UnifiedKeyStore::read(bytes.as_slice(), ChainType::Mainnet).is_err());
+    }
+}
+
+#[cfg(test)]
+fn test_usk() -> UnifiedSpendingKey {
+    UnifiedSpendingKey::from_seed(&ChainType::Mainnet, &[7; 32], AccountId::ZERO).unwrap()
+}
+
+#[cfg(test)]
+fn key_store_bytes(key_type: u8, key: &[u8]) -> Vec<u8> {
+    let mut out = vec![0, key_type];
+    CompactSize::write(&mut out, key.len()).unwrap();
+    out.extend_from_slice(key);
+    out
+}
+
+#[test]
+fn spending_key_store_round_trips() {
+    let bytes = key_store_bytes(KEY_TYPE_SPEND, &test_usk().to_bytes(Era::Orchard));
+    let read = UnifiedKeyStore::read(bytes.as_slice(), ChainType::Mainnet).unwrap();
+    let mut written = Vec::new();
+    read.write(&mut written, ChainType::Mainnet).unwrap();
+    assert_eq!(written, bytes);
+}
+
+#[test]
+fn malformed_sapling_ask_is_an_error_not_a_panic() {
+    let usk = test_usk();
+    let valid = usk.to_bytes(Era::Orchard);
+    let sapling = usk.sapling().to_bytes();
+    let sapling_at = valid
+        .windows(sapling.len())
+        .position(|window| window == sapling)
+        .unwrap();
+    let ask_at = sapling_at + SAPLING_ASK.start;
+    for ask in [[0xff; 32], [0; 32]] {
+        let mut malformed = valid.clone();
+        malformed[ask_at..ask_at + 32].copy_from_slice(&ask);
+        let bytes = key_store_bytes(KEY_TYPE_SPEND, &malformed);
+        assert!(UnifiedKeyStore::read(bytes.as_slice(), ChainType::Mainnet).is_err());
+    }
+}
+
+#[test]
+fn sapling_ak_off_the_curve_is_an_error_not_a_panic() {
+    let valid = test_usk()
+        .to_unified_full_viewing_key()
+        .encode(&ChainType::Mainnet);
+    let bytes = key_store_bytes(KEY_TYPE_VIEW, valid.as_bytes());
+    assert!(UnifiedKeyStore::read(bytes.as_slice(), ChainType::Mainnet).is_ok());
+
+    let (network, ufvk) = Ufvk::decode(&valid).unwrap();
+    let items = ufvk
+        .items()
+        .into_iter()
+        .map(|item| match item {
+            Fvk::Sapling(mut fvk) => {
+                fvk[..32].copy_from_slice(&[0xff; 32]);
+                Fvk::Sapling(fvk)
+            }
+            other => other,
+        })
+        .collect();
+    let malformed = Ufvk::try_from_items(items).unwrap().encode(&network);
+    let bytes = key_store_bytes(KEY_TYPE_VIEW, malformed.as_bytes());
+    assert!(UnifiedKeyStore::read(bytes.as_slice(), ChainType::Mainnet).is_err());
 }
 
 /// Child index for the `change` path level in the BIP44 hierarchy (a.k.a. scope/chain).

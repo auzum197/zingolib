@@ -21,3 +21,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - `status::ConfirmationStatus`: `read` and `write` are now the `ReadableWriteable` impl.
   Layout 0 is no longer read.
+- `keys`: a stored spending key whose sapling `ask` is zero or non-canonical, or a viewing key
+  whose sapling `ak` is not a curve point, is rejected instead of panicking inside
+  sapling-crypto. Key material lengths past the end of the input are an error, not an
+  allocation.

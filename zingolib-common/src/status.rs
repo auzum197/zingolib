@@ -267,7 +267,14 @@ impl ReadableWriteable for ConfirmationStatus {
     const VERSION: u8 = 1;
 
     fn read<R: Read>(mut reader: R, _input: ()) -> std::io::Result<Self> {
-        Self::get_version(&mut reader)?;
+        let version = Self::get_version(&mut reader)?;
+        // Version 0 numbered the statuses differently, so reading it as version 1 would swap them.
+        if version < Self::VERSION {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                format!("confirmation status version {version} is no longer readable"),
+            ));
+        }
         let status = reader.read_u8()?;
         let block_height = BlockHeight::from_u32(reader.read_u32::<LittleEndian>()?);
 
@@ -295,6 +302,15 @@ impl ReadableWriteable for ConfirmationStatus {
         })?;
         writer.write_u32::<LittleEndian>(self.get_height().into())
     }
+}
+
+#[test]
+fn version_0_status_is_rejected() {
+    assert!(ConfirmationStatus::read([0, 3, 1, 0, 0, 0].as_slice(), ()).is_err());
+    assert_eq!(
+        ConfirmationStatus::read([1, 3, 1, 0, 0, 0].as_slice(), ()).unwrap(),
+        ConfirmationStatus::Calculated(BlockHeight::from_u32(1))
+    );
 }
 
 /// a public interface, writ in stone

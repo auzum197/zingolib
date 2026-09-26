@@ -514,6 +514,41 @@ mod tests {
     }
 
     #[test]
+    fn envelope_without_a_whole_tag_is_rejected() {
+        let session = EncryptionSession::new(&pw("pw"), fast_params()).unwrap();
+        let envelope = session.encrypt(b"").unwrap();
+        for len in [HEADER_LEN, envelope.len() - 1] {
+            assert!(matches!(
+                decrypt(&pw("pw"), &envelope[..len]),
+                Err(WalletEncryptionError::DecryptionFailed)
+            ));
+        }
+    }
+
+    #[test]
+    fn lanes_without_enough_memory_are_rejected() {
+        // Every field is inside its bound, but Argon2 needs at least 8 KiB per lane.
+        let session = EncryptionSession::new(&pw("pw"), fast_params()).unwrap();
+        let mut envelope = session.encrypt(b"data").unwrap();
+        envelope[18] = MAX_P_COST;
+        assert!(matches!(
+            decrypt(&pw("pw"), &envelope),
+            Err(WalletEncryptionError::InvalidParams(_))
+        ));
+    }
+
+    #[test]
+    fn unknown_envelope_version_and_kdf_are_rejected() {
+        let session = EncryptionSession::new(&pw("pw"), fast_params()).unwrap();
+        let envelope = session.encrypt(b"data").unwrap();
+        for (offset, value) in [(8, ENVELOPE_VERSION + 1), (9, KDF_ARGON2ID + 1)] {
+            let mut tampered = envelope.clone();
+            tampered[offset] = value;
+            assert!(decrypt(&pw("pw"), &tampered).is_err());
+        }
+    }
+
+    #[test]
     fn params_validate_bounds() {
         assert!(Argon2Params::default().validate().is_ok());
         assert!(Argon2Params::with_memory_mib(19).validate().is_ok());

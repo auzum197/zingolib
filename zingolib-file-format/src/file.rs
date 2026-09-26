@@ -13,7 +13,7 @@ use zip32::AccountId;
 
 use zcash_encoding::Vector;
 use zcash_primitives::transaction::TxId;
-use zcash_protocol::consensus::{self, BlockHeight};
+use zcash_protocol::consensus::{self, BlockHeight, NetworkUpgrade, Parameters};
 
 use secrecy::SecretString;
 use zingolib_common::{
@@ -26,7 +26,8 @@ use zingolib_price::PriceList;
 use pepper_sync::{
     keys::transparent::TransparentAddressId,
     wallet::{
-        NullifierMap, OutputId, ScanTarget, ShardTrees, SyncState, WalletBlock, WalletTransaction,
+        KeyIdInterface, NullifierMap, OutputId, ScanTarget, ShardTrees, SyncState, WalletBlock,
+        WalletTransaction,
     },
 };
 
@@ -248,44 +249,103 @@ impl WalletFile {
             )
         };
         let birthday = BlockHeight::from_u32(reader.read_u32::<LittleEndian>()?);
+        // Wallet creation refuses a birthday below Sapling activation, and sync cannot scan there.
+        let sapling_activation = chain_type.activation_height(NetworkUpgrade::Sapling);
+        if let Some(activation) = sapling_activation
+            && birthday < activation
+        {
+            return Err(Error::new(
+                ErrorKind::InvalidData,
+                format!("birthday {birthday} is below sapling activation at {activation}"),
+            ));
+        }
 
-        let unified_key_store = Vector::read(&mut reader, |r| {
-            let account_id = AccountId::try_from(r.read_u32::<LittleEndian>()?)
-                .map_err(|e| Error::new(ErrorKind::InvalidData, e.to_string()))?;
-            Ok((account_id, UnifiedKeyStore::read(r, chain_type)?))
-        })?
-        .into_iter()
-        .collect::<BTreeMap<_, _>>();
+        let unified_key_store = collect_unique(
+            Vector::read(&mut reader, |r| {
+                let account_id = AccountId::try_from(r.read_u32::<LittleEndian>()?)
+                    .map_err(|e| Error::new(ErrorKind::InvalidData, e.to_string()))?;
+                Ok((account_id, UnifiedKeyStore::read(r, chain_type)?))
+            })?,
+            BTreeMap::len,
+            "account",
+        )?;
 
-        let unified_addresses = Vector::read(&mut reader, |r| {
-            Ok((
-                UnifiedAddressId::read(&mut *r)?,
-                ReceiverSelection::read(r, ())?,
-            ))
-        })?
-        .into_iter()
-        .collect::<BTreeMap<_, _>>();
-        let transparent_addresses = Vector::read(&mut reader, |r| TransparentAddressId::read(r))?
-            .into_iter()
-            .collect::<BTreeSet<_>>();
+        let unified_addresses = collect_unique(
+            Vector::read(&mut reader, |r| {
+                Ok((
+                    UnifiedAddressId::read(&mut *r)?,
+                    ReceiverSelection::read(r, ())?,
+                ))
+            })?,
+            BTreeMap::len,
+            "unified address id",
+        )?;
+        let transparent_addresses = collect_unique(
+            Vector::read(&mut reader, |r| TransparentAddressId::read(r))?,
+            BTreeSet::len,
+            "transparent address id",
+        )?;
+        // Addresses are only ever derived from an account's keys.
+        if let Some(account_id) = unified_addresses
+            .keys()
+            .map(|address_id| address_id.account_id)
+            .chain(
+                transparent_addresses
+                    .iter()
+                    .map(|address_id| address_id.account_id()),
+            )
+            .find(|account_id| !unified_key_store.contains_key(account_id))
+        {
+            return Err(Error::new(
+                ErrorKind::InvalidData,
+                format!("address derived for account {account_id:?}, which has no keys"),
+            ));
+        }
 
-        let wallet_blocks = Vector::read(&mut reader, |r| WalletBlock::read(r, ()))?
-            .into_iter()
-            .map(|block| (block.block_height(), block))
-            .collect::<BTreeMap<_, _>>();
-        let wallet_transactions =
-            Vector::read(&mut reader, |r| WalletTransaction::read(r, &chain_type))?
-                .into_iter()
-                .map(|transaction| (transaction.txid(), transaction))
-                .collect::<HashMap<_, _>>();
+        let wallet_blocks = collect_unique(
+            Vector::read(&mut reader, |r| {
+                WalletBlock::read(r, ()).map(|block| (block.block_height(), block))
+            })?,
+            BTreeMap::len,
+            "wallet block height",
+        )?;
+        let wallet_transactions = collect_unique(
+            Vector::read(&mut reader, |r| {
+                WalletTransaction::read(r, &chain_type)
+                    .map(|transaction| (transaction.txid(), transaction))
+            })?,
+            HashMap::len,
+            "wallet transaction id",
+        )?;
         let nullifier_map = NullifierMap::read(&mut reader, ())?;
-        let outpoint_map = Vector::read(&mut reader, |mut r| {
-            Ok((OutputId::read(&mut r)?, ScanTarget::read(r, ())?))
-        })?
-        .into_iter()
-        .collect::<BTreeMap<_, _>>();
+        let outpoint_map = collect_unique(
+            Vector::read(&mut reader, |mut r| {
+                Ok((OutputId::read(&mut r)?, ScanTarget::read(r, ())?))
+            })?,
+            BTreeMap::len,
+            "outpoint",
+        )?;
         let shard_trees = ShardTrees::read(&mut reader, ())?;
         let sync_state = SyncState::read(&mut reader, ())?;
+        // The scheduler panics on a scan target below Sapling activation.
+        if let Some(activation) = sapling_activation
+            && let Some(target) = sync_state
+                .scan_targets()
+                .iter()
+                .chain(nullifier_map.sapling.values())
+                .chain(nullifier_map.orchard.values())
+                .chain(nullifier_map.ironwood.values())
+                .chain(outpoint_map.values())
+                .find(|target| target.block_height < activation)
+        {
+            return Err(Error::new(
+                ErrorKind::InvalidData,
+                format!(
+                    "scan target at {} is below sapling activation at {activation}",
+                    target.block_height
+                ),
+            ));
+        }
         let wallet_settings = WalletSettings::read(&mut reader)?;
         let price_list = PriceList::read(&mut reader, ())?;
 
@@ -306,6 +366,25 @@ impl WalletFile {
             wallet_settings,
             price_list,
         })
+    }
+}
+
+/// Collects decoded entries into a map or set, rejecting repeats. The writer iterates a map or set,
+/// so a repeat is corruption, and collecting it would silently drop an entry.
+fn collect_unique<T, C: FromIterator<T>>(
+    entries: Vec<T>,
+    len: fn(&C) -> usize,
+    name: &str,
+) -> io::Result<C> {
+    let count = entries.len();
+    let collected = entries.into_iter().collect();
+    if len(&collected) == count {
+        Ok(collected)
+    } else {
+        Err(Error::new(
+            ErrorKind::InvalidData,
+            format!("duplicate {name}"),
+        ))
     }
 }
 
@@ -351,11 +430,13 @@ impl WalletFileRef<'_> {
             &self.wallet_blocks.values().collect::<Vec<_>>(),
             |w, &block| block.write(w, ()),
         )?;
-        Vector::write(
-            &mut writer,
-            &self.wallet_transactions.values().collect::<Vec<_>>(),
-            |w, &transaction| transaction.write(w, consensus_parameters),
-        )?;
+        // Transactions live in a HashMap, so they are written in txid order to keep the file
+        // deterministic: the same wallet always produces the same bytes.
+        let mut transactions = self.wallet_transactions.values().collect::<Vec<_>>();
+        transactions.sort_by_key(|transaction| transaction.txid());
+        Vector::write(&mut writer, &transactions, |w, &transaction| {
+            transaction.write(w, consensus_parameters)
+        })?;
         self.nullifier_map.write(&mut writer, ())?;
         Vector::write(
             &mut writer,
@@ -377,9 +458,11 @@ mod tests {
     use std::num::NonZeroU32;
 
     use zcash_keys::keys::UnifiedSpendingKey;
+    use zcash_primitives::transaction::{TransactionData, TxVersion};
+    use zcash_protocol::consensus::BranchId;
     use zcash_transparent::keys::NonHardenedChildIndex;
     use zingo_common_components::protocol::ActivationHeights;
-    use zingolib_common::keys::TransparentScope;
+    use zingolib_common::{keys::TransparentScope, status::ConfirmationStatus};
 
     use crate::encryption::{Argon2Params, EncryptionConfig};
 
@@ -675,6 +758,193 @@ mod tests {
             UnifiedKeyStore::View(_)
         ));
         assert_eq!(bytes(&read_back), written);
+    }
+
+    /// Offset of the key store vector in a [`fresh`] file: the layout version, the chain tag, the
+    /// 32 bytes of entropy behind their length and the birthday come first.
+    const KEYS: usize = 46;
+    const UNIFIED_ADDRESS_LEN: usize = 10;
+    const TRANSPARENT_ADDRESS_LEN: usize = 9;
+    const EMPTY_NULLIFIER_MAP_LEN: usize = 4;
+
+    /// Byte offsets of the vectors in a [`fresh`] file, which holds one account, one unified
+    /// address, one transparent address and nothing else.
+    struct Layout {
+        key_entry_len: usize,
+        unified: usize,
+        transparent: usize,
+        blocks: usize,
+        transactions: usize,
+        outpoints: usize,
+    }
+
+    fn layout(file: &WalletFile) -> Layout {
+        let mut key_entry = 0u32.to_le_bytes().to_vec();
+        file.unified_key_store[&AccountId::ZERO]
+            .write(&mut key_entry, file.chain_type)
+            .unwrap();
+        let unified = KEYS + 1 + key_entry.len();
+        let transparent = unified + 1 + UNIFIED_ADDRESS_LEN;
+        let blocks = transparent + 1 + TRANSPARENT_ADDRESS_LEN;
+        let transactions = blocks + 1;
+        Layout {
+            key_entry_len: key_entry.len(),
+            unified,
+            transparent,
+            blocks,
+            transactions,
+            outpoints: transactions + 1 + EMPTY_NULLIFIER_MAP_LEN,
+        }
+    }
+
+    /// Replaces the vector whose count byte sits at `offset` and whose entries take `old_len`
+    /// bytes with one holding `entries`.
+    fn splice_vector(written: &[u8], offset: usize, old_len: usize, entries: &[&[u8]]) -> Vec<u8> {
+        let count = u8::try_from(entries.len()).unwrap();
+        [
+            &written[..offset],
+            &[count],
+            &entries.concat(),
+            &written[offset + 1 + old_len..],
+        ]
+        .concat()
+    }
+
+    /// Repeats the single entry of the vector at `offset`.
+    fn repeat_entry(written: &[u8], offset: usize, entry_len: usize) -> Vec<u8> {
+        let entry = &written[offset + 1..offset + 1 + entry_len];
+        splice_vector(written, offset, entry_len, &[entry, entry])
+    }
+
+    fn wallet_block(height: u32) -> Vec<u8> {
+        let mut out = vec![0];
+        out.extend(height.to_le_bytes());
+        // Block hash, previous hash, time, no txids, then version 1 tree bounds of all zeros.
+        out.extend([0; 68]);
+        out.extend([0, 1]);
+        out.extend([0; 24]);
+        out
+    }
+
+    fn wallet_transaction() -> Vec<u8> {
+        let transaction = TransactionData::from_parts(
+            TxVersion::V5,
+            BranchId::Nu5,
+            0,
+            BlockHeight::from_u32(0),
+            None,
+            None,
+            None,
+            None,
+        )
+        .freeze()
+        .unwrap();
+        let mut out = vec![1];
+        transaction.txid().write(&mut out).unwrap();
+        ConfirmationStatus::Confirmed(BlockHeight::from_u32(2_000_000))
+            .write(&mut out, ())
+            .unwrap();
+        transaction.write(&mut out).unwrap();
+        out.extend(0u32.to_le_bytes());
+        // No coins and no notes in any of the seven note collections.
+        out.extend([0; 7]);
+        out
+    }
+
+    fn outpoint(block_height: u32) -> Vec<u8> {
+        let mut out = Vec::new();
+        OutputId::new(TxId::from_bytes([1; 32]), 0)
+            .write(&mut out)
+            .unwrap();
+        ScanTarget {
+            block_height: BlockHeight::from_u32(block_height),
+            txid: TxId::from_bytes([1; 32]),
+            narrow_scan_area: false,
+        }
+        .write(&mut out, ())
+        .unwrap();
+        out
+    }
+
+    #[test]
+    fn repeated_accounts_and_addresses_are_rejected() {
+        let file = fresh(ChainType::Mainnet);
+        let written = bytes(&file);
+        let layout = layout(&file);
+        for (offset, entry_len) in [
+            (KEYS, layout.key_entry_len),
+            (layout.unified, UNIFIED_ADDRESS_LEN),
+            (layout.transparent, TRANSPARENT_ADDRESS_LEN),
+        ] {
+            let repeated = repeat_entry(&written, offset, entry_len);
+            assert!(WalletFile::read_any(repeated.as_slice()).is_err());
+        }
+    }
+
+    #[test]
+    fn repeated_blocks_transactions_and_outpoints_are_rejected() {
+        let file = fresh(ChainType::Mainnet);
+        let written = bytes(&file);
+        let layout = layout(&file);
+        for (offset, entry) in [
+            (layout.blocks, wallet_block(2_000_000)),
+            (layout.transactions, wallet_transaction()),
+            (layout.outpoints, outpoint(2_000_000)),
+        ] {
+            let once = splice_vector(&written, offset, 0, &[&entry]);
+            assert!(WalletFile::read_any(once.as_slice()).is_ok());
+            let twice = splice_vector(&written, offset, 0, &[&entry, &entry]);
+            assert!(WalletFile::read_any(twice.as_slice()).is_err());
+        }
+    }
+
+    #[test]
+    fn addresses_for_an_account_without_keys_are_rejected() {
+        let mut file = fresh(ChainType::Mainnet);
+        file.unified_addresses.insert(
+            UnifiedAddressId {
+                account_id: AccountId::try_from(1).unwrap(),
+                address_index: 0,
+            },
+            ReceiverSelection::orchard_only(),
+        );
+        assert!(WalletFile::read_any(bytes(&file).as_slice()).is_err());
+
+        let mut file = fresh(ChainType::Mainnet);
+        file.unified_key_store.clear();
+        assert!(WalletFile::read_any(bytes(&file).as_slice()).is_err());
+    }
+
+    #[test]
+    fn birthday_below_sapling_activation_is_rejected() {
+        let mut file = fresh(ChainType::Mainnet);
+        file.birthday = BlockHeight::from_u32(1);
+        assert!(WalletFile::read_any(bytes(&file).as_slice()).is_err());
+    }
+
+    #[test]
+    fn scan_target_below_sapling_activation_is_rejected() {
+        let file = fresh(ChainType::Mainnet);
+        let written = bytes(&file);
+        let below = splice_vector(&written, layout(&file).outpoints, 0, &[&outpoint(1)]);
+        assert!(WalletFile::read_any(below.as_slice()).is_err());
+    }
+
+    #[test]
+    fn seed_entropy_of_an_invalid_length_is_rejected() {
+        let written = bytes(&fresh(ChainType::Mainnet));
+        let entropy = [7; 17];
+        let odd = [&written[..9], &[17], &entropy, &written[42..]].concat();
+        assert!(WalletFile::read_any(odd.as_slice()).is_err());
+    }
+
+    #[test]
+    fn envelope_holding_something_other_than_a_wallet_is_rejected() {
+        let envelope = fast_session(PASSPHRASE).encrypt(b"not a wallet").unwrap();
+        assert!(
+            WalletFile::read_encrypted_any(envelope.as_slice(), Some(PASSPHRASE.to_string()))
+                .is_err()
+        );
     }
 
     #[test]

@@ -38,6 +38,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `config::DEFAULT_EVENT_CHANNEL_CAPACITY`). Serialized version incremented to 2.
 
 ### Changed
+- wallet readers reject malformed input with `InvalidData` where they could panic or allocate
+  without bound: non-canonical nullifiers, rho and rseed values, invalid recipients, values
+  above the money range, scan ranges that end before they start or leave gaps, repeated scan
+  targets and nullifiers, shard trees with malformed nodes or more checkpoints than the writer
+  keeps, and struct versions older than the first release.
 - `keys::transparent::TransparentScope`: now defined in `zingolib_common::keys` and re-exported.
 - wallet types and `config::SyncConfig` / `config::PerformanceLevel`: inherent `read` and
   `write` replaced by `zingolib_common::serialization::ReadableWriteable` impls. Reading now
