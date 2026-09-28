@@ -138,6 +138,20 @@ impl PriceList {
     }
 }
 
+/// The fetch is the only source of prices and it rejects non-finite values, so one in a file is
+/// corruption.
+fn read_price<R: Read>(mut reader: R) -> std::io::Result<Price> {
+    let time = reader.read_u32::<LittleEndian>()?;
+    let price_usd = reader.read_f32::<LittleEndian>()?;
+    if !price_usd.is_finite() {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            format!("price at time {time} is not finite"),
+        ));
+    }
+    Ok(Price { time, price_usd })
+}
+
 impl ReadableWriteable for PriceList {
     const VERSION: u8 = 0;
 
@@ -148,18 +162,8 @@ impl ReadableWriteable for PriceList {
             &mut reader,
             byteorder::ReadBytesExt::read_u32::<LittleEndian>,
         )?;
-        let current_price = Optional::read(&mut reader, |r| {
-            Ok(Price {
-                time: r.read_u32::<LittleEndian>()?,
-                price_usd: r.read_f32::<LittleEndian>()?,
-            })
-        })?;
-        let daily_prices = Vector::read(&mut reader, |r| {
-            Ok(Price {
-                time: r.read_u32::<LittleEndian>()?,
-                price_usd: r.read_f32::<LittleEndian>()?,
-            })
-        })?;
+        let current_price = Optional::read(&mut reader, read_price)?;
+        let daily_prices = Vector::read(&mut reader, |r| read_price(r))?;
 
         Ok(Self {
             current_price,
@@ -214,4 +218,36 @@ async fn get_current_price() -> Result<Price, PriceError> {
     });
 
     Ok(trades[5])
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn price_list_bytes(current_price: f32, daily_price: f32) -> Vec<u8> {
+        let mut out = vec![0, 0, 1];
+        out.write_u32::<LittleEndian>(10).unwrap();
+        out.write_f32::<LittleEndian>(current_price).unwrap();
+        out.push(1);
+        out.write_u32::<LittleEndian>(20).unwrap();
+        out.write_f32::<LittleEndian>(daily_price).unwrap();
+        out
+    }
+
+    #[test]
+    fn finite_prices_round_trip() {
+        let bytes = price_list_bytes(30.5, 31.25);
+        let prices = PriceList::read(bytes.as_slice(), ()).unwrap();
+        let mut written = Vec::new();
+        prices.write(&mut written, ()).unwrap();
+        assert_eq!(written, bytes);
+    }
+
+    #[test]
+    fn non_finite_prices_are_rejected() {
+        for (current, daily) in [(f32::NAN, 1.0), (1.0, f32::INFINITY)] {
+            let bytes = price_list_bytes(current, daily);
+            assert!(PriceList::read(bytes.as_slice(), ()).is_err());
+        }
+    }
 }

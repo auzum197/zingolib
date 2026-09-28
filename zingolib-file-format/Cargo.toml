@@ -30,6 +30,14 @@ zingolib-price = { workspace = true }
 zip32 = { workspace = true }
 
 [dev-dependencies]
+hex = { workspace = true }
+incrementalmerkletree = { workspace = true }
+jubjub = { workspace = true }
+orchard = { workspace = true }
+pepper-sync = { workspace = true, features = ["test-features"] }
+proptest = { workspace = true }
+sapling-crypto = { workspace = true }
+shardtree = { workspace = true }
 zcash_keys = { workspace = true }
 zcash_transparent = { workspace = true }
 zingo_common_components = { workspace = true }
