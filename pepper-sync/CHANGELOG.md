@@ -59,6 +59,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `sync::SyncResult`: removed `percentage_total_outputs_scanned` field and its
   `Display`/`json::JsonValue` output.
 
+### Fixed
+- Ironwood nullifiers at or below the fully scanned height are removed from the
+  wallet's nullifier map, as Sapling and Orchard nullifiers already were.
+  Before, they stayed in the map and in the wallet file.
+
 ## [0.5.0] - 2026-06-10
 
 ### Added

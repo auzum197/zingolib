@@ -1659,6 +1659,10 @@ where
         .orchard
         .retain(|_, scan_target| scan_target.block_height > fully_scanned_height);
     wallet
+        .get_nullifiers_mut()?
+        .ironwood
+        .retain(|_, scan_target| scan_target.block_height > fully_scanned_height);
+    wallet
         .get_sync_state_mut()?
         .remove_scanned_scan_targets(fully_scanned_height);
     remove_irrelevant_blocks(wallet)?;
