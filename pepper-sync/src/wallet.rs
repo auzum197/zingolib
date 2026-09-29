@@ -667,6 +667,12 @@ impl<N, Nf: Copy, P> WalletNote<N, Nf, P> {
         self.nullifier = Some(nullifier);
         self
     }
+
+    /// Sets the ranges whose nullifiers must be re-fetched before this note
+    /// is known to be unspent, for tests exercising the spendability gate.
+    pub fn set_refetch_nullifier_ranges_for_test(&mut self, ranges: Vec<Range<BlockHeight>>) {
+        self.refetch_nullifier_ranges = ranges;
+    }
 }
 
 #[cfg(feature = "wallet_essentials")]
