@@ -2059,7 +2059,7 @@ mod test {
         use crate::wallet::{NullifierMap, SyncState, TreeBounds, WalletBlock, WalletTransaction};
         use crate::witness::build_located_trees;
 
-        const LOCAL_NETWORK: LocalNetwork = LocalNetwork {
+        pub(super) const LOCAL_NETWORK: LocalNetwork = LocalNetwork {
             overwinter: Some(BlockHeight::from_u32(1)),
             sapling: Some(BlockHeight::from_u32(3)),
             blossom: Some(BlockHeight::from_u32(3)),
@@ -2072,7 +2072,7 @@ mod test {
             nu6_3: Some(BlockHeight::from_u32(3)),
         };
 
-        fn wallet_block(
+        pub(super) fn wallet_block(
             height: u32,
             sapling_outputs: u32,
             orchard_outputs: u32,
@@ -2098,7 +2098,10 @@ mod test {
             )
         }
 
-        fn empty_wallet_transaction(txid: TxId, status: ConfirmationStatus) -> WalletTransaction {
+        pub(super) fn empty_wallet_transaction(
+            txid: TxId,
+            status: ConfirmationStatus,
+        ) -> WalletTransaction {
             let transaction = TransactionData::from_parts(
                 TxVersion::V5,
                 BranchId::Nu5,
@@ -2323,6 +2326,555 @@ mod test {
                 }
                 event => panic!("expected TxDiscovered, found {event:?}"),
             }
+        }
+    }
+
+    mod refetch_nullifiers {
+        use std::collections::{BTreeMap, HashMap};
+        use std::marker::PhantomData;
+        use std::time::Duration;
+
+        use incrementalmerkletree::Position;
+        use orchard::note::{NoteVersion, RandomSeed, Rho};
+        use tokio::sync::mpsc;
+        use zcash_primitives::transaction::TxId;
+        use zcash_protocol::consensus::BlockHeight;
+        use zcash_protocol::memo::Memo;
+        use zingo_netutils::lightwallet_protocol::{ChainMetadata, CompactBlock};
+        use zingolib_common::status::ConfirmationStatus;
+
+        use super::process_scan_results_events::{
+            LOCAL_NETWORK, empty_wallet_transaction, wallet_block,
+        };
+        use crate::client::FetchRequest;
+        use crate::config::PerformanceLevel;
+        use crate::keys::KeyId;
+        use crate::mocks::{MockWallet, MockWalletBuilder};
+        use crate::scan::ScanResults;
+        use crate::sync::{ScanPriority, ScanRange, process_scan_results};
+        use crate::wallet::traits::{SyncBlocks, SyncNullifiers, SyncTransactions, SyncWallet};
+        use crate::wallet::{NullifierMap, OutputId, ScanTarget, SyncState, WalletNote};
+
+        const ORCHARD_NULLIFIER: u8 = 4;
+        const IRONWOOD_NULLIFIER: u8 = 5;
+
+        fn h(height: u32) -> BlockHeight {
+            BlockHeight::from_u32(height)
+        }
+
+        fn range(start: u32, end: u32, priority: ScanPriority) -> ScanRange {
+            ScanRange::from_parts(h(start)..h(end), priority)
+        }
+
+        fn note_txid() -> TxId {
+            TxId::from_bytes([1; 32])
+        }
+
+        fn spend_txid() -> TxId {
+            TxId::from_bytes([2; 32])
+        }
+
+        fn sapling_nullifier() -> sapling_crypto::Nullifier {
+            sapling_crypto::Nullifier([3; 32])
+        }
+
+        fn orchard_nullifier(byte: u8) -> orchard::note::Nullifier {
+            let mut bytes = [0; 32];
+            bytes[0] = byte;
+            orchard::note::Nullifier::from_bytes(&bytes).unwrap()
+        }
+
+        fn sapling_note() -> sapling_crypto::Note {
+            let (_, recipient) =
+                sapling_crypto::zip32::ExtendedSpendingKey::master(&[0; 32]).default_address();
+            sapling_crypto::Note::from_parts(
+                recipient,
+                sapling_crypto::value::NoteValue::from_raw(10_000),
+                sapling_crypto::Rseed::AfterZip212([7; 32]),
+            )
+        }
+
+        fn orchard_note(version: NoteVersion) -> orchard::Note {
+            let spending_key = orchard::keys::SpendingKey::from_bytes([1; 32]).unwrap();
+            let recipient = orchard::keys::FullViewingKey::from(&spending_key)
+                .address_at(0u32, zip32::Scope::External);
+            let rho = Rho::from_bytes(&[0; 32]).unwrap();
+            let rseed = (0..=u8::MAX)
+                .find_map(|byte| RandomSeed::from_bytes([byte; 32], &rho).into_option())
+                .unwrap();
+            orchard::Note::from_parts(
+                recipient,
+                orchard::value::NoteValue::from_raw(10_000),
+                rho,
+                rseed,
+                version,
+            )
+            .unwrap()
+        }
+
+        /// A note found after blocks 10 to 19 were scanned and their nullifiers discarded.
+        fn wallet_note<N, Nf: Copy, P>(
+            note: N,
+            nullifier: Nf,
+            output_index: u32,
+        ) -> WalletNote<N, Nf, P> {
+            WalletNote {
+                output_id: OutputId::new(note_txid(), output_index),
+                key_id: KeyId::from_parts(zip32::AccountId::ZERO, zip32::Scope::External),
+                note,
+                nullifier: Some(nullifier),
+                position: Some(Position::from(0)),
+                memo: Memo::Empty,
+                spending_transaction: None,
+                refetch_nullifier_ranges: vec![h(10)..h(20)],
+                marker: PhantomData,
+            }
+        }
+
+        /// A wallet with a sapling, an orchard and an ironwood note received at height 5 and spent at height 15. The
+        /// spend returned change, so it was found by trial decryption when blocks 10 to 19 were first scanned.
+        fn wallet(scan_ranges: Vec<ScanRange>) -> MockWallet {
+            let mut note_transaction =
+                empty_wallet_transaction(note_txid(), ConfirmationStatus::Confirmed(h(5)));
+            note_transaction.sapling_notes =
+                vec![wallet_note(sapling_note(), sapling_nullifier(), 0)];
+            note_transaction.orchard_notes = vec![wallet_note(
+                orchard_note(NoteVersion::V2),
+                orchard_nullifier(ORCHARD_NULLIFIER),
+                1,
+            )];
+            note_transaction.ironwood_notes = vec![wallet_note(
+                orchard_note(NoteVersion::V3),
+                orchard_nullifier(IRONWOOD_NULLIFIER),
+                2,
+            )];
+            let spend_transaction =
+                empty_wallet_transaction(spend_txid(), ConfirmationStatus::Confirmed(h(15)));
+
+            MockWalletBuilder::new()
+                .sync_state(SyncState::new_for_test(scan_ranges))
+                .wallet_transactions(HashMap::from([
+                    (note_txid(), note_transaction),
+                    (spend_txid(), spend_transaction),
+                ]))
+                .create_mock_wallet()
+        }
+
+        fn scan_results(nullifiers: NullifierMap) -> ScanResults {
+            ScanResults {
+                nullifiers,
+                outpoints: BTreeMap::new(),
+                scanned_blocks: BTreeMap::new(),
+                wallet_transactions: HashMap::new(),
+                sapling_located_trees: Vec::new(),
+                orchard_located_trees: Vec::new(),
+                ironwood_located_trees: Vec::new(),
+                fetch_duration: Duration::ZERO,
+                decryption_duration: Duration::ZERO,
+                tree_duration: Duration::ZERO,
+            }
+        }
+
+        /// The nullifiers of blocks 10 to 19 as served by `GetBlockRangeNullifiers`: the spends of the wallet's notes
+        /// and an unrelated orchard spend.
+        fn refetched_nullifiers() -> ScanResults {
+            let spend = ScanTarget {
+                block_height: h(15),
+                txid: spend_txid(),
+                narrow_scan_area: false,
+            };
+            let mut nullifiers = NullifierMap::new();
+            nullifiers.sapling.insert(sapling_nullifier(), spend);
+            nullifiers
+                .orchard
+                .insert(orchard_nullifier(ORCHARD_NULLIFIER), spend);
+            nullifiers
+                .ironwood
+                .insert(orchard_nullifier(IRONWOOD_NULLIFIER), spend);
+            nullifiers.orchard.insert(
+                orchard_nullifier(6),
+                ScanTarget {
+                    block_height: h(12),
+                    txid: TxId::from_bytes([6; 32]),
+                    narrow_scan_area: false,
+                },
+            );
+            scan_results(nullifiers)
+        }
+
+        /// The spending transaction of each note in (sapling, orchard, ironwood) order.
+        fn spending_transactions(wallet: &MockWallet) -> Vec<Option<TxId>> {
+            let transaction = &wallet.get_wallet_transactions().unwrap()[&note_txid()];
+            transaction
+                .sapling_notes()
+                .iter()
+                .map(|note| note.spending_transaction)
+                .chain(
+                    transaction
+                        .orchard_notes()
+                        .iter()
+                        .map(|note| note.spending_transaction),
+                )
+                .chain(
+                    transaction
+                        .ironwood_notes()
+                        .iter()
+                        .map(|note| note.spending_transaction),
+                )
+                .collect()
+        }
+
+        #[tokio::test]
+        async fn refetched_nullifiers_detect_spends_in_all_shielded_pools() {
+            let mut wallet = wallet(vec![
+                range(3, 10, ScanPriority::Scanned),
+                range(10, 20, ScanPriority::RefetchingNullifiers),
+                range(20, 31, ScanPriority::ChainTip),
+            ]);
+            // the receiver is dropped so any fetch fails the test
+            let (fetch_request_sender, _) = mpsc::unbounded_channel();
+
+            let events = process_scan_results(
+                &LOCAL_NETWORK,
+                &mut wallet,
+                fetch_request_sender,
+                &HashMap::new(),
+                range(10, 20, ScanPriority::ScannedWithoutMapping),
+                Ok(refetched_nullifiers()),
+                h(3),
+                PerformanceLevel::Low,
+                &mut true,
+            )
+            .await
+            .unwrap();
+
+            assert!(events.is_empty());
+            assert_eq!(spending_transactions(&wallet), vec![Some(spend_txid()); 3]);
+            assert_eq!(
+                wallet.get_sync_state().unwrap().scan_ranges(),
+                &[
+                    range(3, 20, ScanPriority::Scanned),
+                    range(20, 31, ScanPriority::ChainTip),
+                ]
+            );
+        }
+
+        /// A lower range still being scanned may hold notes spent in the refetched range, so the refetched nullifiers
+        /// are discarded and fetched again once the lower range is scanned.
+        #[tokio::test]
+        async fn refetch_is_discarded_while_a_lower_range_is_unscanned() {
+            let mut wallet = wallet(vec![
+                range(3, 10, ScanPriority::Scanning),
+                range(10, 20, ScanPriority::RefetchingNullifiers),
+                range(20, 31, ScanPriority::ChainTip),
+            ]);
+            let (fetch_request_sender, _) = mpsc::unbounded_channel();
+
+            let events = process_scan_results(
+                &LOCAL_NETWORK,
+                &mut wallet,
+                fetch_request_sender,
+                &HashMap::new(),
+                range(10, 20, ScanPriority::ScannedWithoutMapping),
+                Ok(refetched_nullifiers()),
+                h(3),
+                PerformanceLevel::Low,
+                &mut true,
+            )
+            .await
+            .unwrap();
+
+            assert!(events.is_empty());
+            assert_eq!(spending_transactions(&wallet), vec![None; 3]);
+            assert_eq!(
+                wallet.get_sync_state().unwrap().scan_ranges(),
+                &[
+                    range(3, 10, ScanPriority::Scanning),
+                    range(10, 20, ScanPriority::ScannedWithoutMapping),
+                    range(20, 31, ScanPriority::ChainTip),
+                ]
+            );
+        }
+
+        fn compact_block(height: BlockHeight) -> CompactBlock {
+            let height = u32::from(height);
+            CompactBlock {
+                height: u64::from(height),
+                hash: vec![u8::try_from(height).unwrap(); 32],
+                prev_hash: vec![u8::try_from(height - 1).unwrap(); 32],
+                chain_metadata: Some(ChainMetadata::default()),
+                ..Default::default()
+            }
+        }
+
+        /// A refetch batch split at the nullifier limit covers part of the wallet's refetching range. The blocks at
+        /// the new range bounds were removed after the first scan, so they are fetched to keep every scanned range's
+        /// bound blocks in the wallet.
+        #[tokio::test]
+        async fn split_refetch_fetches_missing_range_bound_blocks() {
+            let mut wallet = MockWalletBuilder::new()
+                .sync_state(SyncState::new_for_test(vec![
+                    range(3, 10, ScanPriority::Scanned),
+                    range(10, 20, ScanPriority::RefetchingNullifiers),
+                    range(20, 31, ScanPriority::ChainTip),
+                ]))
+                .create_mock_wallet();
+            let (fetch_request_sender, mut fetch_request_receiver) = mpsc::unbounded_channel();
+            let fetcher = tokio::spawn(async move {
+                let mut requested = Vec::new();
+                while let Some(request) = fetch_request_receiver.recv().await {
+                    match request {
+                        FetchRequest::CompactBlock(reply, height) => {
+                            requested.push(height);
+                            reply.send(Ok(compact_block(height))).unwrap();
+                        }
+                        other => panic!("unexpected fetch request: {other:?}"),
+                    }
+                }
+                requested
+            });
+
+            process_scan_results(
+                &LOCAL_NETWORK,
+                &mut wallet,
+                fetch_request_sender,
+                &HashMap::new(),
+                range(10, 15, ScanPriority::ScannedWithoutMapping),
+                Ok(scan_results(NullifierMap::new())),
+                h(3),
+                PerformanceLevel::Low,
+                &mut true,
+            )
+            .await
+            .unwrap();
+
+            assert_eq!(fetcher.await.unwrap(), vec![h(10), h(14), h(15)]);
+            for height in [10, 14, 15] {
+                assert!(wallet.get_wallet_block(h(height)).is_ok(), "{height}");
+            }
+            assert_eq!(
+                wallet.get_sync_state().unwrap().scan_ranges(),
+                &[
+                    range(3, 15, ScanPriority::Scanned),
+                    range(15, 20, ScanPriority::RefetchingNullifiers),
+                    range(20, 31, ScanPriority::ChainTip),
+                ]
+            );
+
+            // the second batch covers the rest of the refetching range, so its bound blocks are not fetched
+            let (fetch_request_sender, _) = mpsc::unbounded_channel();
+            process_scan_results(
+                &LOCAL_NETWORK,
+                &mut wallet,
+                fetch_request_sender,
+                &HashMap::new(),
+                range(15, 20, ScanPriority::ScannedWithoutMapping),
+                Ok(scan_results(NullifierMap::new())),
+                h(3),
+                PerformanceLevel::Low,
+                &mut true,
+            )
+            .await
+            .unwrap();
+
+            assert_eq!(
+                wallet.get_sync_state().unwrap().scan_ranges(),
+                &[
+                    range(3, 20, ScanPriority::Scanned),
+                    range(20, 31, ScanPriority::ChainTip),
+                ]
+            );
+        }
+
+        /// Scans blocks 10 to 19, holding an orchard spend at height 15, with blocks 3 to 9 at `lower_priority`.
+        /// Returns the wallet and whether the nullifier map limit is exceeded afterwards.
+        async fn scan_above(
+            lower_priority: ScanPriority,
+            performance_level: PerformanceLevel,
+        ) -> (MockWallet, bool) {
+            let mut wallet = MockWalletBuilder::new()
+                .sync_state(SyncState::new_for_test(vec![
+                    range(3, 10, lower_priority),
+                    range(10, 20, ScanPriority::Scanning),
+                    range(20, 1001, ScanPriority::Scanned),
+                ]))
+                .create_mock_wallet();
+            let mut nullifiers = NullifierMap::new();
+            nullifiers.orchard.insert(
+                orchard_nullifier(ORCHARD_NULLIFIER),
+                ScanTarget {
+                    block_height: h(15),
+                    txid: spend_txid(),
+                    narrow_scan_area: false,
+                },
+            );
+            let mut results = scan_results(nullifiers);
+            results.scanned_blocks = (10..20).map(|height| wallet_block(height, 0, 0)).collect();
+            let (fetch_request_sender, _) = mpsc::unbounded_channel();
+            let mut nullifier_map_limit_exceeded = false;
+
+            process_scan_results(
+                &LOCAL_NETWORK,
+                &mut wallet,
+                fetch_request_sender,
+                &HashMap::new(),
+                range(10, 20, ScanPriority::Historic),
+                Ok(results),
+                h(1000),
+                performance_level,
+                &mut nullifier_map_limit_exceeded,
+            )
+            .await
+            .unwrap();
+
+            (wallet, nullifier_map_limit_exceeded)
+        }
+
+        /// Over the nullifier map limit, a range scanned above an unscanned range keeps no nullifiers and is marked
+        /// for refetch. The lowest unscanned range is always mapped, as its nullifiers are removed straight after.
+        #[tokio::test]
+        async fn nullifiers_are_only_discarded_over_the_limit_above_an_unscanned_range() {
+            let (wallet, limit_exceeded) =
+                scan_above(ScanPriority::Historic, PerformanceLevel::Low).await;
+            assert!(limit_exceeded);
+            assert!(wallet.get_nullifiers().unwrap().orchard.is_empty());
+            assert_eq!(
+                wallet.get_sync_state().unwrap().scan_ranges(),
+                &[
+                    range(3, 10, ScanPriority::Historic),
+                    range(10, 20, ScanPriority::ScannedWithoutMapping),
+                    range(20, 1001, ScanPriority::Scanned),
+                ]
+            );
+
+            let (wallet, limit_exceeded) =
+                scan_above(ScanPriority::Historic, PerformanceLevel::High).await;
+            assert!(!limit_exceeded);
+            assert_eq!(wallet.get_nullifiers().unwrap().orchard.len(), 1);
+            assert_eq!(
+                wallet.get_sync_state().unwrap().scan_ranges(),
+                &[
+                    range(3, 10, ScanPriority::Historic),
+                    range(10, 1001, ScanPriority::Scanned),
+                ]
+            );
+
+            let (wallet, limit_exceeded) =
+                scan_above(ScanPriority::Scanned, PerformanceLevel::Low).await;
+            assert!(limit_exceeded);
+            assert_eq!(
+                wallet.get_sync_state().unwrap().scan_ranges(),
+                &[range(3, 1001, ScanPriority::Scanned)]
+            );
+        }
+
+        /// A note found in blocks 6 to 9 may be spent in the higher ranges whose nullifiers were discarded, so those
+        /// ranges are recorded on the note. Lower ranges cannot hold its spend and are not recorded.
+        #[tokio::test]
+        async fn new_note_records_higher_ranges_scanned_without_mapping() {
+            let mut wallet = MockWalletBuilder::new()
+                .sync_state(SyncState::new_for_test(vec![
+                    range(3, 6, ScanPriority::ScannedWithoutMapping),
+                    range(6, 10, ScanPriority::Scanning),
+                    range(10, 20, ScanPriority::ScannedWithoutMapping),
+                    range(20, 1001, ScanPriority::Scanned),
+                ]))
+                .create_mock_wallet();
+            let mut note = wallet_note(
+                orchard_note(NoteVersion::V2),
+                orchard_nullifier(ORCHARD_NULLIFIER),
+                0,
+            );
+            note.refetch_nullifier_ranges = Vec::new();
+            // a change note, so no receiving address is discovered and no keys are needed
+            note.key_id = KeyId::from_parts(zip32::AccountId::ZERO, zip32::Scope::Internal);
+            let mut note_transaction =
+                empty_wallet_transaction(note_txid(), ConfirmationStatus::Confirmed(h(8)));
+            note_transaction.orchard_notes = vec![note];
+            let mut results = scan_results(NullifierMap::new());
+            results.scanned_blocks = (6..10).map(|height| wallet_block(height, 0, 0)).collect();
+            results.wallet_transactions = HashMap::from([(note_txid(), note_transaction)]);
+            let (fetch_request_sender, _) = mpsc::unbounded_channel();
+
+            process_scan_results(
+                &LOCAL_NETWORK,
+                &mut wallet,
+                fetch_request_sender,
+                &HashMap::new(),
+                range(6, 10, ScanPriority::FoundNote),
+                Ok(results),
+                h(1000),
+                PerformanceLevel::High,
+                &mut false,
+            )
+            .await
+            .unwrap();
+
+            let transaction = &wallet.get_wallet_transactions().unwrap()[&note_txid()];
+            assert_eq!(
+                transaction.orchard_notes()[0].refetch_nullifier_ranges,
+                vec![h(10)..h(20)]
+            );
+        }
+
+        /// Mapped nullifiers at or below the fully scanned height can no longer spend a note the wallet has yet to
+        /// find, so they are removed from every pool once the refetch raises that height.
+        #[tokio::test]
+        async fn nullifiers_at_or_below_fully_scanned_height_are_removed() {
+            let target = |height| ScanTarget {
+                block_height: h(height),
+                txid: TxId::from_bytes([7; 32]),
+                narrow_scan_area: false,
+            };
+            let mut nullifier_map = NullifierMap::new();
+            for (byte, height) in [(1, 5), (2, 19), (3, 25)] {
+                nullifier_map
+                    .sapling
+                    .insert(sapling_crypto::Nullifier([byte; 32]), target(height));
+                nullifier_map
+                    .orchard
+                    .insert(orchard_nullifier(byte), target(height));
+                nullifier_map
+                    .ironwood
+                    .insert(orchard_nullifier(byte), target(height));
+            }
+            let mut wallet = MockWalletBuilder::new()
+                .sync_state(SyncState::new_for_test(vec![
+                    range(3, 10, ScanPriority::Scanned),
+                    range(10, 20, ScanPriority::RefetchingNullifiers),
+                    range(20, 31, ScanPriority::ChainTip),
+                ]))
+                .nullifier_map(nullifier_map)
+                .create_mock_wallet();
+            let (fetch_request_sender, _) = mpsc::unbounded_channel();
+
+            process_scan_results(
+                &LOCAL_NETWORK,
+                &mut wallet,
+                fetch_request_sender,
+                &HashMap::new(),
+                range(10, 20, ScanPriority::ScannedWithoutMapping),
+                Ok(scan_results(NullifierMap::new())),
+                h(3),
+                PerformanceLevel::Low,
+                &mut true,
+            )
+            .await
+            .unwrap();
+
+            let nullifier_map = wallet.get_nullifiers().unwrap();
+            assert_eq!(
+                nullifier_map.sapling.values().copied().collect::<Vec<_>>(),
+                vec![target(25)]
+            );
+            assert_eq!(
+                nullifier_map.orchard.values().copied().collect::<Vec<_>>(),
+                vec![target(25)]
+            );
+            assert_eq!(
+                nullifier_map.ironwood.values().copied().collect::<Vec<_>>(),
+                vec![target(25)]
+            );
         }
     }
 
