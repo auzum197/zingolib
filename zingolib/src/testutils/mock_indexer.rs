@@ -539,6 +539,30 @@ pub struct MockChain {
     branch_seed: u32,
 }
 
+/// Reduces `block` to the shielded nullifiers, as a server does for
+/// `GetBlockNullifiers` and `GetBlockRangeNullifiers`: Sapling spend
+/// nullifiers and Orchard and Ironwood action nullifiers only.
+/// Transparent data, Sapling outputs, the rest of the action data and
+/// the commitment tree sizes are removed. Transactions left with no
+/// nullifiers are omitted.
+fn reduce_to_nullifiers(block: &mut CompactBlock) {
+    block.chain_metadata = None;
+    for tx in &mut block.vtx {
+        tx.vin.clear();
+        tx.vout.clear();
+        tx.outputs.clear();
+        for action in tx.actions.iter_mut().chain(tx.ironwood_actions.iter_mut()) {
+            *action = CompactOrchardAction {
+                nullifier: std::mem::take(&mut action.nullifier),
+                ..Default::default()
+            };
+        }
+    }
+    block.vtx.retain(|tx| {
+        !(tx.spends.is_empty() && tx.actions.is_empty() && tx.ironwood_actions.is_empty())
+    });
+}
+
 fn fabricated_block_hash(height: u32) -> Vec<u8> {
     fabricated_branch_hash(height, 0)
 }
@@ -1656,6 +1680,33 @@ impl MockIndexerService {
         }
     }
 
+    /// Serves the blocks of `range` for `GetBlockRange`, or reduced to the
+    /// shielded nullifiers for `GetBlockRangeNullifiers` if
+    /// `nullifiers_only` is true.
+    async fn block_range(
+        &self,
+        range: BlockRange,
+        nullifiers_only: bool,
+    ) -> Result<Response<ResponseStream<CompactBlock>>, Status> {
+        let fault = self.fault_for(Rpc::BlockRange).await?;
+        let start = range.start.map_or(0, |id| id.height) as usize;
+        let end = range.end.map_or(0, |id| id.height) as usize;
+        if start == 0 || end < start {
+            return Err(Status::invalid_argument(
+                "the mock serves ascending ranges starting at height 1",
+            ));
+        }
+        let chain = self.chain.read().await;
+        if end > chain.blocks.len() {
+            return Err(Status::not_found(format!("no block at height {end}")));
+        }
+        let mut blocks: Vec<_> = chain.blocks[start - 1..end].to_vec();
+        if nullifiers_only {
+            blocks.iter_mut().for_each(reduce_to_nullifiers);
+        }
+        Ok(Response::new(stream_with_fault(blocks, fault)))
+    }
+
     async fn address_utxos(
         &self,
         arg: GetAddressUtxosArg,
@@ -1709,7 +1760,9 @@ impl CompactTxStreamer for MockIndexerService {
         &self,
         request: Request<BlockId>,
     ) -> Result<Response<CompactBlock>, Status> {
-        self.get_block(request).await
+        let mut block = self.get_block(request).await?.into_inner();
+        reduce_to_nullifiers(&mut block);
+        Ok(Response::new(block))
     }
 
     type GetBlockRangeStream = ResponseStream<CompactBlock>;
@@ -1717,21 +1770,7 @@ impl CompactTxStreamer for MockIndexerService {
         &self,
         request: Request<BlockRange>,
     ) -> Result<Response<Self::GetBlockRangeStream>, Status> {
-        let fault = self.fault_for(Rpc::BlockRange).await?;
-        let range = request.into_inner();
-        let start = range.start.map_or(0, |id| id.height) as usize;
-        let end = range.end.map_or(0, |id| id.height) as usize;
-        if start == 0 || end < start {
-            return Err(Status::invalid_argument(
-                "the mock serves ascending ranges starting at height 1",
-            ));
-        }
-        let chain = self.chain.read().await;
-        if end > chain.blocks.len() {
-            return Err(Status::not_found(format!("no block at height {end}")));
-        }
-        let blocks: Vec<_> = chain.blocks[start - 1..end].to_vec();
-        Ok(Response::new(stream_with_fault(blocks, fault)))
+        self.block_range(request.into_inner(), false).await
     }
 
     type GetBlockRangeNullifiersStream = ResponseStream<CompactBlock>;
@@ -1739,7 +1778,7 @@ impl CompactTxStreamer for MockIndexerService {
         &self,
         request: Request<BlockRange>,
     ) -> Result<Response<Self::GetBlockRangeNullifiersStream>, Status> {
-        self.get_block_range(request).await
+        self.block_range(request.into_inner(), true).await
     }
 
     async fn get_tree_state(
@@ -2963,5 +3002,74 @@ mod tests {
         assert_eq!(info.sapling_activation_height, 1);
         let expected: u32 = BranchId::Nu6_2.into();
         assert_eq!(info.consensus_branch_id, format!("{expected:08x}"));
+    }
+
+    /// A wallet refetching nullifiers must not depend on data a real server
+    /// strips from the nullifier RPCs.
+    #[tokio::test]
+    async fn nullifier_rpcs_serve_only_shielded_nullifiers() {
+        let chain = Arc::new(RwLock::new(MockChain::new()));
+        chain.write().await.mine_block(vec![funding_bytes().await]);
+        let service = MockIndexerService::new(chain.clone());
+        let range = BlockRange {
+            start: Some(BlockId {
+                height: 1,
+                hash: vec![],
+            }),
+            end: Some(BlockId {
+                height: 1,
+                hash: vec![],
+            }),
+            pool_types: vec![],
+        };
+        let full = service
+            .get_block_range(Request::new(range.clone()))
+            .await
+            .unwrap()
+            .into_inner()
+            .next()
+            .await
+            .unwrap()
+            .unwrap();
+        let reduced = service
+            .get_block_range_nullifiers(Request::new(range))
+            .await
+            .unwrap()
+            .into_inner()
+            .next()
+            .await
+            .unwrap()
+            .unwrap();
+
+        let action_nullifiers = |block: &CompactBlock| {
+            block
+                .vtx
+                .iter()
+                .flat_map(|tx| tx.actions.iter().chain(&tx.ironwood_actions))
+                .map(|action| action.nullifier.clone())
+                .collect::<Vec<_>>()
+        };
+        assert!(full.chain_metadata.is_some());
+        assert!(!action_nullifiers(&full).is_empty());
+        assert_eq!(action_nullifiers(&reduced), action_nullifiers(&full));
+        assert_eq!(reduced.chain_metadata, None);
+        for tx in &reduced.vtx {
+            assert!(tx.vin.is_empty() && tx.vout.is_empty() && tx.outputs.is_empty());
+            for action in tx.actions.iter().chain(&tx.ironwood_actions) {
+                assert!(action.cmx.is_empty());
+                assert!(action.ephemeral_key.is_empty());
+                assert!(action.ciphertext.is_empty());
+            }
+        }
+
+        let single = service
+            .get_block_nullifiers(Request::new(BlockId {
+                height: 1,
+                hash: vec![],
+            }))
+            .await
+            .unwrap()
+            .into_inner();
+        assert_eq!(single, reduced);
     }
 }
