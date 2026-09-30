@@ -143,6 +143,182 @@ async fn max_send_value_to_tex_empties_the_wallet() {
     check_client_balances!(sender, i: 0 o: 0 s: 0 t: 0);
 }
 
+/// Sends the wallet's whole balance to a TEX address and mines both steps. The second step spends the wallet's
+/// ephemeral transparent coin and pays everything to the external recipient, so it has no output to the wallet. Then
+/// mines past the expiry height of both transactions and syncs.
+///
+/// If `sync_before_expiry` is false, the wallet is offline from the send until the transactions' expiry height.
+///
+/// Returns the status of each transaction that was sent.
+async fn statuses_after_tex_send_expiry_height(
+    transparent_address_discovery: pepper_sync::config::TransparentAddressDiscovery,
+    sync_before_expiry: bool,
+) -> Vec<zingolib_common::status::ConfirmationStatus> {
+    let funding = 100_000;
+    let mut net = MockNet::launch().await;
+    let mut sender = net
+        .client(zingo_test_vectors::seeds::HOSPITAL_MUSEUM_SEED)
+        .await;
+    sender
+        .wallet()
+        .write()
+        .await
+        .wallet_settings
+        .sync_config
+        .transparent_address_discovery = transparent_address_discovery;
+    let sender_ua = get_base_address(&sender, PoolType::Shielded(ShieldedPool::Orchard)).await;
+
+    net.chain.write().await.mine_empty_blocks(1);
+    fund(&net, vec![(&sender_ua, funding, None)], 1).await;
+    sender.sync_and_await().await.unwrap();
+    let funding_txids: Vec<_> = sender
+        .wallet()
+        .read()
+        .await
+        .wallet_transactions
+        .keys()
+        .copied()
+        .collect();
+
+    let tex_address = external_tex_address();
+    let max_send_value = sender
+        .max_send_value(
+            ZcashAddress::try_from_encoded(&tex_address).unwrap(),
+            false,
+            zip32::AccountId::ZERO,
+        )
+        .await
+        .unwrap();
+    from_inputs::quick_send(
+        &mut sender,
+        vec![(&tex_address, max_send_value.into_u64(), None)],
+    )
+    .await
+    .unwrap();
+    net.chain.write().await.mine_mempool();
+    assert_eq!(net.chain.read().await.mempool_len(), 0);
+    if sync_before_expiry {
+        sender.sync_and_await().await.unwrap();
+        check_client_balances!(sender, i: 0 o: 0 s: 0 t: 0);
+    }
+
+    // a spending transaction left pending is marked failed at its expiry height, which resets the coins it spent to
+    // unspent.
+    net.chain
+        .write()
+        .await
+        .mine_empty_blocks(zcash_primitives::transaction::builder::DEFAULT_TX_EXPIRY_DELTA + 1);
+    sender.sync_and_await().await.unwrap();
+    check_client_balances!(sender, i: 0 o: 0 s: 0 t: 0);
+
+    let wallet = sender.wallet().read().await;
+    let statuses: Vec<_> = wallet
+        .wallet_transactions
+        .values()
+        .filter(|transaction| !funding_txids.contains(&transaction.txid()))
+        .map(|transaction| transaction.status())
+        .collect();
+    assert_eq!(statuses.len(), 2, "a TEX send is two transactions");
+    statuses
+}
+
+/// Compact block scanning never finds a transaction that spends a transparent coin without paying the wallet. It is
+/// found from the transactions the server lists for the spent coin's address, then scanned and confirmed.
+#[tokio::test]
+async fn transparent_spend_without_change_is_confirmed() {
+    for sync_before_expiry in [true, false] {
+        let statuses = statuses_after_tex_send_expiry_height(
+            pepper_sync::config::TransparentAddressDiscovery::minimal(),
+            sync_before_expiry,
+        )
+        .await;
+        assert!(
+            statuses.iter().all(|status| status.is_confirmed()),
+            "sync before expiry: {sync_before_expiry}, {statuses:?}"
+        );
+    }
+}
+
+/// With transparent address discovery disabled, the server is not asked for the transactions of the wallet's
+/// addresses. The wallet asks for the transaction it sent instead.
+#[tokio::test]
+async fn transparent_spend_without_change_is_confirmed_with_address_discovery_disabled() {
+    for sync_before_expiry in [true, false] {
+        let statuses = statuses_after_tex_send_expiry_height(
+            pepper_sync::config::TransparentAddressDiscovery::disabled(),
+            sync_before_expiry,
+        )
+        .await;
+        assert!(
+            statuses.iter().all(|status| status.is_confirmed()),
+            "sync before expiry: {sync_before_expiry}, {statuses:?}"
+        );
+    }
+}
+
+/// Transparent gap addresses are derived from the wallet's addresses at the start of each sync session, so nothing a
+/// scan returns can clear them. Funds received by the address after the wallet's highest address are detected, and the
+/// gap then moves past that address.
+#[tokio::test]
+async fn gap_address_funds_are_detected_and_the_gap_moves_on() {
+    use zcash_keys::encoding::AddressCodec;
+
+    let mut net = MockNet::launch().await;
+    net.chain.write().await.mine_empty_blocks(2);
+    let mut client = net
+        .client(zingo_test_vectors::seeds::HOSPITAL_MUSEUM_SEED)
+        .await;
+    client.sync_and_await().await.unwrap();
+    assert_eq!(
+        client.wallet().read().await.transparent_addresses().len(),
+        1
+    );
+
+    // the client only holds the first transparent address of the seed. a second wallet with the same seed derives
+    // the addresses after it.
+    let deriver = net
+        .client(zingo_test_vectors::seeds::HOSPITAL_MUSEUM_SEED)
+        .await;
+    let chain_type = client.chain_type();
+
+    // the test wallet settings have a gap limit of 1, so each address is only in the gap once the one below it is
+    // in use.
+    let mut funded = 0;
+    for value in [50_000, 20_000, 25_000] {
+        let (_, gap_taddr) = deriver
+            .wallet()
+            .write()
+            .await
+            .generate_transparent_address(zip32::AccountId::ZERO, false)
+            .unwrap();
+        let gap_taddr = gap_taddr.encode(&chain_type);
+        assert!(
+            !client
+                .wallet()
+                .read()
+                .await
+                .transparent_addresses()
+                .values()
+                .any(|address| *address == gap_taddr)
+        );
+
+        fund(&net, vec![(&gap_taddr, value, None)], 1).await;
+        client.sync_and_await().await.unwrap();
+
+        funded += value;
+        check_client_balances!(client, i: 0 o: 0 s: 0 t: funded);
+        assert!(
+            client
+                .wallet()
+                .read()
+                .await
+                .transparent_addresses()
+                .values()
+                .any(|address| *address == gap_taddr)
+        );
+    }
+}
+
 /// Tests that max_send_value() returns a non-zero value for a wallet and that it works with zennies.
 #[tokio::test]
 async fn max_send_value_to_tex_with_zennies_empties_the_wallet() {

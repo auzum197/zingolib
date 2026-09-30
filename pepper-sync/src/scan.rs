@@ -366,3 +366,116 @@ fn collect_nullifiers(
         });
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use std::collections::{BTreeSet, HashMap};
+
+    use tokio::sync::mpsc;
+    use zcash_protocol::consensus::BlockHeight;
+    use zcash_protocol::local_consensus::LocalNetwork;
+    use zingo_netutils::lightwallet_protocol::{
+        CompactBlock, CompactOrchardAction, CompactSaplingSpend, CompactTx,
+    };
+
+    use super::{ScanTask, scan};
+    use crate::sync::{ScanPriority, ScanRange};
+    use crate::utils::get_compact_tx_txid;
+    use crate::wallet::ScanTarget;
+
+    const LOCAL_NETWORK: LocalNetwork = LocalNetwork {
+        overwinter: Some(BlockHeight::from_u32(1)),
+        sapling: Some(BlockHeight::from_u32(3)),
+        blossom: Some(BlockHeight::from_u32(3)),
+        heartwood: Some(BlockHeight::from_u32(3)),
+        canopy: Some(BlockHeight::from_u32(3)),
+        nu5: Some(BlockHeight::from_u32(3)),
+        nu6: Some(BlockHeight::from_u32(3)),
+        nu6_1: Some(BlockHeight::from_u32(3)),
+        nu6_2: Some(BlockHeight::from_u32(3)),
+        nu6_3: Some(BlockHeight::from_u32(3)),
+    };
+
+    fn orchard_nullifier(byte: u8) -> Vec<u8> {
+        let mut bytes = vec![0; 32];
+        bytes[0] = byte;
+        bytes
+    }
+
+    /// `GetBlockRangeNullifiers` serves the nullifiers and nothing else: no commitments, ciphertexts or tree sizes,
+    /// and no transactions for blocks without nullifiers. A refetch collects every shielded nullifier from these
+    /// blocks with its height and txid, and decrypts nothing.
+    #[tokio::test]
+    async fn refetch_collects_nullifiers_from_nullifier_only_blocks() {
+        let transaction = CompactTx {
+            txid: vec![1; 32],
+            spends: vec![CompactSaplingSpend { nf: vec![2; 32] }],
+            actions: vec![CompactOrchardAction {
+                nullifier: orchard_nullifier(3),
+                ..Default::default()
+            }],
+            ironwood_actions: vec![CompactOrchardAction {
+                nullifier: orchard_nullifier(4),
+                ..Default::default()
+            }],
+            ..Default::default()
+        };
+        let scan_task = ScanTask {
+            compact_blocks: vec![
+                CompactBlock {
+                    height: 10,
+                    vtx: vec![transaction.clone()],
+                    ..Default::default()
+                },
+                CompactBlock {
+                    height: 11,
+                    ..Default::default()
+                },
+            ],
+            scan_range: ScanRange::from_parts(
+                BlockHeight::from_u32(10)..BlockHeight::from_u32(12),
+                ScanPriority::ScannedWithoutMapping,
+            ),
+            start_seam_block: None,
+            end_seam_block: None,
+            scan_targets: BTreeSet::new(),
+            transparent_addresses: HashMap::new(),
+        };
+        // the receiver is dropped so any fetch fails the test
+        let (fetch_request_sender, _) = mpsc::unbounded_channel();
+
+        let results = scan(
+            fetch_request_sender,
+            &LOCAL_NETWORK,
+            &HashMap::new(),
+            scan_task,
+            1_000,
+        )
+        .await
+        .unwrap();
+
+        let target = ScanTarget {
+            block_height: BlockHeight::from_u32(10),
+            txid: get_compact_tx_txid(&transaction),
+            narrow_scan_area: false,
+        };
+        assert_eq!(
+            results.nullifiers.sapling.into_values().collect::<Vec<_>>(),
+            vec![target]
+        );
+        assert_eq!(
+            results.nullifiers.orchard.into_values().collect::<Vec<_>>(),
+            vec![target]
+        );
+        assert_eq!(
+            results
+                .nullifiers
+                .ironwood
+                .into_values()
+                .collect::<Vec<_>>(),
+            vec![target]
+        );
+        assert!(results.scanned_blocks.is_empty());
+        assert!(results.wallet_transactions.is_empty());
+    }
+}

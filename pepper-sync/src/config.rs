@@ -199,7 +199,8 @@ impl TransparentAddressDiscovery {
     }
 
     /// Disables transparent address discovery. Sync will only scan transparent outputs for addresses already in the
-    /// wallet in transactions that also contain shielded inputs or outputs relevant to the wallet.
+    /// wallet in transactions that also contain shielded inputs or outputs relevant to the wallet, and in pending
+    /// transactions that spend the wallet's transparent coins.
     #[must_use]
     pub fn disabled() -> Self {
         Self {

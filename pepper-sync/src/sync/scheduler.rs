@@ -810,8 +810,14 @@ impl SyncState {
             // (`nullifier_map_limit_exceeded` is set `true`) then the range with the highest priority and lowest starting block
             // height is selected to allow notes to be spendable quickly on rescan, otherwise spends would not be detected as nullifiers will be temporarily discarded.
             // TODO: add this documentation of performance levels and order of scanning to pepper-sync doc comments
-            let mut scan_ranges_priority_sorted: Vec<(usize, ScanRange)> =
-                self.scan_ranges.iter().cloned().enumerate().collect();
+            // `ScannedWithoutMapping` ranges are only selected above, when they are the first unscanned range.
+            let mut scan_ranges_priority_sorted: Vec<(usize, ScanRange)> = self
+                .scan_ranges
+                .iter()
+                .cloned()
+                .enumerate()
+                .filter(|(_, range)| range.priority() != ScanPriority::ScannedWithoutMapping)
+                .collect();
             if nullifier_map_limit_exceeded {
                 scan_ranges_priority_sorted
                     .sort_by(|(_, a), (_, b)| b.block_range().start.cmp(&a.block_range().start));
@@ -1389,6 +1395,34 @@ mod tests {
         );
     }
 
+    /// A `ScannedWithoutMapping` range is not selected while a lower range is still scanning, as its re-fetched
+    /// nullifiers would be discarded. It is selected once it is the first unscanned range.
+    #[test]
+    fn scanned_without_mapping_range_waits_for_lower_ranges() {
+        for nullifier_map_limit_exceeded in [false, true] {
+            let mut sync_state = SyncState::new_for_test(vec![
+                range(100, 200, ScanPriority::Scanned),
+                range(200, 250, ScanPriority::Scanning),
+                range(250, 301, ScanPriority::ScannedWithoutMapping),
+            ]);
+
+            assert_eq!(
+                sync_state.select_scan_range(&NO_NU6_3_NETWORK, nullifier_map_limit_exceeded),
+                None
+            );
+
+            finish(&mut sync_state, &range(200, 250, ScanPriority::Scanning));
+            assert_eq!(
+                sync_state.select_scan_range(&NO_NU6_3_NETWORK, nullifier_map_limit_exceeded),
+                Some(range(250, 301, ScanPriority::ScannedWithoutMapping))
+            );
+            assert_eq!(
+                sync_state.scan_ranges()[1],
+                range(250, 301, ScanPriority::RefetchingNullifiers)
+            );
+        }
+    }
+
     #[test]
     fn unmapped_scan_is_marked_for_refetch_and_merged() {
         let mut sync_state = SyncState::new_for_test(vec![
@@ -1848,6 +1882,13 @@ mod tests {
                             let index = sync_state
                                 .index_containing(selected.block_range())
                                 .expect("selected range is in the plan");
+                            // a refetch only starts once every lower range is scanned or refetching its own nullifiers
+                            if selected.priority() == ScanPriority::ScannedWithoutMapping {
+                                prop_assert!(sync_state.scan_ranges()[..index].iter().all(|range| matches!(
+                                    range.priority(),
+                                    ScanPriority::Scanned | ScanPriority::RefetchingNullifiers
+                                )));
+                            }
                             let expected = if selected.priority() == ScanPriority::ScannedWithoutMapping {
                                 ScanPriority::RefetchingNullifiers
                             } else {

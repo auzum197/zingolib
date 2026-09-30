@@ -59,6 +59,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `sync::SyncResult`: removed `percentage_total_outputs_scanned` field and its
   `Display`/`json::JsonValue` output.
 
+### Fixed
+- Ironwood nullifiers at or below the fully scanned height are removed from the
+  wallet's nullifier map, as Sapling and Orchard nullifiers already were.
+  Before, they stayed in the map and in the wallet file.
+- A `ScannedWithoutMapping` range is only selected to re-fetch its nullifiers
+  once it is the first unscanned range. It could also be selected as the
+  highest priority range while a lower range was still scanning, so the
+  re-fetched nullifiers were discarded and fetched again.
+- With transparent address discovery disabled, a mined transaction that
+  spends the wallet's transparent coins and pays everything to external
+  recipients is scanned and confirmed. Before, it stayed pending until its
+  expiry height and was marked failed, which reset the spent coins to unspent.
+
 ## [0.5.0] - 2026-06-10
 
 ### Added
