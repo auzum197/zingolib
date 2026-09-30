@@ -256,6 +256,69 @@ async fn transparent_spend_without_change_is_confirmed_with_address_discovery_di
     }
 }
 
+/// Transparent gap addresses are derived from the wallet's addresses at the start of each sync session, so nothing a
+/// scan returns can clear them. Funds received by the address after the wallet's highest address are detected, and the
+/// gap then moves past that address.
+#[tokio::test]
+async fn gap_address_funds_are_detected_and_the_gap_moves_on() {
+    use zcash_keys::encoding::AddressCodec;
+
+    let mut net = MockNet::launch().await;
+    net.chain.write().await.mine_empty_blocks(2);
+    let mut client = net
+        .client(zingo_test_vectors::seeds::HOSPITAL_MUSEUM_SEED)
+        .await;
+    client.sync_and_await().await.unwrap();
+    assert_eq!(
+        client.wallet().read().await.transparent_addresses().len(),
+        1
+    );
+
+    // the client only holds the first transparent address of the seed. a second wallet with the same seed derives
+    // the addresses after it.
+    let deriver = net
+        .client(zingo_test_vectors::seeds::HOSPITAL_MUSEUM_SEED)
+        .await;
+    let chain_type = client.chain_type();
+
+    // the test wallet settings have a gap limit of 1, so each address is only in the gap once the one below it is
+    // in use.
+    let mut funded = 0;
+    for value in [50_000, 20_000, 25_000] {
+        let (_, gap_taddr) = deriver
+            .wallet()
+            .write()
+            .await
+            .generate_transparent_address(zip32::AccountId::ZERO, false)
+            .unwrap();
+        let gap_taddr = gap_taddr.encode(&chain_type);
+        assert!(
+            !client
+                .wallet()
+                .read()
+                .await
+                .transparent_addresses()
+                .values()
+                .any(|address| *address == gap_taddr)
+        );
+
+        fund(&net, vec![(&gap_taddr, value, None)], 1).await;
+        client.sync_and_await().await.unwrap();
+
+        funded += value;
+        check_client_balances!(client, i: 0 o: 0 s: 0 t: funded);
+        assert!(
+            client
+                .wallet()
+                .read()
+                .await
+                .transparent_addresses()
+                .values()
+                .any(|address| *address == gap_taddr)
+        );
+    }
+}
+
 /// Tests that max_send_value() returns a non-zero value for a wallet and that it works with zennies.
 #[tokio::test]
 async fn max_send_value_to_tex_with_zennies_empties_the_wallet() {
