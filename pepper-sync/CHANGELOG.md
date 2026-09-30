@@ -67,6 +67,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   once it is the first unscanned range. It could also be selected as the
   highest priority range while a lower range was still scanning, so the
   re-fetched nullifiers were discarded and fetched again.
+- With transparent address discovery disabled, a mined transaction that
+  spends the wallet's transparent coins and pays everything to external
+  recipients is scanned and confirmed. Before, it stayed pending until its
+  expiry height and was marked failed, which reset the spent coins to unspent.
 
 ## [0.5.0] - 2026-06-10
 
