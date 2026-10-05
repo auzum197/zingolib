@@ -1,10 +1,6 @@
 //! Core module, containing `crate::wallet::LightWallet` with methods for all wallet functionality.
 
-use std::collections::{BTreeMap, HashMap};
-use std::io::{self, Read, Write};
-use std::num::NonZeroU32;
-
-use byteorder::{LittleEndian, ReadBytesExt, WriteBytesExt};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 
 use bip0039::Mnemonic;
 
@@ -17,21 +13,20 @@ use pepper_sync::{
     keys::transparent::TransparentAddressId,
     wallet::{NullifierMap, OutputId, SyncState, WalletBlock, WalletTransaction},
 };
-use zingolib_common::serialization::ReadableWriteable;
 use zingolib_price::PriceList;
 
 use crate::config::{ChainType, WalletConfig};
 use error::{PriceError, WalletError};
-use keys::unified::{UnifiedAddressId, UnifiedKeyStore};
+use keys::unified::{ReceiverSelection, UnifiedAddressId, UnifiedKeyStore};
+use pepper_sync::keys::transparent::TransparentScope;
+use zcash_transparent::keys::NonHardenedChildIndex;
 
 pub mod error;
-pub(crate) mod legacy;
 pub mod utils;
 
 // these mods contain pieces of the impl LightWallet
 pub mod balance;
 pub mod disk;
-pub mod encryption;
 pub mod keys;
 pub mod output;
 pub mod spendable;
@@ -43,48 +38,33 @@ mod zcb_traits;
 pub use pepper_sync::config::{
     PerformanceLevel, SyncConfig, TransparentAddressDiscovery, TransparentAddressDiscoveryScopes,
 };
+pub use zingolib_file_format::{WalletSettings, encryption};
 
-/// Wallet settings.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct WalletSettings {
-    /// Sync configuration.
-    pub sync_config: pepper_sync::config::SyncConfig,
-    /// Minimum confirmations.
-    pub min_confirmations: NonZeroU32,
-}
-
-impl Default for WalletSettings {
-    fn default() -> Self {
-        Self {
-            sync_config: SyncConfig::default(),
-            min_confirmations: NonZeroU32::try_from(3).expect("hard-coded non-zero integer"),
-        }
+/// The address set every wallet starts with: the default unified address of account 0
+/// and its first external transparent address. Address derivation later drops the
+/// transparent entry when the keys cannot view transparent funds.
+fn first_addresses(
+    unified_key: &UnifiedKeyStore,
+) -> (
+    BTreeMap<UnifiedAddressId, ReceiverSelection>,
+    BTreeSet<TransparentAddressId>,
+) {
+    let mut unified_addresses = BTreeMap::new();
+    if let Some(receivers) = unified_key.default_receivers() {
+        unified_addresses.insert(
+            UnifiedAddressId {
+                account_id: zip32::AccountId::ZERO,
+                address_index: 0,
+            },
+            receivers,
+        );
     }
-}
-
-impl WalletSettings {
-    /// Unversioned: the sync config followed by the minimum confirmations. Layout changes
-    /// are gated by the wallet file version.
-    pub fn read<R: Read>(mut reader: R) -> io::Result<Self> {
-        let sync_config = SyncConfig::read(&mut reader, ())?;
-        let min_confirmations =
-            NonZeroU32::try_from(reader.read_u32::<LittleEndian>()?).map_err(|e| {
-                io::Error::new(
-                    io::ErrorKind::InvalidData,
-                    format!("minimum confirmations must be non-zero. {e}"),
-                )
-            })?;
-        Ok(Self {
-            sync_config,
-            min_confirmations,
-        })
-    }
-
-    /// Serialize into `writer`
-    pub fn write<W: Write>(&self, mut writer: W) -> io::Result<()> {
-        self.sync_config.write(&mut writer, ())?;
-        writer.write_u32::<LittleEndian>(self.min_confirmations.into())
-    }
+    let transparent_addresses = BTreeSet::from([TransparentAddressId::new(
+        zip32::AccountId::ZERO,
+        TransparentScope::External,
+        NonHardenedChildIndex::ZERO,
+    )]);
+    (unified_addresses, transparent_addresses)
 }
 
 /// Provides necessary information to recover the wallet without the wallet file.
@@ -228,7 +208,7 @@ impl LightWallet {
             ));
         }
 
-        let (unified_addresses, transparent_addresses) = disk::first_addresses(
+        let (unified_addresses, transparent_addresses) = first_addresses(
             unified_key_store
                 .get(&zip32::AccountId::ZERO)
                 .expect("account 0 must exist"),

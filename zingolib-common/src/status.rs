@@ -268,31 +268,25 @@ impl ReadableWriteable for ConfirmationStatus {
 
     fn read<R: Read>(mut reader: R, _input: ()) -> std::io::Result<Self> {
         let version = Self::get_version(&mut reader)?;
+        if version < Self::VERSION {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                format!("confirmation status version {version} is no longer readable"),
+            ));
+        }
         let status = reader.read_u8()?;
         let block_height = BlockHeight::from_u32(reader.read_u32::<LittleEndian>()?);
 
-        match version {
-            0 => match status {
-                0 => Ok(Self::Calculated(block_height)),
-                1 => Ok(Self::Transmitted(block_height)),
-                2 => Ok(Self::Mempool(block_height)),
-                3 => Ok(Self::Confirmed(block_height)),
-                _ => Err(std::io::Error::new(
-                    std::io::ErrorKind::InvalidData,
-                    "failed to read status",
-                )),
-            },
-            1.. => match status {
-                0 => Ok(Self::Confirmed(block_height)),
-                1 => Ok(Self::Mempool(block_height)),
-                2 => Ok(Self::Transmitted(block_height)),
-                3 => Ok(Self::Calculated(block_height)),
-                4 => Ok(Self::Failed(block_height)),
-                _ => Err(std::io::Error::new(
-                    std::io::ErrorKind::InvalidData,
-                    "failed to read status",
-                )),
-            },
+        match status {
+            0 => Ok(Self::Confirmed(block_height)),
+            1 => Ok(Self::Mempool(block_height)),
+            2 => Ok(Self::Transmitted(block_height)),
+            3 => Ok(Self::Calculated(block_height)),
+            4 => Ok(Self::Failed(block_height)),
+            _ => Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                "failed to read status",
+            )),
         }
     }
 
@@ -307,6 +301,15 @@ impl ReadableWriteable for ConfirmationStatus {
         })?;
         writer.write_u32::<LittleEndian>(self.get_height().into())
     }
+}
+
+#[test]
+fn version_0_status_is_rejected() {
+    assert!(ConfirmationStatus::read([0, 3, 1, 0, 0, 0].as_slice(), ()).is_err());
+    assert_eq!(
+        ConfirmationStatus::read([1, 3, 1, 0, 0, 0].as_slice(), ()).unwrap(),
+        ConfirmationStatus::Calculated(BlockHeight::from_u32(1))
+    );
 }
 
 /// a public interface, writ in stone

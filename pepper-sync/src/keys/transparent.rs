@@ -3,7 +3,7 @@
 use zcash_address::{ToAddress as _, ZcashAddress};
 use zcash_protocol::consensus;
 use zcash_transparent::address::TransparentAddress;
-use zcash_transparent::keys::{NonHardenedChildIndex, TransparentKeyScope};
+use zcash_transparent::keys::NonHardenedChildIndex;
 use zip32::AccountId;
 
 #[cfg(not(feature = "darkside_test"))]
@@ -53,56 +53,7 @@ impl KeyIdInterface for TransparentAddressId {
     }
 }
 
-/// Child index for the `change` path level in the BIP44 hierarchy (a.k.a. scope/chain).
-#[derive(Debug, Clone, Copy, Hash, PartialEq, Eq, PartialOrd, Ord)]
-pub enum TransparentScope {
-    /// External scope
-    External,
-    /// Internal scope (a.k.a. change)
-    Internal,
-    /// Refund scope (a.k.a. ephemeral)
-    Refund,
-}
-
-impl std::fmt::Display for TransparentScope {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(
-            f,
-            "{}",
-            match self {
-                TransparentScope::External => "external",
-                TransparentScope::Internal => "internal",
-                TransparentScope::Refund => "refund",
-            }
-        )
-    }
-}
-
-impl From<TransparentScope> for TransparentKeyScope {
-    fn from(value: TransparentScope) -> Self {
-        match value {
-            TransparentScope::External => TransparentKeyScope::EXTERNAL,
-            TransparentScope::Internal => TransparentKeyScope::INTERNAL,
-            TransparentScope::Refund => TransparentKeyScope::EPHEMERAL,
-        }
-    }
-}
-
-impl TryFrom<u8> for TransparentScope {
-    type Error = std::io::Error;
-
-    fn try_from(value: u8) -> std::io::Result<Self> {
-        match value {
-            0 => Ok(TransparentScope::External),
-            1 => Ok(TransparentScope::Internal),
-            2 => Ok(TransparentScope::Refund),
-            _ => Err(std::io::Error::new(
-                std::io::ErrorKind::InvalidData,
-                "invalid scope value",
-            )),
-        }
-    }
-}
+pub use zingolib_common::keys::TransparentScope;
 
 #[cfg(not(feature = "darkside_test"))]
 pub(crate) fn derive_address(
