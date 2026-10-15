@@ -307,6 +307,29 @@ pub(crate) async fn get_transaction_and_block_height(
     Ok((transaction, block_height))
 }
 
+/// Gets the height of the block a transaction was mined in.
+///
+/// Returns `None` if the transaction is not in the best chain. The server reports a height of zero for a mempool
+/// transaction and `u64::MAX` for a transaction in a block that was re-orged out.
+///
+/// Requires [`crate::client::fetch::fetch`] to be running concurrently, connected via the `fetch_request` channel.
+pub(crate) async fn get_mined_height(
+    fetch_request_sender: UnboundedSender<FetchRequest>,
+    txid: TxId,
+) -> Result<Option<BlockHeight>, ServerError> {
+    let (reply_sender, reply_receiver) = oneshot::channel();
+    fetch_request_sender
+        .send(FetchRequest::Transaction(reply_sender, txid))
+        .map_err(|_| ServerError::FetcherDropped)?;
+
+    let raw_transaction = recv_fetch_reply(reply_receiver, "Transaction").await?;
+
+    Ok(u32::try_from(raw_transaction.height)
+        .ok()
+        .filter(|height| *height > 0)
+        .map(BlockHeight::from_u32))
+}
+
 /// Gets unspent transparent output metadata for a list of `transparent addresses` from the specified `start_height`.
 ///
 /// Requires [`crate::client::fetch::fetch`] to be running concurrently, connected via the `fetch_request` channel.

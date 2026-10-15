@@ -285,3 +285,99 @@ mod check_note_shards_are_scanned {
         ));
     }
 }
+
+#[cfg(test)]
+mod refetched_nullifiers {
+    use pepper_sync::sync::{ScanPriority, ScanRange};
+    use pepper_sync::wallet::{OrchardNote, SyncState};
+    use zcash_protocol::consensus::BlockHeight;
+
+    use crate::testutils::synthetic_wallet::SyntheticWalletBuilder;
+    use crate::wallet::LightWallet;
+
+    const NOTE_VALUE: u64 = 100_000;
+    const TIP: u32 = 30;
+
+    fn range(start: u32, end: u32, priority: ScanPriority) -> ScanRange {
+        ScanRange::from_parts(
+            BlockHeight::from_u32(start)..BlockHeight::from_u32(end),
+            priority,
+        )
+    }
+
+    /// One orchard note confirmed at height 2. Blocks 11 to 20 have the given priority. If `note_found_first` is
+    /// false, the note was found after those blocks were scanned and their nullifiers discarded, so they are recorded
+    /// on the note for re-fetching.
+    fn wallet(refetch_priority: ScanPriority, note_found_first: bool) -> LightWallet {
+        let mut wallet =
+            SyntheticWalletBuilder::new(zingo_test_vectors::seeds::HOSPITAL_MUSEUM_SEED)
+                .tip(TIP)
+                .orchard_note(NOTE_VALUE)
+                .build();
+        wallet.sync_state = SyncState::new_for_test(vec![
+            range(1, 11, ScanPriority::Scanned),
+            range(11, 21, refetch_priority),
+            range(21, TIP + 1, ScanPriority::Scanned),
+        ]);
+        if !note_found_first {
+            for transaction in wallet.wallet_transactions.values_mut() {
+                for note in transaction.orchard_notes_mut() {
+                    note.set_refetch_nullifier_ranges_for_test(vec![
+                        BlockHeight::from_u32(11)..BlockHeight::from_u32(21),
+                    ]);
+                }
+            }
+        }
+        wallet
+    }
+
+    fn spendable_value(wallet: &LightWallet, include_potentially_spent_notes: bool) -> u64 {
+        wallet
+            .spendable_balance::<OrchardNote>(
+                zip32::AccountId::ZERO,
+                include_potentially_spent_notes,
+            )
+            .unwrap()
+            .into_u64()
+    }
+
+    fn spendable_note_count(wallet: &LightWallet) -> usize {
+        wallet
+            .spendable_notes::<OrchardNote>(
+                BlockHeight::from_u32(TIP),
+                &[],
+                zip32::AccountId::ZERO,
+                false,
+            )
+            .unwrap()
+            .len()
+    }
+
+    /// Every range above the note is scanned or awaiting a refetch, so the spend horizon alone would let the note
+    /// through. Only the note's refetch ranges keep it unspendable until its spend status is known.
+    #[test]
+    fn note_is_not_spendable_until_discarded_nullifiers_are_refetched() {
+        for priority in [
+            ScanPriority::ScannedWithoutMapping,
+            ScanPriority::RefetchingNullifiers,
+        ] {
+            let wallet = wallet(priority, false);
+            assert_eq!(spendable_value(&wallet, false), 0, "{priority:?}");
+            assert_eq!(spendable_note_count(&wallet), 0, "{priority:?}");
+            assert_eq!(spendable_value(&wallet, true), NOTE_VALUE, "{priority:?}");
+        }
+
+        let refetched = wallet(ScanPriority::Scanned, false);
+        assert_eq!(spendable_value(&refetched, false), NOTE_VALUE);
+        assert_eq!(spendable_note_count(&refetched), 1);
+    }
+
+    /// A spend of a note already in the wallet is detected when the range is first scanned, even if its nullifiers
+    /// are then discarded, so the pending refetch does not block the note.
+    #[test]
+    fn note_found_before_unmapped_scan_is_spendable_during_refetch() {
+        let wallet = wallet(ScanPriority::ScannedWithoutMapping, true);
+        assert_eq!(spendable_value(&wallet, false), NOTE_VALUE);
+        assert_eq!(spendable_note_count(&wallet), 1);
+    }
+}

@@ -1,0 +1,8 @@
+# Seeds for failure cases proptest has generated in the past. It is
+# automatically read and these particular cases re-run before any
+# novel cases are generated.
+#
+# It is recommended to check this file in to source control so that
+# everyone who runs the test benefits from these saved cases.
+cc 72d45fa118d1869a94096dfe8c00c8fb7a8dafea428b1a8402a5abe64d232958 # shrinks to ops = [FoundNote { offset: 0, narrow: false }, Select { nullifier_map_limit_exceeded: false }, Punch { offset: 0, len: 1, priority: Historic }, Select { nullifier_map_limit_exceeded: false }, FinishScan { index: 0, nullifiers_mapped: false }, Select { nullifier_map_limit_exceeded: false }, FinishScan { index: 3548875871424485582, nullifiers_mapped: false }, FoundNote { offset: 0, narrow: true }, Select { nullifier_map_limit_exceeded: false }, Select { nullifier_map_limit_exceeded: false }, Select { nullifier_map_limit_exceeded: false }]
+cc 107241283059c3e0c94fef55d6e9e7be7374aedf15f7d7cee85fe31cb6b3081e # shrinks to ops = [Select { nullifier_map_limit_exceeded: false }, Select { nullifier_map_limit_exceeded: false }, FinishScan { index: 0, nullifiers_mapped: false }, FinishScan { index: 0, nullifiers_mapped: false }, Select { nullifier_map_limit_exceeded: false }, Select { nullifier_map_limit_exceeded: false }, FinishScan { index: 5501666854459815319, nullifiers_mapped: false }, Select { nullifier_map_limit_exceeded: false }]
