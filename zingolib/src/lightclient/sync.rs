@@ -1,15 +1,12 @@
 //! Sync implementations for [`crate::lightclient::LightClient`] and related types.
 
 use std::borrow::BorrowMut;
-use std::sync::atomic;
 use std::time::Duration;
 
 use futures::FutureExt;
 use pepper_sync::error::{SyncError, SyncModeError, SyncRecoveryObservables};
 use pepper_sync::events::SequencedSyncEvent;
 use pepper_sync::wallet::SyncMode;
-use tokio::time::MissedTickBehavior;
-use tokio::time::interval;
 use tokio::time::timeout;
 
 use crate::data::PollReport;
@@ -57,14 +54,11 @@ impl LightClient {
         });
         self.sync_handle = Some(sync_handle);
 
-        if timeout(SYNC_START_TIMEOUT, async {
-            let mut interval = interval(Duration::from_millis(50));
-            interval.set_missed_tick_behavior(MissedTickBehavior::Delay);
-            interval.tick().await;
-            while self.sync_mode() == SyncMode::NotRunning {
-                interval.tick().await;
-            }
-        })
+        let mut sync_mode = self.sync_mode.subscribe();
+        if timeout(
+            SYNC_START_TIMEOUT,
+            sync_mode.wait_for(|mode| *mode != SyncMode::NotRunning),
+        )
         .await
         .is_err()
         {
@@ -81,8 +75,7 @@ impl LightClient {
                         sync_handle.abort();
                         let _ignore_cancelled = sync_handle.await;
                     }
-                    self.sync_mode
-                        .store(SyncMode::NotRunning as u8, atomic::Ordering::Release);
+                    self.sync_mode.send_replace(SyncMode::NotRunning);
                     return Err(LightClientError::SyncLaunchError);
                 }
                 PollReport::NoHandle => {
@@ -102,13 +95,7 @@ impl LightClient {
     pub async fn rescan(&mut self) -> Result<(), LightClientError> {
         if self.sync_mode() != SyncMode::NotRunning {
             self.stop_sync().expect("infallible in this scope");
-
-            let mut interval = tokio::time::interval(Duration::from_millis(500));
-            interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
-            interval.tick().await;
-            while matches!(self.poll_sync(), PollReport::NotReady) {
-                interval.tick().await;
-            }
+            let _ignore_stopped_sync_result = self.await_sync().await;
         }
         self.wallet().write().await.clear_all();
         self.sync().await
@@ -124,10 +111,9 @@ impl LightClient {
         self.sync_events.subscribe()
     }
 
-    /// Returns the lightclient's sync mode in non-atomic (enum) form.
+    /// Returns the lightclient's current sync mode.
     pub fn sync_mode(&self) -> SyncMode {
-        SyncMode::from_atomic_u8(self.sync_mode.clone())
-            .expect("this library does not allow setting of non-valid sync mode variants")
+        *self.sync_mode.borrow()
     }
 
     /// Pause the sync engine, releasing the wallet lock until [`crate::lightclient::LightClient::resume_sync`] is called.
@@ -137,8 +123,7 @@ impl LightClient {
         if self.sync_mode() != SyncMode::Running {
             return Err(SyncModeError::SyncNotRunning);
         }
-        self.sync_mode
-            .store(SyncMode::Paused as u8, atomic::Ordering::Release);
+        self.sync_mode.send_replace(SyncMode::Paused);
 
         Ok(())
     }
@@ -150,8 +135,7 @@ impl LightClient {
         if self.sync_mode() == SyncMode::NotRunning {
             return Err(SyncModeError::SyncNotRunning);
         }
-        self.sync_mode
-            .store(SyncMode::Shutdown as u8, atomic::Ordering::Release);
+        self.sync_mode.send_replace(SyncMode::Shutdown);
 
         Ok(())
     }
@@ -163,8 +147,7 @@ impl LightClient {
         if self.sync_mode() != SyncMode::Paused {
             return Err(SyncModeError::SyncNotPaused);
         }
-        self.sync_mode
-            .store(SyncMode::Running as u8, atomic::Ordering::Release);
+        self.sync_mode.send_replace(SyncMode::Running);
 
         Ok(())
     }
@@ -173,16 +156,14 @@ impl LightClient {
     pub fn poll_sync(&mut self) -> PollReport<SyncResult, SyncError<WalletError>> {
         if let Some(mut sync_handle) = self.sync_handle.take() {
             if let Some(sync_result) = sync_handle.borrow_mut().now_or_never() {
-                self.sync_mode
-                    .store(SyncMode::NotRunning as u8, atomic::Ordering::Release);
+                self.sync_mode.send_replace(SyncMode::NotRunning);
                 PollReport::Ready(sync_result.expect("task panicked"))
             } else {
                 self.sync_handle = Some(sync_handle);
                 PollReport::NotReady
             }
         } else {
-            self.sync_mode
-                .store(SyncMode::NotRunning as u8, atomic::Ordering::Release);
+            self.sync_mode.send_replace(SyncMode::NotRunning);
             PollReport::NoHandle
         }
     }
@@ -190,17 +171,17 @@ impl LightClient {
     /// Awaits until sync has successfully completed or failed.
     /// Returns [`pepper_sync::sync::SyncResult`] if successful.
     /// Returns [`crate::lightclient::error::LightClientError`] on failure.
+    ///
+    /// Cancel safe: the sync task keeps running and its handle stays stored if this future is dropped.
     pub async fn await_sync(&mut self) -> Result<SyncResult, LightClientError> {
-        let mut interval = tokio::time::interval(Duration::from_millis(500));
-        interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
-        loop {
-            interval.tick().await;
-            match self.poll_sync() {
-                PollReport::NoHandle => return Err(LightClientError::SyncNotRunning),
-                PollReport::NotReady => (),
-                PollReport::Ready(result) => return result.map_err(LightClientError::SyncError),
-            }
-        }
+        let Some(sync_handle) = self.sync_handle.as_mut() else {
+            self.sync_mode.send_replace(SyncMode::NotRunning);
+            return Err(LightClientError::SyncNotRunning);
+        };
+        let sync_result = sync_handle.await.expect("task panicked");
+        self.sync_handle = None;
+        self.sync_mode.send_replace(SyncMode::NotRunning);
+        sync_result.map_err(LightClientError::SyncError)
     }
 
     /// Calls [`crate::lightclient::LightClient::sync`] and then [`crate::lightclient::LightClient::await_sync`].

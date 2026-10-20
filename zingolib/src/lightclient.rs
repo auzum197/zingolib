@@ -5,14 +5,14 @@ use std::{
     fs::File,
     io::BufReader,
     path::{Path, PathBuf},
-    sync::{
-        Arc,
-        atomic::{AtomicBool, AtomicU8},
-    },
+    sync::{Arc, atomic::AtomicBool},
     time::Duration,
 };
 
-use tokio::{sync::RwLock, task::JoinHandle};
+use tokio::{
+    sync::{RwLock, watch},
+    task::JoinHandle,
+};
 
 use bip0039::Mnemonic;
 use zcash_keys::address::UnifiedAddress;
@@ -91,11 +91,11 @@ impl WalletMeta {
 /// Struct which owns and manages the [`crate::wallet::LightWallet`]. Responsible for network operations such as
 /// storing the indexer URI, creating gRPC clients and syncing the wallet to the blockchain.
 ///
-/// `sync_mode` is an atomic representation of [`pepper_sync::wallet::SyncMode`].
+/// `sync_mode` publishes the [`pepper_sync::wallet::SyncMode`] to the sync engine, which wakes on every change.
 pub struct LightClient {
     pub(crate) indexer: zingo_netutils::GrpcIndexer,
     wallet: WalletMeta,
-    sync_mode: Arc<AtomicU8>,
+    sync_mode: watch::Sender<SyncMode>,
     sync_handle: Option<JoinHandle<Result<SyncResult, SyncError<WalletError>>>>,
     sync_events: SyncEmitter,
     save_active: Arc<AtomicBool>,
@@ -165,7 +165,7 @@ impl LightClient {
         Ok(LightClient {
             indexer,
             wallet: WalletMeta::new(config.get_wallet_path().to_path_buf(), wallet),
-            sync_mode: Arc::new(AtomicU8::new(SyncMode::NotRunning as u8)),
+            sync_mode: watch::Sender::new(SyncMode::NotRunning),
             sync_handle: None,
             sync_events,
             save_active: Arc::new(AtomicBool::new(false)),

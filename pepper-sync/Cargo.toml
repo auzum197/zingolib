@@ -53,6 +53,7 @@ subtle.workspace = true
 # Async
 futures.workspace = true
 tokio.workspace = true
+tokio-util.workspace = true
 
 # Client
 tonic.workspace = true
