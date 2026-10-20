@@ -28,7 +28,7 @@ Zingo-CLI does automatic note and utxo management, which means it doesn't allow 
 ## Compiling from source
 
 #### Pre-requisites
-* Rust v1.90 or higher.
+* Rust v1.97 or higher.
     * Run `rustup update` to get the latest version of Rust if you already have it installed
 * Rustfmt
     * Run `rustup component add rustfmt` to add rustfmt

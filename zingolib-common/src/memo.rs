@@ -205,13 +205,12 @@ mod test_vectors;
 mod tests {
     use super::test_vectors as zingomemo_vectors;
     use super::*;
-    use rand::{self, Rng};
     use test_vectors::TestVector;
     use zcash_protocol::consensus::MAIN_NETWORK;
 
     fn get_some_number_of_ephemeral_indexes() -> Vec<u32> {
         // Generate a random number of elements between 0 and 10
-        let count = rand::thread_rng().gen_range(0..=10);
+        let count = rand::random_range(0..=10);
 
         // Create a vector of increasing natural numbers
         (0..count).collect::<Vec<u32>>()

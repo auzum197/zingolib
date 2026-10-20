@@ -1099,6 +1099,7 @@ mod tests {
         nu6_1: Some(BlockHeight::from_u32(1)),
         nu6_2: Some(BlockHeight::from_u32(1)),
         nu6_3: Some(BlockHeight::from_u32(100)),
+        nu7: None,
     };
 
     const NO_NU6_3_NETWORK: LocalNetwork = LocalNetwork {

@@ -38,7 +38,7 @@ pub fn default_zaddr() -> (
     zaddr_from_seed([0u8; 32])
 }
 
-use rand::{Rng, rngs::OsRng};
+use rand::RngExt;
 use sapling_crypto::{
     PaymentAddress, note_encryption::PreparedIncomingViewingKey, zip32::ExtendedSpendingKey,
 };
@@ -46,7 +46,7 @@ use sapling_crypto::{
 /// Any old OS randomness
 #[must_use]
 pub fn random_txid() -> zcash_primitives::transaction::TxId {
-    let mut rng = OsRng;
+    let mut rng = rand::rng();
     let mut seed = [0u8; 32];
     rng.fill(&mut seed);
     zcash_primitives::transaction::TxId::from_bytes(seed)
@@ -58,7 +58,7 @@ pub fn random_zaddr() -> (
     PreparedIncomingViewingKey,
     PaymentAddress,
 ) {
-    let mut rng = OsRng;
+    let mut rng = rand::rng();
     let mut seed = [0u8; 32];
     rng.fill(&mut seed);
 
@@ -228,7 +228,7 @@ pub mod orchard_note {
         note::{RandomSeed, Rho},
         value::NoteValue,
     };
-    use rand::{Rng, rngs::OsRng};
+    use rand::RngExt;
     use zip32::Scope;
 
     use crate::testutils::build_method;
@@ -275,7 +275,7 @@ pub mod orchard_note {
 
         /// selects a random recipient address for the orchard note
         pub fn randomize_recipient(&mut self) -> &mut Self {
-            let mut rng = OsRng;
+            let mut rng = rand::rng();
 
             let sk = {
                 loop {
@@ -295,7 +295,7 @@ pub mod orchard_note {
 
         /// selects a random nullifier for the orchard note
         pub fn randomize_rho_and_rseed(&mut self) -> &mut Self {
-            let mut rng = OsRng;
+            let mut rng = rand::rng();
 
             let rho = {
                 loop {

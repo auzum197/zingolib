@@ -58,7 +58,7 @@ use chacha20poly1305::{
     XChaCha20Poly1305, XNonce,
     aead::{Aead, KeyInit, Payload},
 };
-use rand::{RngCore, rngs::OsRng};
+use rand::Rng;
 use secrecy::{ExposeSecret, SecretString};
 use zeroize::Zeroizing;
 
@@ -269,7 +269,7 @@ impl EncryptionSession {
         params: Argon2Params,
     ) -> Result<Self, WalletEncryptionError> {
         let mut salt = [0u8; SALT_LEN];
-        OsRng.fill_bytes(&mut salt);
+        rand::rng().fill_bytes(&mut salt);
         Self::derive(passphrase, salt, params)
     }
 
@@ -302,7 +302,7 @@ impl EncryptionSession {
     /// session across many saves.
     pub fn encrypt(&self, plaintext: &[u8]) -> Result<Vec<u8>, WalletEncryptionError> {
         let mut nonce_bytes = [0u8; NONCE_LEN];
-        OsRng.fill_bytes(&mut nonce_bytes);
+        rand::rng().fill_bytes(&mut nonce_bytes);
 
         let mut header = Vec::with_capacity(HEADER_LEN);
         header.extend_from_slice(&MAGIC);

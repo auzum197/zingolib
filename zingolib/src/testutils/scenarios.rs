@@ -176,7 +176,7 @@ pub async fn custom_clients(
 
 /// [`custom_clients`] mining to orchard on the pre-Ironwood chain.
 pub async fn custom_clients_default() -> (MockNet, ClientBuilder) {
-    custom_clients(PoolType::ORCHARD, pre_ironwood_activation_heights()).await
+    custom_clients(PoolType::IRONWOOD, ActivationHeights::default()).await
 }
 
 /// A synced hospital-museum client on a chain that pays only the faucet.
@@ -184,7 +184,7 @@ pub async fn unfunded_client(
     configured_activation_heights: ActivationHeights,
 ) -> (MockNet, LightClient) {
     let (local_net, mut client_builder) =
-        custom_clients(PoolType::ORCHARD, configured_activation_heights).await;
+        custom_clients(PoolType::Transparent, configured_activation_heights).await;
     let mut lightclient = client_builder
         .build_client(
             hospital_museum_config(),
@@ -199,7 +199,7 @@ pub async fn unfunded_client(
 
 /// [`unfunded_client`] on the pre-Ironwood chain.
 pub async fn unfunded_client_default() -> (MockNet, LightClient) {
-    unfunded_client(pre_ironwood_activation_heights()).await
+    unfunded_client(ActivationHeights::default()).await
 }
 
 /// A synced faucet holding the launch block's reward.
@@ -219,7 +219,7 @@ pub async fn faucet(
 
 /// [`faucet`] mining to orchard on the pre-Ironwood chain.
 pub async fn faucet_default() -> (MockNet, LightClient) {
-    faucet(PoolType::ORCHARD, pre_ironwood_activation_heights()).await
+    faucet(PoolType::IRONWOOD, ActivationHeights::default()).await
 }
 
 /// A synced faucet and a synced, unfunded hospital-museum recipient.
@@ -247,7 +247,7 @@ pub async fn faucet_recipient(
 
 /// [`faucet_recipient`] mining to orchard on the pre-Ironwood chain.
 pub async fn faucet_recipient_default() -> (MockNet, LightClient, LightClient) {
-    faucet_recipient(PoolType::ORCHARD, pre_ironwood_activation_heights()).await
+    faucet_recipient(PoolType::IRONWOOD, ActivationHeights::default()).await
 }
 
 /// [`faucet_recipient`] with the recipient funded from the faucet in the
@@ -314,8 +314,8 @@ pub async fn faucet_funded_recipient_default(
             Some(orchard_funds),
             None,
             None,
-            PoolType::ORCHARD,
-            pre_ironwood_activation_heights(),
+            PoolType::IRONWOOD,
+            ActivationHeights::default(),
         )
         .await;
 

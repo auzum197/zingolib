@@ -104,6 +104,7 @@ impl LightWallet {
             &SpendingKeys::new(usk),
             zcash_client_backend::wallet::OvkPolicy::Sender,
             &proposal,
+            None,
         )
         .map_err(CalculateTransactionError::Calculation)
     }
