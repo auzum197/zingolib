@@ -2,11 +2,11 @@
 
 use std::collections::{BTreeMap, HashMap};
 use std::ops::Range;
-use std::sync::atomic::{self, AtomicBool, AtomicU8};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant, SystemTime};
 
-use tokio::sync::{RwLock, mpsc};
+use tokio::sync::{RwLock, mpsc, watch};
+use tokio_util::sync::CancellationToken;
 
 use incrementalmerkletree::{Marking, Retention};
 use orchard::tree::MerkleHashOrchard;
@@ -258,8 +258,9 @@ impl ScanRange {
 
 /// Syncs a wallet to the latest state of the blockchain.
 ///
-/// `sync_mode` is intended to be stored in a struct that owns the wallet(s) (i.e. lightclient) and has a non-atomic
-/// counterpart [`crate::wallet::SyncMode`]. The sync engine will set the `sync_mode` to `Running` at the start of sync.
+/// `sync_mode` is the sending half of a [`tokio::sync::watch`] channel intended to be stored in a struct that owns the
+/// wallet(s) (i.e. lightclient), which reads the current [`crate::wallet::SyncMode`] by borrowing it. The sync engine
+/// will set the `sync_mode` to `Running` at the start of sync and wakes on every change afterwards.
 /// However, the consumer is required to set the `sync_mode` back to `NotRunning` when sync is succussful or returns an
 /// error. This allows more flexibility and safety with sync task handles etc.
 /// `sync_mode` may also be set to `Paused` externally to pause scanning so the wallet lock can be acquired multiple
@@ -274,7 +275,7 @@ pub async fn sync<C, P, W>(
     client: C,
     consensus_parameters: &P,
     wallet: Arc<RwLock<W>>,
-    sync_mode: Arc<AtomicU8>,
+    sync_mode: watch::Sender<SyncMode>,
     config: SyncConfig,
     events: SyncEmitter,
 ) -> Result<SyncResult, SyncError<W::Error>>
@@ -289,13 +290,11 @@ where
         + SyncShardTrees
         + Send,
 {
-    let mut sync_mode_enum = SyncMode::from_atomic_u8(sync_mode.clone())?;
-    if sync_mode_enum == SyncMode::NotRunning {
-        sync_mode_enum = SyncMode::Running;
-        sync_mode.store(sync_mode_enum as u8, atomic::Ordering::Release);
-    } else {
+    if *sync_mode.borrow() != SyncMode::NotRunning {
         return Err(SyncModeError::SyncAlreadyRunning.into());
     }
+    sync_mode.send_replace(SyncMode::Running);
+    let mut sync_mode_changes = sync_mode.subscribe();
 
     tracing::info!("Starting sync...");
 
@@ -309,11 +308,8 @@ where
 
     // create channel for receiving mempool transactions and launch mempool monitor
     let (mempool_transaction_sender, mut mempool_transaction_receiver) = mpsc::channel(100);
-    let shutdown_mempool = Arc::new(AtomicBool::new(false));
-    let shutdown_mempool_clone = shutdown_mempool.clone();
-    let unprocessed_mempool_transactions_count = Arc::new(AtomicU8::new(0));
-    let unprocessed_mempool_transactions_count_clone =
-        unprocessed_mempool_transactions_count.clone();
+    let shutdown_mempool = CancellationToken::new();
+    let mempool_shutdown = shutdown_mempool.clone();
     // dedupes `TipMoved` between the sync loop and the mempool monitor
     let tip_cell = Arc::new(Mutex::new(0u64));
     let mempool_events = events.clone();
@@ -322,8 +318,7 @@ where
         mempool_monitor(
             client,
             mempool_transaction_sender,
-            unprocessed_mempool_transactions_count_clone,
-            shutdown_mempool_clone,
+            mempool_shutdown,
             mempool_events,
             mempool_tip_cell,
         )
@@ -432,12 +427,11 @@ where
     );
     scanner.set_scan_plan(initial_scan_plan);
     scanner.launch(config.performance_level);
+    let scanner_wake = scanner.wake.clone();
 
     // TODO: implement an option for continuous scanning where it doesnt exit when complete
 
     let mut nullifier_map_limit_exceeded = false;
-    let mut interval = tokio::time::interval(Duration::from_millis(50));
-    interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
     loop {
         tokio::select! {
             Some((scan_range, scan_results)) = scan_results_receiver.recv() => {
@@ -466,35 +460,28 @@ where
                 // release first, then announce, so the send never overlaps the wallet lock
                 drop(wallet_guard);
                 events.emit_all(scan_events);
+                // the scan ranges changed, so the scanner may have new work or none left
+                scanner.wake.notify_one();
             }
 
             Some(raw_transaction) = mempool_transaction_receiver.recv() => {
-                let mut wallet_guard = wallet.write().await;
-                let discovered = process_mempool_transaction(
+                scan_mempool_transaction(
                     consensus_parameters,
                     &ufvks,
-                    &mut *wallet_guard,
+                    &wallet,
+                    &events,
                     raw_transaction,
                 )
                 .await?;
-                unprocessed_mempool_transactions_count.fetch_sub(1, atomic::Ordering::Release);
-                drop(wallet_guard);
-                if let Some(event) = discovered {
-                    events.emit(event);
-                }
             }
 
-            _update_scanner = interval.tick() => {
-                sync_mode_enum = SyncMode::from_atomic_u8(sync_mode.clone())?;
-                match sync_mode_enum {
-                    SyncMode::Paused => {
-                        let mut pause_interval = tokio::time::interval(Duration::from_secs(1));
-                        pause_interval.tick().await;
-                        while sync_mode_enum == SyncMode::Paused {
-                            pause_interval.tick().await;
-                            sync_mode_enum = SyncMode::from_atomic_u8(sync_mode.clone())?;
-                        }
-                    },
+            _ = sync_mode_changes.changed() => {
+                // a pause holds here, with the wallet lock released, until the mode changes again
+                let mode = *sync_mode_changes
+                    .wait_for(|mode| *mode != SyncMode::Paused)
+                    .await
+                    .expect("sync holds a sync mode sender");
+                match mode {
                     SyncMode::Shutdown => {
                         let mut wallet_guard = wallet.write().await;
                         let sync_status = match sync_status(&*wallet_guard).await {
@@ -522,29 +509,47 @@ where
                         return Ok(build_sync_result(sync_status, &initial_sync_state));
                     }
                     SyncMode::Running => (),
+                    SyncMode::Paused => unreachable!("waited for the pause to end"),
                     SyncMode::NotRunning => {
                         panic!("sync mode should not be manually set to NotRunning!");
                     },
                 }
+            }
 
+            _ = scanner_wake.notified() => {
                 let mut wallet_guard = wallet.write().await;
-                scanner.update(&mut *wallet_guard, shutdown_mempool.clone(), nullifier_map_limit_exceeded).await?;
+                scanner.update(&mut *wallet_guard, nullifier_map_limit_exceeded)?;
                 scanner
                     .emit_scan_plan_if_changed(&*wallet_guard)
                     .map_err(SyncError::WalletError)?;
 
                 if matches!(scanner.state, ScannerState::Shutdown) {
-                    // wait for mempool monitor to receive mempool transactions
-                    tokio::time::sleep(std::time::Duration::from_secs(1)).await;
-                    if is_shutdown(&scanner, unprocessed_mempool_transactions_count.clone())
-                    {
-                        tracing::info!("Sync successfully shutdown.");
-                        break;
-                    }
+                    break;
                 }
+            }
+
+            Some(exited) = scanner.join_next() => {
+                exited?;
             }
         }
     }
+
+    scanner.shutdown().await?;
+
+    // the monitor stops pulling from the mempool stream and drops its sender, so the channel
+    // closes once everything it already sent has been scanned
+    shutdown_mempool.cancel();
+    while let Some(raw_transaction) = mempool_transaction_receiver.recv().await {
+        scan_mempool_transaction(
+            consensus_parameters,
+            &ufvks,
+            &wallet,
+            &events,
+            raw_transaction,
+        )
+        .await?;
+    }
+    tracing::info!("Sync successfully shutdown.");
 
     let mut wallet_guard = wallet.write().await;
     let sync_status = match sync_status(&*wallet_guard).await {
@@ -582,7 +587,6 @@ where
         .map_err(SyncError::WalletError)?;
 
     drop(wallet_guard);
-    drop(scanner);
     drop(fetch_request_sender);
 
     match mempool_handle.await.expect("task panicked") {
@@ -907,18 +911,6 @@ pub fn set_transactions_failed(
         }
     }
     reset_spends(wallet_transactions, failed_txids);
-}
-
-/// Returns true if the scanner and mempool are shutdown.
-fn is_shutdown<P>(
-    scanner: &Scanner<P>,
-    mempool_unprocessed_transactions_count: Arc<AtomicU8>,
-) -> bool
-where
-    P: consensus::Parameters + Sync + Send + 'static,
-{
-    scanner.worker_poolsize() == 0
-        && mempool_unprocessed_transactions_count.load(atomic::Ordering::Acquire) == 0
 }
 
 /// Scan post-processing
@@ -1300,6 +1292,34 @@ where
     }
 
     Ok(events)
+}
+
+/// Scans a mempool transaction under the wallet lock and announces a discovery once the lock is released.
+async fn scan_mempool_transaction<P, W>(
+    consensus_parameters: &P,
+    ufvks: &HashMap<AccountId, UnifiedFullViewingKey>,
+    wallet: &RwLock<W>,
+    events: &SyncEmitter,
+    raw_transaction: RawTransaction,
+) -> Result<(), SyncError<W::Error>>
+where
+    P: consensus::Parameters + Sync + Send + 'static,
+    W: SyncWallet + SyncBlocks + SyncTransactions + SyncNullifiers + SyncOutPoints + SyncShardTrees,
+{
+    let mut wallet_guard = wallet.write().await;
+    let discovered = process_mempool_transaction(
+        consensus_parameters,
+        ufvks,
+        &mut *wallet_guard,
+        raw_transaction,
+    )
+    .await?;
+    drop(wallet_guard);
+    if let Some(event) = discovered {
+        events.emit(event);
+    }
+
+    Ok(())
 }
 
 /// Processes mempool transaction.
@@ -1926,40 +1946,40 @@ where
 ///
 /// If there is some raw transaction, send to be scanned.
 /// If the mempool stream message is `None` (a block was mined) or the request failed, setup a new mempool stream.
+/// Once `shutdown` is cancelled, the transactions the stream already delivered are still sent, then the monitor
+/// returns without opening another stream.
 async fn mempool_monitor<C>(
     mut client: C,
     mempool_transaction_sender: mpsc::Sender<RawTransaction>,
-    unprocessed_transactions_count: Arc<AtomicU8>,
-    shutdown_mempool: Arc<AtomicBool>,
+    shutdown: CancellationToken,
     events: SyncEmitter,
     tip_cell: Arc<Mutex<u64>>,
 ) -> Result<(), MempoolError>
 where
     C: Clone + Indexer + TransparentIndexer + Sync + Send + 'static,
 {
-    let mut interval = tokio::time::interval(Duration::from_secs(1));
-    interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
     'main: loop {
-        let response =
-            client::get_mempool_transaction_stream(&mut client, shutdown_mempool.clone()).await;
+        if shutdown.is_cancelled() {
+            break;
+        }
+        let response = client::get_mempool_transaction_stream(&mut client, &shutdown).await;
 
         match response {
-            Ok(mut mempool_stream) => {
-                interval.reset();
-                loop {
-                    tokio::select! {
-                        mempool_stream_message = mempool_stream.message() => {
-                            match mempool_stream_message.unwrap_or(None) {
-                                Some(raw_transaction) => {
-                                     let _ignore_error = mempool_transaction_sender
-                                        .send(raw_transaction)
-                                        .await;
-                                    unprocessed_transactions_count.fetch_add(1, atomic::Ordering::Release);
-                                }
-                                None => {
-                                    // the stream resets when a block is mined, making this the
-                                    // lowest-latency tip signal. fetched on an idle path.
-                                    match client.get_latest_block(Duration::from_secs(10)).await {
+            Ok(mut mempool_stream) => loop {
+                tokio::select! {
+                    biased;
+                    mempool_stream_message = mempool_stream.message() => {
+                        match mempool_stream_message.unwrap_or(None) {
+                            Some(raw_transaction) => {
+                                 let _ignore_error = mempool_transaction_sender
+                                    .send(raw_transaction)
+                                    .await;
+                            }
+                            None => {
+                                // the stream resets when a block is mined, making this the
+                                // lowest-latency tip signal. fetched on an idle path.
+                                tokio::select! {
+                                    tip = client.get_latest_block(Duration::from_secs(10)) => match tip {
                                         Ok(block_id) => emit_tip_if_advanced(
                                             &events,
                                             &tip_cell,
@@ -1968,25 +1988,24 @@ where
                                         Err(e) => tracing::warn!(
                                             "Failed to fetch chain tip after mempool stream reset: {e}."
                                         ),
-                                    }
-                                    continue 'main;
+                                    },
+                                    _ = shutdown.cancelled() => break 'main,
                                 }
-                            }
-
-                        }
-
-                        _ = interval.tick() => {
-                            if shutdown_mempool.load(atomic::Ordering::Acquire) {
-                                break 'main;
+                                continue 'main;
                             }
                         }
                     }
+
+                    _ = shutdown.cancelled() => break 'main,
                 }
-            }
+            },
             Err(e @ MempoolError::ShutdownWithoutStream) => return Err(e),
             Err(MempoolError::ServerError(e)) => {
                 tracing::warn!("Mempool stream request failed! Status: {e}.\nRetrying...");
-                tokio::time::sleep(Duration::from_secs(3)).await;
+                tokio::select! {
+                    _ = tokio::time::sleep(Duration::from_secs(3)) => (),
+                    _ = shutdown.cancelled() => return Err(MempoolError::ShutdownWithoutStream),
+                }
             }
         }
     }

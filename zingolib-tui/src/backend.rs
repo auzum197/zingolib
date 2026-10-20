@@ -571,10 +571,7 @@ impl Backend {
         let Some(lc) = self.lc.as_mut() else { return };
         if lc.sync_mode() != pepper_sync::wallet::SyncMode::NotRunning {
             let _ = lc.stop_sync();
-            let deadline = Instant::now() + STOP_TIMEOUT;
-            while matches!(lc.poll_sync(), PollReport::NotReady) && Instant::now() < deadline {
-                tokio::time::sleep(Duration::from_millis(200)).await;
-            }
+            let _ = tokio::time::timeout(STOP_TIMEOUT, lc.await_sync()).await;
         }
         let _ = tokio::time::timeout(SAVE_TIMEOUT, lc.wait_for_save()).await;
         if let Err(e) = lc.shutdown_save_task().await {

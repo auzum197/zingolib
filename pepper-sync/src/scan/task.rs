@@ -1,5 +1,4 @@
 use std::{
-    borrow::BorrowMut,
     collections::{BTreeSet, HashMap},
     sync::{
         Arc,
@@ -8,10 +7,9 @@ use std::{
     time::Duration,
 };
 
-use futures::FutureExt;
 use tokio::{
-    sync::mpsc,
-    task::{JoinError, JoinHandle},
+    sync::{Notify, mpsc},
+    task::JoinSet,
 };
 
 use zcash_keys::keys::UnifiedFullViewingKey;
@@ -62,8 +60,12 @@ impl ScannerState {
 
 pub(crate) struct Scanner<P> {
     pub(crate) state: ScannerState,
+    /// Signalled whenever [`Self::update`] may make progress: a batch is ready, the batcher or a
+    /// worker went idle, or the wallet's scan ranges changed.
+    pub(crate) wake: Arc<Notify>,
     batcher: Option<Batcher<P>>,
     workers: Vec<ScanWorker<P>>,
+    tasks: JoinSet<Result<(), ServerError>>,
     unique_id: usize,
     scan_results_sender: mpsc::UnboundedSender<(ScanRange, Result<ScanResults, ScanError>)>,
     fetch_request_sender: mpsc::UnboundedSender<FetchRequest>,
@@ -88,8 +90,10 @@ where
 
         Self {
             state: ScannerState::Verification,
+            wake: Arc::new(Notify::new()),
             batcher: None,
             workers,
+            tasks: JoinSet::new(),
             unique_id: 0,
             scan_results_sender,
             fetch_request_sender,
@@ -126,10 +130,39 @@ where
 
         self.spawn_batcher(max_batch_outputs);
         self.spawn_workers(max_batch_outputs);
+        self.wake.notify_one();
     }
 
-    pub(crate) fn worker_poolsize(&self) -> usize {
-        self.workers.len()
+    /// Resolves when a batcher or worker task exits, surfacing its error.
+    ///
+    /// Before [`Self::shutdown`] only a failed batcher exits, so this is the sync loop's error
+    /// signal for the scan tasks.
+    pub(crate) async fn join_next(&mut self) -> Option<Result<(), ServerError>> {
+        self.tasks
+            .join_next()
+            .await
+            .map(|joined| joined.expect("scan task panicked"))
+    }
+
+    /// Closes the batcher's and workers' task channels and joins them as they exit.
+    pub(crate) async fn shutdown(mut self) -> Result<(), ServerError> {
+        tracing::debug!("Shutting down scanner");
+        self.batcher = None;
+        self.workers.clear();
+        let joined = tokio::time::timeout(SHUTDOWN_TIMEOUT, async {
+            while let Some(joined) = self.tasks.join_next().await {
+                joined.expect("scan task panicked")?;
+            }
+            Ok::<(), ServerError>(())
+        })
+        .await;
+        match joined {
+            Ok(joined) => joined,
+            Err(_) => {
+                self.tasks.shutdown().await;
+                Err(tonic::Status::deadline_exceeded("scanner shutdown timeout").into())
+            }
+        }
     }
 
     /// Spawns the batcher.
@@ -141,27 +174,8 @@ where
             self.consensus_parameters.clone(),
             self.fetch_request_sender.clone(),
         );
-        batcher.run(max_batch_outputs);
+        batcher.run(max_batch_outputs, &mut self.tasks, self.wake.clone());
         self.batcher = Some(batcher);
-    }
-
-    fn check_batcher_error(&mut self) -> Result<(), ServerError> {
-        let batcher = self.batcher.take();
-        if let Some(mut batcher) = batcher {
-            batcher.check_error()?;
-            self.batcher = Some(batcher);
-        }
-
-        Ok(())
-    }
-
-    async fn shutdown_batcher(&mut self) -> Result<(), ServerError> {
-        let batcher = self.batcher.take();
-        if let Some(mut batcher) = batcher {
-            batcher.shutdown().await
-        } else {
-            Ok(())
-        }
     }
 
     /// Spawns a worker.
@@ -177,7 +191,7 @@ where
             self.ufvks.clone(),
             self.events.clone(),
         );
-        worker.run(max_batch_outputs);
+        worker.run(max_batch_outputs, &mut self.tasks, self.wake.clone());
         self.workers.push(worker);
         self.unique_id += 1;
     }
@@ -191,28 +205,6 @@ where
         }
     }
 
-    fn idle_worker(&self) -> Option<&ScanWorker<P>> {
-        if let Some(idle_worker) = self.workers.iter().find(|worker| !worker.is_scanning()) {
-            Some(idle_worker)
-        } else {
-            None
-        }
-    }
-
-    /// Shutdown worker by `worker_id`.
-    ///
-    /// Panics if worker with given `worker_id` is not found.
-    async fn shutdown_worker(&mut self, worker_id: usize) {
-        let worker_index = self
-            .workers
-            .iter()
-            .position(|worker| worker.id == worker_id)
-            .expect("worker should exist");
-
-        let mut worker = self.workers.swap_remove(worker_index);
-        worker.shutdown().await.expect("worker task panicked");
-    }
-
     /// Updates the scanner.
     ///
     /// Creates a new scan task and sends to batcher if it's idle.
@@ -220,24 +212,18 @@ where
     /// outputs is reached. When a scan task is ready it is stored in the batcher ready to be taken by an idle scan
     /// worker for scanning.
     /// When verification is still in progress, only scan tasks with `Verify` scan priority are created.
-    /// When all ranges are scanned, the batcher, idle workers and mempool are shutdown.
-    pub(crate) async fn update<W>(
+    /// When all ranges are scanned the scanner enters [`ScannerState::Shutdown`] and the sync loop
+    /// calls [`Self::shutdown`].
+    pub(crate) fn update<W>(
         &mut self,
         wallet: &mut W,
-        shutdown_mempool: Arc<AtomicBool>,
         nullifier_map_limit_exceeded: bool,
     ) -> Result<(), SyncError<W::Error>>
     where
         W: SyncWallet + SyncBlocks + SyncNullifiers,
     {
-        self.check_batcher_error()?;
-
         match self.state {
             ScannerState::Verification => {
-                self.batcher
-                    .as_mut()
-                    .expect("batcher should be running")
-                    .update_batch_store();
                 self.update_workers();
 
                 let sync_state = wallet.get_sync_state().map_err(SyncError::WalletError)?;
@@ -254,8 +240,10 @@ where
                         // the last scan ranges with `Verify` priority are currently being scanned.
                         return Ok(());
                     }
-                    // verification complete
+                    // verification complete, so scanning starts without waiting for another wake
                     self.state.verified();
+                    self.update_batcher(wallet, nullifier_map_limit_exceeded)
+                        .map_err(SyncError::WalletError)?;
                     return Ok(());
                 }
 
@@ -264,35 +252,25 @@ where
                     .map_err(SyncError::WalletError)?;
             }
             ScannerState::Scan => {
-                self.batcher
-                    .as_mut()
-                    .expect("batcher should be running")
-                    .update_batch_store();
                 self.update_workers();
                 self.update_batcher(wallet, nullifier_map_limit_exceeded)
                     .map_err(SyncError::WalletError)?;
             }
-            ScannerState::Shutdown => {
-                shutdown_mempool.store(true, atomic::Ordering::Release);
-                while let Some(worker) = self.idle_worker() {
-                    self.shutdown_worker(worker.id).await;
-                }
-                self.shutdown_batcher().await?;
-            }
+            ScannerState::Shutdown => (),
         }
 
         Ok(())
     }
 
+    /// Hands ready batches to idle workers until either runs out.
     fn update_workers(&mut self) {
-        let batcher = self.batcher.as_ref().expect("batcher should be running");
-        if batcher.batch.is_some()
-            && let Some(worker) = self.idle_worker()
+        let batcher = self.batcher.as_mut().expect("batcher should be running");
+        while let Some(worker_index) = self.workers.iter().position(|worker| !worker.is_scanning())
         {
-            let batch = batcher
-                .batch
-                .clone()
-                .expect("batch should exist in this closure");
+            batcher.update_batch_store();
+            let Some(batch) = batcher.batch.take() else {
+                break;
+            };
             // nullifier refetch batches announce nothing, mirroring the commit side where
             // refetch ranges emit no `RangeScanned`
             if batch.scan_range.priority() != ScanPriority::ScannedWithoutMapping {
@@ -305,11 +283,7 @@ where
                     ironwood_outputs,
                 });
             }
-            worker.add_scan_task(batch);
-            self.batcher
-                .as_mut()
-                .expect("batcher should be running")
-                .batch = None;
+            self.workers[worker_index].add_scan_task(batch);
         }
     }
 
@@ -339,7 +313,6 @@ where
 }
 
 struct Batcher<P> {
-    handle: Option<JoinHandle<Result<(), ServerError>>>,
     is_batching: Arc<AtomicBool>,
     batch: Option<ScanTask>,
     consensus_parameters: P,
@@ -357,7 +330,6 @@ where
         fetch_request_sender: mpsc::UnboundedSender<FetchRequest>,
     ) -> Self {
         Self {
-            handle: None,
             is_batching: Arc::new(AtomicBool::new(false)),
             batch: None,
             consensus_parameters,
@@ -371,7 +343,13 @@ where
     ///
     /// Waits for a scan task and then fetches compact blocks to form fixed output batches. The scan task is split if
     /// needed and the compact blocks are added to each scan task and sent to the scan workers for scanning.
-    fn run(&mut self, max_batch_outputs: usize) {
+    /// `wake` is signalled whenever a batch is ready and when the batcher goes idle.
+    fn run(
+        &mut self,
+        max_batch_outputs: usize,
+        tasks: &mut JoinSet<Result<(), ServerError>>,
+        wake: Arc<Notify>,
+    ) {
         let (scan_task_sender, mut scan_task_receiver) = mpsc::channel::<ScanTask>(1);
         let (batch_sender, batch_receiver) = mpsc::channel::<ScanTask>(1);
 
@@ -379,7 +357,7 @@ where
         let fetch_request_sender = self.fetch_request_sender.clone();
         let consensus_parameters = self.consensus_parameters.clone();
 
-        let handle: JoinHandle<Result<(), ServerError>> = tokio::spawn(async move {
+        tasks.spawn(async move {
             // save seam blocks between scan tasks for linear scanning continuity checks
             // during non-linear scanning the wallet blocks from the scanned ranges will already be saved in the wallet
             let mut previous_task_first_block: Option<WalletBlock> = None;
@@ -571,6 +549,7 @@ where
                             .await?;
 
                         let _ignore_error = batch_sender.send(full_batch).await;
+                        wake.notify_one();
 
                         scan_task = new_batch;
                         sapling_output_count = 0;
@@ -588,6 +567,7 @@ where
                 let _ignore_error = batch_sender.send(scan_task).await;
 
                 is_batching.store(false, atomic::Ordering::Release);
+                wake.notify_one();
             }
 
             is_batching.store(false, atomic::Ordering::Release);
@@ -595,7 +575,6 @@ where
             Ok(())
         });
 
-        self.handle = Some(handle);
         self.scan_task_sender = Some(scan_task_sender);
         self.batch_receiver = Some(batch_receiver);
     }
@@ -627,52 +606,10 @@ where
             );
         }
     }
-
-    fn check_error(&mut self) -> Result<(), ServerError> {
-        if let Some(mut handle) = self.handle.take() {
-            if let Some(result) = handle.borrow_mut().now_or_never() {
-                result.expect("task panicked")?;
-            } else {
-                self.handle = Some(handle);
-            }
-        }
-
-        Ok(())
-    }
-
-    /// Shuts down batcher by dropping the sender to the batcher task and awaiting the handle.
-    ///
-    /// This should always be called in the context of the scanner as it must be also be taken from the Scanner struct.
-    async fn shutdown(&mut self) -> Result<(), ServerError> {
-        tracing::debug!("Shutting down batcher");
-        if let Some(sender) = self.scan_task_sender.take() {
-            drop(sender);
-        }
-        if let Some(receiver) = self.batch_receiver.take() {
-            drop(receiver);
-        }
-
-        let mut handle = self
-            .handle
-            .take()
-            .expect("batcher should always have a handle to take!");
-
-        match tokio::time::timeout(SHUTDOWN_TIMEOUT, &mut handle).await {
-            Ok(join_res) => join_res.expect("task panicked")?,
-            Err(_) => {
-                handle.abort();
-                let _ = handle.await;
-                return Err(tonic::Status::deadline_exceeded("batcher shutdown timeout").into());
-            }
-        }
-
-        Ok(())
-    }
 }
 
 pub(crate) struct ScanWorker<P> {
     id: usize,
-    handle: Option<JoinHandle<()>>,
     is_scanning: Arc<AtomicBool>,
     consensus_parameters: P,
     scan_task_sender: Option<mpsc::Sender<ScanTask>>,
@@ -696,7 +633,6 @@ where
     ) -> Self {
         Self {
             id,
-            handle: None,
             is_scanning: Arc::new(AtomicBool::new(false)),
             consensus_parameters,
             scan_task_sender: None,
@@ -710,7 +646,13 @@ where
     /// Runs the worker in a new tokio task.
     ///
     /// Waits for a scan task and then calls [`crate::scan::scan`] on the given range.
-    fn run(&mut self, max_batch_outputs: usize) {
+    /// `wake` is signalled when the worker goes idle.
+    fn run(
+        &mut self,
+        max_batch_outputs: usize,
+        tasks: &mut JoinSet<Result<(), ServerError>>,
+        wake: Arc<Notify>,
+    ) {
         let (scan_task_sender, mut scan_task_receiver) = mpsc::channel::<ScanTask>(1);
 
         let is_scanning = self.is_scanning.clone();
@@ -720,7 +662,7 @@ where
         let ufvks = self.ufvks.clone();
         let events = self.events.clone();
 
-        let handle = tokio::spawn(async move {
+        tasks.spawn(async move {
             while let Some(scan_task) = scan_task_receiver.recv().await {
                 let scan_range = scan_task.scan_range.clone();
 
@@ -753,12 +695,14 @@ where
                 let _ignore_error = scan_results_sender.send((scan_range, scan_results));
 
                 is_scanning.store(false, atomic::Ordering::Release);
+                wake.notify_one();
             }
 
             is_scanning.store(false, atomic::Ordering::Release);
+
+            Ok(())
         });
 
-        self.handle = Some(handle);
         self.scan_task_sender = Some(scan_task_sender);
     }
 
@@ -774,30 +718,6 @@ where
             .try_send(scan_task)
             .expect("worker should never be sent multiple tasks at one time");
         self.is_scanning.store(true, atomic::Ordering::Release);
-    }
-
-    /// Shuts down worker by dropping the sender to the worker task and awaiting the handle.
-    ///
-    /// This should always be called in the context of the scanner as it must be also be removed from the worker pool.
-    async fn shutdown(&mut self) -> Result<(), JoinError> {
-        tracing::debug!("Shutting down worker {}", self.id);
-        if let Some(sender) = self.scan_task_sender.take() {
-            drop(sender);
-        }
-
-        let mut handle = self
-            .handle
-            .take()
-            .expect("worker should always have a handle to take!");
-
-        match tokio::time::timeout(SHUTDOWN_TIMEOUT, &mut handle).await {
-            Ok(res) => res,
-            Err(_) => {
-                handle.abort();
-                let _ = handle.await; // ignore join error after abort
-                Ok(())
-            }
-        }
     }
 }
 

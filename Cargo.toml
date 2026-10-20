@@ -108,6 +108,7 @@ prost = "0.14"
 futures = "0.3"
 futures-util = "0.3"
 tokio = "1"
+tokio-util = "0.7"
 
 ### Error interface
 thiserror = "2"
