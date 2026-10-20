@@ -47,7 +47,8 @@ monitor, the monitor acknowledges shutdown on a one-second interval, and the syn
 50 ms. The harness polls the sync task every millisecond so the client's half-second completion
 poll does not add to it. The `work ratio` column subtracts this floor from both stacks before
 dividing, which is the better estimate of the decryption speedup; it is omitted where the upstream
-time is within half a second of the floor.
+time is within half a second of the floor. The last section measures the tree with these waits
+removed.
 
 ## Results
 
@@ -113,3 +114,40 @@ post-NU6.3 protocol, so both chains run with Ironwood active from the first bloc
 - Transparent discovery at recovery depth dominates its scenario on both stacks. That time is gRPC
   round-trips for address lookups, not decryption, so the stacks are closer there.
 - The 300-block incremental phases are mostly floor and should not be read as a throughput measure.
+
+## Removing the floor
+
+`0d70fde35` replaces the timers in the sync loop with signals. The loop wakes when a scan worker or
+the batcher has something for it, reads the sync mode from a `watch` channel instead of an atomic
+on a 50 ms tick, and at the end asks the mempool monitor to stop through a cancellation token and
+drains what the monitor already sent rather than sleeping a second and counting. `await_sync`
+awaits the task handle instead of polling it every half second. Every network timeout and retry
+back-off is unchanged. Measured on the same machine and harness as the table above, scenarios
+`empty_blocks` and `ironwood_noise_10`. `before` is the Zakura column of that table.
+
+| scenario | variant | phase | blocks | before best | before median | after best | after median | ratio |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| empty_blocks | high/minimal | full | 3000 | 2.27 | 2.28 | 0.02 | 0.02 | 0.01 |
+| empty_blocks | high/minimal | incremental | 300 | 2.26 | 2.26 | 0.01 | 0.01 | 0.00 |
+| empty_blocks | high/minimal | rescan | 3300 | 2.27 | 2.28 | 0.03 | 0.03 | 0.01 |
+| ironwood_noise_10 | low/minimal | full | 3000 | 5.09 | 5.09 | 2.66 | 2.72 | 0.52 |
+| ironwood_noise_10 | medium/minimal | full | 3000 | 4.65 | 4.70 | 2.47 | 2.50 | 0.53 |
+| ironwood_noise_10 | high/minimal | full | 3000 | 4.62 | 4.64 | 2.49 | 2.50 | 0.54 |
+| ironwood_noise_10 | maximum/minimal | full | 3000 | 4.71 | 4.78 | 2.59 | 2.59 | 0.55 |
+| ironwood_noise_10 | low/minimal | incremental | 300 | 2.61 | 2.61 | 0.38 | 0.40 | 0.15 |
+| ironwood_noise_10 | medium/minimal | incremental | 300 | 2.58 | 2.59 | 0.39 | 0.39 | 0.15 |
+| ironwood_noise_10 | high/minimal | incremental | 300 | 2.59 | 2.61 | 0.39 | 0.39 | 0.15 |
+| ironwood_noise_10 | maximum/minimal | incremental | 300 | 2.72 | 2.72 | 0.48 | 0.49 | 0.17 |
+| ironwood_noise_10 | low/minimal | rescan | 3300 | 5.43 | 5.47 | 2.91 | 2.93 | 0.54 |
+| ironwood_noise_10 | medium/minimal | rescan | 3300 | 4.97 | 4.98 | 2.69 | 2.70 | 0.54 |
+| ironwood_noise_10 | high/minimal | rescan | 3300 | 5.00 | 5.02 | 2.73 | 2.74 | 0.55 |
+| ironwood_noise_10 | maximum/minimal | rescan | 3300 | 5.00 | 5.06 | 2.77 | 2.79 | 0.55 |
+
+- The empty-chain sync drops from 2.27 s to 0.02 s. What remains is gRPC round-trips and
+  the wallet bookkeeping for 3,000 blocks with nothing in them.
+- A 300-block incremental sync takes 0.39 s instead of 2.59 s. This is the case every wallet
+  hits on each launch and after each new block.
+- Full syncs lose the same 2.1 s, which matches the `work ratio` column above: the
+  decryption work itself is unchanged.
+- The workspace test suite, which syncs mock chains hundreds of times, runs about four times
+  faster for the same reason.
