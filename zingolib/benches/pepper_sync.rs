@@ -5,8 +5,8 @@
 //! proof-free shielded outputs, so generation is cheap and the time measured is the wallet's:
 //! fetching, trial decryption, witness commits and spend bookkeeping.
 //!
-//! The sync task is polled every millisecond, so timings are not quantized by the client's
-//! half-second `await_sync` interval. Fixed pauses inside the sync loop still apply.
+//! The sync task is polled every millisecond, so the harness adds at most that much to a
+//! measurement regardless of how the client waits for completion.
 //!
 //! Run with `cargo bench -p zingolib --bench pepper_sync -- [name filter...]`.
 //!
