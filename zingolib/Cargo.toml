@@ -90,5 +90,9 @@ tokio-stream = { workspace = true }
 tonic = { workspace = true }
 zingo_test_vectors = { workspace = true }
 
+[[bench]]
+name = "pepper_sync"
+harness = false
+
 [badges]
 maintenance = { status = "actively-developed" }
