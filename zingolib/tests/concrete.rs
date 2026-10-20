@@ -6,6 +6,7 @@ use zcash_primitives::transaction::fees::zip317::MINIMUM_FEE;
 use pepper_sync::wallet::TransparentCoin;
 use zcash_protocol::PoolType;
 use zcash_protocol::value::Zatoshis;
+use zingo_common_components::protocol::ActivationHeights;
 use zingo_test_vectors::{BASE_HEIGHT, block_rewards, seeds::HOSPITAL_MUSEUM_SEED};
 use zingolib::testutils::lightclient::from_inputs;
 use zingolib::testutils::scenarios::{self, increase_height_and_wait_for_client};
@@ -36,13 +37,13 @@ fn check_expected_balance_with_fvks(
                 );
             }
             Fvk::Orchard(_) => {
-                assert_eq!(balance.total_orchard_balance.unwrap().into_u64(), o_expect);
+                assert_eq!(balance.total_ironwood_balance.unwrap().into_u64(), o_expect);
                 assert_eq!(
-                    balance.confirmed_orchard_balance.unwrap().into_u64(),
+                    balance.confirmed_ironwood_balance.unwrap().into_u64(),
                     o_expect
                 );
                 assert_eq!(
-                    balance.unconfirmed_orchard_balance.unwrap().into_u64(),
+                    balance.unconfirmed_ironwood_balance.unwrap().into_u64(),
                     o_expect
                 );
             }
@@ -78,9 +79,9 @@ fn check_view_capability_bounds(
     //Orchard
     if fvks.contains(&orchard_fvk) {
         assert!(ufvk.orchard().is_some());
-        assert_eq!(balance.total_orchard_balance, sent_o_value);
-        assert_eq!(balance.confirmed_orchard_balance, sent_o_value);
-        assert_eq!(balance.unconfirmed_orchard_balance, Some(Zatoshis::ZERO));
+        assert_eq!(balance.total_ironwood_balance, sent_o_value);
+        assert_eq!(balance.confirmed_ironwood_balance, sent_o_value);
+        assert_eq!(balance.unconfirmed_ironwood_balance, Some(Zatoshis::ZERO));
         // assert 1 Orchard note, or 2 notes if a dummy output is included
         let orchard_notes_count = orchard_notes
             .iter()
@@ -89,9 +90,9 @@ fn check_view_capability_bounds(
         assert!((1..=2).contains(&orchard_notes_count));
     } else {
         assert!(ufvk.orchard().is_none());
-        assert_eq!(balance.total_orchard_balance, None);
-        assert_eq!(balance.confirmed_orchard_balance, None);
-        assert_eq!(balance.unconfirmed_orchard_balance, None);
+        assert_eq!(balance.total_ironwood_balance, None);
+        assert_eq!(balance.confirmed_ironwood_balance, None);
+        assert_eq!(balance.unconfirmed_ironwood_balance, None);
         assert_eq!(orchard_notes.len(), 0);
     }
     //Sapling
@@ -131,7 +132,7 @@ mod fast {
     use bip0039::Mnemonic;
     use pepper_sync::{
         keys::transparent::{self, TransparentAddressId, TransparentScope},
-        wallet::{OrchardNote, OutputInterface, TransparentCoin},
+        wallet::{IronwoodNote, OutputInterface, TransparentCoin},
     };
     use zcash_address::ZcashAddress;
     use zcash_client_backend::{
@@ -634,7 +635,7 @@ mod fast {
                 .wallet()
                 .read()
                 .await
-                .spendable_balance::<OrchardNote>(zip32::AccountId::ZERO, false)
+                .spendable_balance::<IronwoodNote>(zip32::AccountId::ZERO, false)
                 .unwrap()
                 .into_u64(),
             100_000
@@ -647,8 +648,8 @@ mod fast {
             Some(200_000),
             Some(100_000),
             None,
-            PoolType::Shielded(ShieldedPool::Orchard),
-            scenarios::pre_ironwood_activation_heights(),
+            PoolType::Shielded(ShieldedPool::Ironwood),
+            ActivationHeights::default(),
         )
         .await;
 
@@ -704,7 +705,7 @@ mod fast {
         environment.increase_chain_height().await;
         faucet.sync_and_await().await.unwrap();
 
-        check_client_balances!(faucet, o: 2_500_000_000u64  s: 0 t: 0u64);
+        check_client_balances!(faucet, i: 2_500_000_000u64 o: 0 s: 0 t: 0u64);
 
         from_inputs::quick_send(
             &mut faucet,
@@ -936,7 +937,7 @@ mod fast {
         environment.increase_chain_height().await;
         faucet.sync_and_await().await.unwrap();
 
-        check_client_balances!(faucet, o: 2_500_000_000u64  s: 0 t: 0u64);
+        check_client_balances!(faucet, i: 2_500_000_000u64 o: 0 s: 0 t: 0u64);
 
         from_inputs::quick_send(
             &mut faucet,
@@ -1195,11 +1196,11 @@ mod fast {
                 total_sapling_balance: Some(10_000.try_into().unwrap()),
                 confirmed_sapling_balance: Some(10_000.try_into().unwrap()),
                 unconfirmed_sapling_balance: Some(0.try_into().unwrap()),
-                total_orchard_balance: Some(30_000.try_into().unwrap()),
-                confirmed_orchard_balance: Some(30_000.try_into().unwrap()),
+                total_orchard_balance: Some(0.try_into().unwrap()),
+                confirmed_orchard_balance: Some(0.try_into().unwrap()),
                 unconfirmed_orchard_balance: Some(0.try_into().unwrap()),
-                total_ironwood_balance: Some(0.try_into().unwrap()),
-                confirmed_ironwood_balance: Some(0.try_into().unwrap()),
+                total_ironwood_balance: Some(30_000.try_into().unwrap()),
+                confirmed_ironwood_balance: Some(30_000.try_into().unwrap()),
                 unconfirmed_ironwood_balance: Some(0.try_into().unwrap()),
                 total_transparent_balance: Some(0.try_into().unwrap()),
                 confirmed_transparent_balance: Some(0.try_into().unwrap()),
@@ -1313,26 +1314,20 @@ tmQuMoTTjU3GFfTjrhPiBYihbTVfYmPk5Gr"
     }
 
     #[tokio::test]
-    async fn mine_to_orchard() {
-        let (local_net, mut faucet) = scenarios::faucet(
-            PoolType::ORCHARD,
-            scenarios::pre_ironwood_activation_heights(),
-        )
-        .await;
-        check_client_balances!(faucet, o: 1_875_000_000 s: 0 t: 0);
+    async fn mine_to_ironwood() {
+        let (local_net, mut faucet) =
+            scenarios::faucet(PoolType::IRONWOOD, ActivationHeights::default()).await;
+        check_client_balances!(faucet, i: 1_875_000_000 o: 0 s: 0 t: 0);
         increase_height_and_wait_for_client(&local_net, &mut faucet, 1)
             .await
             .unwrap();
-        check_client_balances!(faucet, o: 2_500_000_000u64 s: 0 t: 0);
+        check_client_balances!(faucet, i: 2_500_000_000u64 o: 0 s: 0 t: 0);
     }
 
     #[tokio::test]
     async fn mine_to_sapling() {
-        let (local_net, mut faucet) = scenarios::faucet(
-            PoolType::SAPLING,
-            scenarios::pre_ironwood_activation_heights(),
-        )
-        .await;
+        let (local_net, mut faucet) =
+            scenarios::faucet(PoolType::SAPLING, ActivationHeights::default()).await;
         check_client_balances!(faucet, o: 0 s: 1_875_000_000 t: 0);
         increase_height_and_wait_for_client(&local_net, &mut faucet, 1)
             .await
@@ -1343,11 +1338,8 @@ tmQuMoTTjU3GFfTjrhPiBYihbTVfYmPk5Gr"
     /// Tests that the miner's address receives (immature) rewards from mining to the transparent pool.
     #[tokio::test]
     async fn mine_to_transparent() {
-        let (local_net, mut faucet, _recipient) = scenarios::faucet_recipient(
-            PoolType::Transparent,
-            scenarios::pre_ironwood_activation_heights(),
-        )
-        .await;
+        let (local_net, mut faucet, _recipient) =
+            scenarios::faucet_recipient(PoolType::Transparent, ActivationHeights::default()).await;
 
         let unconfirmed_balance = faucet
             .wallet()
@@ -1408,18 +1400,19 @@ tmQuMoTTjU3GFfTjrhPiBYihbTVfYmPk5Gr"
             .set_nu6(Some(7))
             .set_nu6_1(Some(9))
             .set_nu6_2(Some(11))
+            .set_nu6_3(Some(13))
             .set_nu7(None)
             .build();
 
         let (local_net, mut lightclient) = scenarios::unfunded_client(activation_heights).await;
-        increase_height_and_wait_for_client(&local_net, &mut lightclient, 12)
+        increase_height_and_wait_for_client(&local_net, &mut lightclient, 14)
             .await
             .unwrap();
     }
 
     #[tokio::test]
     async fn mine_to_transparent_and_shield() {
-        let activation_heights = scenarios::pre_ironwood_activation_heights();
+        let activation_heights = ActivationHeights::default();
         let (local_net, mut faucet, _recipient) =
             scenarios::faucet_recipient(PoolType::Transparent, activation_heights).await;
         increase_height_and_wait_for_client(&local_net, &mut faucet, 100)
@@ -1435,7 +1428,7 @@ tmQuMoTTjU3GFfTjrhPiBYihbTVfYmPk5Gr"
                 .account_balance(zip32::AccountId::ZERO)
                 .await
                 .unwrap()
-                .confirmed_orchard_balance
+                .confirmed_ironwood_balance
                 .unwrap()
                 .into_u64(),
             2_499_970_000
@@ -1444,7 +1437,7 @@ tmQuMoTTjU3GFfTjrhPiBYihbTVfYmPk5Gr"
 
     #[tokio::test]
     async fn mine_to_transparent_and_propose_shielding() {
-        let activation_heights = scenarios::pre_ironwood_activation_heights();
+        let activation_heights = ActivationHeights::default();
         let (local_net, mut faucet, _recipient) =
             scenarios::faucet_recipient(PoolType::Transparent, activation_heights).await;
         increase_height_and_wait_for_client(&local_net, &mut faucet, 100)
@@ -1477,8 +1470,8 @@ tmQuMoTTjU3GFfTjrhPiBYihbTVfYmPk5Gr"
 }
 mod slow {
     use pepper_sync::wallet::{
-        NoteInterface, OrchardNote, OutgoingNoteInterface, OutputInterface, SaplingNote,
-        TransparentCoin,
+        IronwoodNote, NoteInterface, OrchardNote, OutgoingNoteInterface, OutputInterface,
+        SaplingNote, TransparentCoin,
     };
     use zcash_primitives::transaction::fees::zip317::MARGINAL_FEE;
     use zcash_protocol::consensus::BlockHeight;
@@ -1580,7 +1573,7 @@ mod slow {
         assert_eq!(transparent_coins.len(), 0);
         let sapling_notes = recipient_wallet.wallet_outputs::<SaplingNote>();
         assert_eq!(sapling_notes.len(), 0);
-        let orchard_notes = recipient_wallet.wallet_outputs::<OrchardNote>();
+        let orchard_notes = recipient_wallet.wallet_outputs::<IronwoodNote>();
         let unspent_orchard_notes = orchard_notes
             .iter()
             .filter(|&&note| recipient_wallet.output_spend_status(note).is_unspent())
@@ -1855,7 +1848,7 @@ mod slow {
             .unwrap()
             .into_u64();
         let sent_o_value = original_recipient_balance
-            .total_orchard_balance
+            .total_ironwood_balance
             .unwrap()
             .into_u64();
         assert_eq!(sent_t_value, 10_000u64);
@@ -1864,7 +1857,7 @@ mod slow {
 
         // check that do_rescan works
         original_recipient.rescan_and_await().await.unwrap();
-        check_client_balances!(original_recipient, o: sent_o_value s: sent_s_value t: sent_t_value);
+        check_client_balances!(original_recipient, i: sent_o_value o: 0 s: sent_s_value t: sent_t_value);
 
         // Extract viewing keys
         let original_wallet = original_recipient.wallet().read().await;
@@ -1919,7 +1912,7 @@ mod slow {
                 .unwrap();
             {
                 let watch_wallet = watch_client.wallet().read().await;
-                let orchard_notes = watch_wallet.note_summaries::<OrchardNote>(true);
+                let orchard_notes = watch_wallet.note_summaries::<IronwoodNote>(true);
                 let sapling_notes = watch_wallet.note_summaries::<SaplingNote>(true);
                 let transparent_coin = watch_wallet.coin_summaries(true);
 
@@ -2075,8 +2068,9 @@ mod slow {
         let transactions = faucet.transaction_summaries(false).await.unwrap().0;
         assert!(transactions.iter().any(|transaction| {
             transaction
-                .outgoing_orchard_notes
+                .outgoing_ironwood_notes
                 .iter()
+                .chain(transaction.outgoing_orchard_notes.iter())
                 .chain(transaction.outgoing_sapling_notes.iter())
                 .any(|note| {
                     note.recipient_unified_address == Some(recipient_unified_address.clone())
@@ -2086,8 +2080,9 @@ mod slow {
         let rescanned_transactions = faucet.transaction_summaries(false).await.unwrap().0;
         assert!(rescanned_transactions.iter().any(|transaction| {
             transaction
-                .outgoing_orchard_notes
+                .outgoing_ironwood_notes
                 .iter()
+                .chain(transaction.outgoing_orchard_notes.iter())
                 .chain(transaction.outgoing_sapling_notes.iter())
                 .any(|note| {
                     note.recipient_unified_address == Some(recipient_unified_address.clone())
@@ -2115,8 +2110,8 @@ mod slow {
             value: recipient_initial_funds,
             fee: Some(10_000),
             zec_price: None,
-            ironwood_notes: vec![],
-            orchard_notes: vec![BasicNoteSummary::from_parts(
+            orchard_notes: vec![],
+            ironwood_notes: vec![BasicNoteSummary::from_parts(
                 recipient_initial_funds,
                 SpendStatus::Spent(
                     utils::conversion::txid_from_hex_encoded_str(TEST_TXID).unwrap(),
@@ -2156,8 +2151,8 @@ mod slow {
             value: first_send_to_sapling,
             fee: Some(20_000),
             zec_price: None,
-            ironwood_notes: vec![],
-            orchard_notes: vec![BasicNoteSummary::from_parts(
+            orchard_notes: vec![],
+            ironwood_notes: vec![BasicNoteSummary::from_parts(
                 99_960_000,
                 SpendStatus::TransmittedSpent(
                     utils::conversion::txid_from_hex_encoded_str(TEST_TXID).unwrap(),
@@ -2192,8 +2187,8 @@ mod slow {
             value: first_send_to_transparent,
             fee: Some(15_000),
             zec_price: None,
-            ironwood_notes: vec![],
-            orchard_notes: vec![BasicNoteSummary::from_parts(
+            orchard_notes: vec![],
+            ironwood_notes: vec![BasicNoteSummary::from_parts(
                 99_925_000,
                 SpendStatus::Unspent,
                 0,
@@ -2244,14 +2239,14 @@ mod slow {
             let recipient_wallet = recipient.wallet().read().await;
             assert_eq!(
                 recipient_wallet
-                    .unconfirmed_balance::<OrchardNote>(zip32::AccountId::ZERO)
+                    .unconfirmed_balance::<IronwoodNote>(zip32::AccountId::ZERO)
                     .unwrap(),
                 expected_funds.try_into().unwrap()
             );
             //  (2) The balance is not yet verified
             assert_eq!(
                 recipient_wallet
-                    .confirmed_balance::<OrchardNote>(zip32::AccountId::ZERO)
+                    .confirmed_balance::<IronwoodNote>(zip32::AccountId::ZERO)
                     .unwrap(),
                 0.try_into().unwrap()
             );
@@ -2271,8 +2266,8 @@ mod slow {
             value: recipient_second_funding,
             fee: Some(10_000),
             zec_price: None,
-            ironwood_notes: vec![],
-            orchard_notes: vec![BasicNoteSummary::from_parts(
+            orchard_notes: vec![],
+            ironwood_notes: vec![BasicNoteSummary::from_parts(
                 recipient_second_funding,
                 SpendStatus::Spent(
                     utils::conversion::txid_from_hex_encoded_str(TEST_TXID).unwrap(),
@@ -2312,8 +2307,8 @@ mod slow {
             value: second_send_to_transparent,
             fee: Some(15_000),
             zec_price: None,
-            ironwood_notes: vec![],
-            orchard_notes: vec![BasicNoteSummary::from_parts(
+            orchard_notes: vec![],
+            ironwood_notes: vec![BasicNoteSummary::from_parts(
                 965_000,
                 SpendStatus::Spent(
                     utils::conversion::txid_from_hex_encoded_str(TEST_TXID).unwrap(),
@@ -2352,8 +2347,8 @@ TransactionSummary {
             value: second_send_to_sapling,
             fee: Some(20_000),
             zec_price: None,
-            ironwood_notes: vec![],
-            orchard_notes: vec![BasicNoteSummary::from_parts(
+            orchard_notes: vec![],
+            ironwood_notes: vec![BasicNoteSummary::from_parts(
                 99_885_000,
                 SpendStatus::Unspent,
                 0,
@@ -2399,8 +2394,8 @@ TransactionSummary {
             value: external_transparent_3,
             fee: Some(15_000),
             zec_price: None,
-            ironwood_notes: vec![],
-            orchard_notes: vec![BasicNoteSummary::from_parts(
+            orchard_notes: vec![],
+            ironwood_notes: vec![BasicNoteSummary::from_parts(
                 930_000,
                 SpendStatus::Unspent,
                 0,
@@ -2448,7 +2443,7 @@ TransactionSummary {
                 .wallet()
                 .read()
                 .await
-                .confirmed_balance::<OrchardNote>(zip32::AccountId::ZERO)
+                .confirmed_balance::<IronwoodNote>(zip32::AccountId::ZERO)
                 .unwrap(),
             second_wave_expected_funds.try_into().unwrap(),
         );
@@ -2473,7 +2468,7 @@ TransactionSummary {
         let three_blocks_reward = block_rewards::CANOPY
             .checked_mul(u64::from(BASE_HEIGHT))
             .unwrap();
-        check_client_balances!(faucet, o: three_blocks_reward s: 0 t: 0);
+        check_client_balances!(faucet, i: three_blocks_reward o: 0 s: 0 t: 0);
 
         // post transfer to recipient, and verify
         from_inputs::quick_send(
@@ -2503,8 +2498,8 @@ TransactionSummary {
                 .unwrap()
         );
 
-        check_client_balances!(faucet, o: faucet_orch s: 0 t: 0);
-        check_client_balances!(recipient, o: faucet_to_recipient_amount s: 0 t: 0);
+        check_client_balances!(faucet, i: faucet_orch o: 0 s: 0 t: 0);
+        check_client_balances!(recipient, i: faucet_to_recipient_amount o: 0 s: 0 t: 0);
 
         // post half back to faucet, and verify
         from_inputs::quick_send(
@@ -2528,11 +2523,8 @@ TransactionSummary {
             + u64::from(MINIMUM_FEE);
         let recipient_final_orch =
             faucet_to_recipient_amount - (u64::from(MINIMUM_FEE) + recipient_to_faucet_amount);
-        check_client_balances!(
-            faucet,
-            o: faucet_final_orch s: 0 t: 0
-        );
-        check_client_balances!(recipient, o: recipient_final_orch s: 0 t: 0);
+        check_client_balances!(faucet, i: faucet_final_orch o: 0 s: 0 t: 0);
+        check_client_balances!(recipient, i: recipient_final_orch o: 0 s: 0 t: 0);
     }
 
     #[tokio::test]
@@ -2541,11 +2533,8 @@ TransactionSummary {
         // debiting unverified_orchard_balance and crediting verified_orchard_balance.  The debit amount is
         // consistent with all the notes in the relevant block changing state.
         // NOTE that the balance doesn't give insight into the distribution across notes.
-        let (local_net, mut faucet) = scenarios::faucet(
-            PoolType::SAPLING,
-            scenarios::pre_ironwood_activation_heights(),
-        )
-        .await;
+        let (local_net, mut faucet) =
+            scenarios::faucet(PoolType::SAPLING, ActivationHeights::default()).await;
 
         let amount_to_send = 10_000;
         let faucet_ua = get_base_address_macro!(faucet, "unified");
@@ -2565,11 +2554,11 @@ TransactionSummary {
         // We send change to orchard now, so we should have the full value of the note
         // we spent, minus the transaction fee
         assert_eq!(
-            balance.unconfirmed_orchard_balance,
+            balance.unconfirmed_ironwood_balance,
             Some(0.try_into().unwrap())
         );
         assert_eq!(
-            balance.confirmed_orchard_balance.unwrap().into_u64(),
+            balance.confirmed_ironwood_balance.unwrap().into_u64(),
             625_000_000 - 4 * u64::from(MARGINAL_FEE)
         );
     }
@@ -2586,6 +2575,7 @@ TransactionSummary {
             .set_nu6(Some(5))
             .set_nu6_1(Some(5))
             .set_nu6_2(Some(5))
+            .set_nu6_3(Some(5))
             .set_nu7(None)
             .build();
 
@@ -2612,7 +2602,7 @@ TransactionSummary {
         increase_height_and_wait_for_client(&local_net, &mut recipient, 1)
             .await
             .unwrap();
-        check_client_balances!(recipient, o: 3_499_960_000u64 s: 0 t: 0);
+        check_client_balances!(recipient, i: 3_499_960_000u64 o: 0 s: 0 t: 0);
     }
     #[tokio::test]
     async fn send_funds_to_all_pools() {
@@ -2621,11 +2611,11 @@ TransactionSummary {
                 Some(100_000),
                 Some(100_000),
                 Some(100_000),
-                PoolType::Shielded(ShieldedPool::Orchard),
-                scenarios::pre_ironwood_activation_heights(),
+                PoolType::Shielded(ShieldedPool::Ironwood),
+                ActivationHeights::default(),
             )
             .await;
-        check_client_balances!(recipient, o: 100_000 s: 100_000 t: 100_000);
+        check_client_balances!(recipient, i: 100_000 o: 0 s: 100_000 t: 100_000);
     }
     #[tokio::test]
     async fn self_send_to_t_displays_as_one_transaction() {
@@ -2705,8 +2695,8 @@ TransactionSummary {
                 None,
                 Some(funding_value),
                 None,
-                PoolType::Shielded(ShieldedPool::Orchard),
-                scenarios::pre_ironwood_activation_heights(),
+                PoolType::Shielded(ShieldedPool::Ironwood),
+                ActivationHeights::default(),
             )
             .await;
         let network = recipient.chain_type();
@@ -2874,7 +2864,7 @@ TransactionSummary {
                 .wallet()
                 .read()
                 .await
-                .wallet_outputs::<OrchardNote>()
+                .wallet_outputs::<IronwoodNote>()
                 .len(),
             0
         );
@@ -3028,7 +3018,7 @@ TransactionSummary {
         increase_height_and_wait_for_client(&local_net, &mut recipient, 1)
             .await
             .unwrap();
-        check_client_balances!(recipient, o: for_orchard s: 0 t: 0 );
+        check_client_balances!(recipient, i: for_orchard o: 0 s: 0 t: 0);
 
         from_inputs::quick_send(
             &mut recipient,
@@ -3044,7 +3034,7 @@ TransactionSummary {
             .await
             .unwrap();
         let remaining_orchard = for_orchard - (6 * fee);
-        check_client_balances!(recipient, o: remaining_orchard s: 0 t: 0);
+        check_client_balances!(recipient, i: remaining_orchard o: 0 s: 0 t: 0);
     }
     // FIXME: zingo2 yet to implement transaction filter in sync engine. its also not clear how this test exceeds the tx filter.
     // #[tokio::test]
@@ -3329,9 +3319,9 @@ TransactionSummary {
             .await
             .unwrap();
         tracing::info!("{bal}");
-        assert_eq!(bal.total_orchard_balance.unwrap().into_u64(), value);
-        assert_eq!(bal.confirmed_orchard_balance.unwrap().into_u64(), value);
-        assert_eq!(bal.unconfirmed_orchard_balance.unwrap().into_u64(), 0);
+        assert_eq!(bal.total_ironwood_balance.unwrap().into_u64(), value);
+        assert_eq!(bal.confirmed_ironwood_balance.unwrap().into_u64(), value);
+        assert_eq!(bal.unconfirmed_ironwood_balance.unwrap().into_u64(), 0);
 
         // 3. Mine 10 blocks
         increase_height_and_wait_for_client(&local_net, &mut recipient, 10)
@@ -3341,9 +3331,9 @@ TransactionSummary {
             .account_balance(zip32::AccountId::ZERO)
             .await
             .unwrap();
-        assert_eq!(bal.total_orchard_balance.unwrap().into_u64(), value);
-        assert_eq!(bal.confirmed_orchard_balance.unwrap().into_u64(), value);
-        assert_eq!(bal.unconfirmed_orchard_balance.unwrap().into_u64(), 0);
+        assert_eq!(bal.total_ironwood_balance.unwrap().into_u64(), value);
+        assert_eq!(bal.confirmed_ironwood_balance.unwrap().into_u64(), value);
+        assert_eq!(bal.unconfirmed_ironwood_balance.unwrap().into_u64(), 0);
 
         // 4. Spend the funds
         let sent_value = 2000;
@@ -3367,9 +3357,12 @@ TransactionSummary {
 
         // Even though the transaction is not mined (in the mempool) the balances should be updated to reflect the spent funds
         let new_bal = value - (sent_value + u64::from(MINIMUM_FEE));
-        assert_eq!(bal.total_orchard_balance.unwrap().into_u64(), new_bal);
-        assert_eq!(bal.confirmed_orchard_balance.unwrap().into_u64(), 0);
-        assert_eq!(bal.unconfirmed_orchard_balance.unwrap().into_u64(), new_bal);
+        assert_eq!(bal.total_ironwood_balance.unwrap().into_u64(), new_bal);
+        assert_eq!(bal.confirmed_ironwood_balance.unwrap().into_u64(), 0);
+        assert_eq!(
+            bal.unconfirmed_ironwood_balance.unwrap().into_u64(),
+            new_bal
+        );
 
         // 5. Mine the pending block, making the funds verified and spendable.
         increase_height_and_wait_for_client(&local_net, &mut recipient, 10)
@@ -3381,9 +3374,9 @@ TransactionSummary {
             .await
             .unwrap();
 
-        assert_eq!(bal.total_orchard_balance.unwrap().into_u64(), new_bal);
-        assert_eq!(bal.confirmed_orchard_balance.unwrap().into_u64(), new_bal);
-        assert_eq!(bal.unconfirmed_orchard_balance.unwrap().into_u64(), 0);
+        assert_eq!(bal.total_ironwood_balance.unwrap().into_u64(), new_bal);
+        assert_eq!(bal.confirmed_ironwood_balance.unwrap().into_u64(), new_bal);
+        assert_eq!(bal.unconfirmed_ironwood_balance.unwrap().into_u64(), 0);
     }
 
     // FIXME: add unified address discovery to pepper sync and add a test here
@@ -3415,9 +3408,9 @@ TransactionSummary {
             .await
             .unwrap();
         macro_rules! bump_and_check_pmc {
-            (o: $o:tt s: $s:tt t: $t:tt) => {
+            (i: $i:tt s: $s:tt t: $t:tt) => {
                 increase_height_and_wait_for_client(&local_net, &mut pool_migration_client, 1).await.unwrap();
-                check_client_balances!(pool_migration_client, o:$o s:$s t:$t);
+                check_client_balances!(pool_migration_client, i:$i o: 0 s:$s t:$t);
             };
         }
 
@@ -3425,7 +3418,7 @@ TransactionSummary {
         from_inputs::quick_send(&mut faucet, vec![(&pmc_unified, 100_000, None)])
             .await
             .unwrap();
-        bump_and_check_pmc!(o: 100_000 s: 0 t: 0);
+        bump_and_check_pmc!(i: 100_000 s: 0 t: 0);
 
         // to transparent and sapling from orchard
         //
@@ -3437,7 +3430,7 @@ TransactionSummary {
         )
         .await
         .unwrap();
-        bump_and_check_pmc!(o: 15_000 s: 30_000 t: 30_000);
+        bump_and_check_pmc!(i: 15_000 s: 30_000 t: 30_000);
     }
 
     #[ignore = "step 10 strands 10_000 in sapling: the planner leaves the sapling note unspent \
@@ -3649,23 +3642,14 @@ TransactionSummary {
         //  t -> z
         match from_inputs::quick_send(&mut client, vec![(&pmc_sapling, 50_000, None)]).await {
             Ok(_) => panic!(),
-            Err(SendError::ProposeSendError(e)) => {
-                if let ProposeSendError::Proposal(insufficient_funds) = e {
-                    match insufficient_funds {
-                        zcash_client_backend::data_api::error::Error::InsufficientFunds {
-                            available,
-                            required,
-                        } => {
-                            assert_eq!(available, Zatoshis::from_u64(0).unwrap());
-                            assert_eq!(required, Zatoshis::from_u64(60_000).unwrap());
-                        }
-                        _ => {
-                            panic!()
-                        }
-                    }
-                } else {
-                    panic!()
-                }
+            Err(SendError::ProposeSendError(ProposeSendError::Proposal(
+                zcash_client_backend::data_api::error::Error::InsufficientFunds {
+                    available,
+                    required,
+                },
+            ))) => {
+                assert_eq!(available, Zatoshis::from_u64(0).unwrap());
+                assert_eq!(required, Zatoshis::from_u64(60_000).unwrap());
             }
             _ => panic!(),
         }
@@ -3861,7 +3845,7 @@ TransactionSummary {
             .wallet_transactions
             .get(&sent_txid)
             .unwrap()
-            .orchard_notes()
+            .ironwood_notes()
             .first()
             .unwrap()
             .clone();
@@ -3882,7 +3866,7 @@ TransactionSummary {
             let recipient_wallet = recipient.wallet().read().await;
             let sapling_notes = recipient_wallet.wallet_outputs::<SaplingNote>();
             assert_eq!(sapling_notes.len(), 0);
-            let orchard_notes = recipient_wallet.wallet_outputs::<OrchardNote>();
+            let orchard_notes = recipient_wallet.wallet_outputs::<IronwoodNote>();
             assert_eq!(orchard_notes.len(), 2);
             let spent_orchard_note = (*orchard_notes
                 .iter()
@@ -3913,10 +3897,10 @@ TransactionSummary {
             .account_balance(zip32::AccountId::ZERO)
             .await
             .unwrap();
-        assert_eq!(balance.total_orchard_balance.unwrap().into_u64(), 880_000);
-        assert_eq!(balance.confirmed_orchard_balance.unwrap().into_u64(), 0);
+        assert_eq!(balance.total_ironwood_balance.unwrap().into_u64(), 880_000);
+        assert_eq!(balance.confirmed_ironwood_balance.unwrap().into_u64(), 0);
         assert_eq!(
-            balance.unconfirmed_orchard_balance.unwrap().into_u64(),
+            balance.unconfirmed_ironwood_balance.unwrap().into_u64(),
             880_000
         );
         increase_height_and_wait_for_client(&local_net, &mut recipient, 1)
@@ -3926,7 +3910,7 @@ TransactionSummary {
             let recipient_wallet = recipient.wallet().read().await;
             let sapling_notes = recipient_wallet.wallet_outputs::<SaplingNote>();
             assert_eq!(sapling_notes.len(), 0);
-            let orchard_notes = recipient_wallet.wallet_outputs::<OrchardNote>();
+            let orchard_notes = recipient_wallet.wallet_outputs::<IronwoodNote>();
             assert_eq!(orchard_notes.len(), 2);
             let spent_orchard_note = (*orchard_notes
                 .iter()
@@ -3957,12 +3941,12 @@ TransactionSummary {
             .account_balance(zip32::AccountId::ZERO)
             .await
             .unwrap();
-        assert_eq!(balance.total_orchard_balance.unwrap().into_u64(), 880_000);
+        assert_eq!(balance.total_ironwood_balance.unwrap().into_u64(), 880_000);
         assert_eq!(
-            balance.confirmed_orchard_balance.unwrap().into_u64(),
+            balance.confirmed_ironwood_balance.unwrap().into_u64(),
             880_000
         );
-        assert_eq!(balance.unconfirmed_orchard_balance.unwrap().into_u64(), 0);
+        assert_eq!(balance.unconfirmed_ironwood_balance.unwrap().into_u64(), 0);
     }
 }
 
@@ -4351,11 +4335,8 @@ mod basic_transactions {
 /// Tests that transparent coinbases are matured after 100 blocks.
 #[tokio::test]
 async fn mine_to_transparent_coinbase_maturity() {
-    let (local_net, mut faucet, _recipient) = scenarios::faucet_recipient(
-        PoolType::Transparent,
-        scenarios::pre_ironwood_activation_heights(),
-    )
-    .await;
+    let (local_net, mut faucet, _recipient) =
+        scenarios::faucet_recipient(PoolType::Transparent, ActivationHeights::default()).await;
 
     // After 3 blocks...
     check_client_balances!(faucet, o: 0 s: 0 t: 0);

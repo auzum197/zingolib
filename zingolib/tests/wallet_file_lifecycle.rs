@@ -44,9 +44,9 @@ use zingolib_file_format::{WalletFile, WalletFileRef};
 use zingolib_price::PriceList;
 
 const SEED: &str = zingo_test_vectors::seeds::HOSPITAL_MUSEUM_SEED;
-/// Orchard coinbase lands in the Orchard pool below this height and in Ironwood from it on,
-/// so one chain carries notes in all three shielded pools.
-const IRONWOOD_HEIGHT: u32 = 6;
+/// Ironwood is active from the first block: the Zakura Orchard crate only builds bundles for
+/// the current protocol version, so Orchard-pool coinbase cannot be mined on the mock chain.
+const IRONWOOD_HEIGHT: u32 = 1;
 const PASSPHRASE: &str = "persistence is invisible";
 const KDF: Argon2Params = Argon2Params {
     m_cost: 8,
@@ -156,8 +156,8 @@ async fn sync(scenario: &str, client: &mut LightClient) {
         .unwrap_or_else(|e| panic!("{scenario}: sync fails: {e}"));
 }
 
-/// Mines sapling and orchard notes below the Ironwood activation and ironwood notes above it,
-/// syncing midway so the shard trees hold checkpoints from more than one sync.
+/// Mines sapling and ironwood notes, syncing midway so the shard trees hold checkpoints from
+/// more than one sync.
 async fn fund_pools(scenario: &str, net: &MockNet, client: &mut LightClient) -> UnifiedAddress {
     assert_eq!(
         net.chain_height().await,
@@ -173,8 +173,6 @@ async fn fund_pools(scenario: &str, net: &MockNet, client: &mut LightClient) -> 
     coinbase(net, sapling(&address), 330_000).await;
     sync(scenario, client).await;
     coinbase(net, orchard(&address), 440_000).await;
-    let pre_ironwood = IRONWOOD_HEIGHT - 1 - net.chain_height().await;
-    net.chain.write().await.mine_empty_blocks(pre_ironwood);
     coinbase(net, orchard(&address), 550_000).await;
     coinbase(net, orchard(&address), LAST_FUNDING).await;
     net.chain.write().await.mine_empty_blocks(2);
@@ -186,7 +184,6 @@ async fn fund_pools(scenario: &str, net: &MockNet, client: &mut LightClient) -> 
         .expect("the account has a balance");
     for (pool, total) in [
         ("sapling", balance.total_sapling_balance),
-        ("orchard", balance.total_orchard_balance),
         ("ironwood", balance.total_ironwood_balance),
     ] {
         assert!(
@@ -585,7 +582,7 @@ async fn multi() {
         .expect("the account has a balance");
     for (account, pool, total) in [
         (AccountId::ZERO, "sapling", first.total_sapling_balance),
-        (AccountId::ZERO, "orchard", first.total_orchard_balance),
+        (AccountId::ZERO, "ironwood", first.total_ironwood_balance),
         (second, "sapling", other.total_sapling_balance),
         (second, "ironwood", other.total_ironwood_balance),
     ] {

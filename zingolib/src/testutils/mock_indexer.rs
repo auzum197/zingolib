@@ -869,7 +869,7 @@ fn sapling_coinbase_bundle(
         )
         .expect("coinbase bundles take outputs");
     let (unauthorized, _) = builder
-        .build::<LocalTxProver, LocalTxProver, _, ZatBalance>(&[], rand::rngs::OsRng)
+        .build::<LocalTxProver, LocalTxProver, _, ZatBalance>(&[], rand::rng())
         .expect("a one-output coinbase bundle builds")
         .expect("a bundle with an output is non-empty");
     unauthorized.map_authorization(
@@ -911,7 +911,7 @@ fn orchard_coinbase_bundle(
         )
         .expect("coinbase bundles take outputs");
     let (unauthorized, _) = builder
-        .build::<ZatBalance>(rand::rngs::OsRng)
+        .build::<ZatBalance>(rand::rng())
         .expect("a one-output coinbase bundle builds")
         .expect("a bundle with an output is non-empty");
     let actions = unauthorized.actions().len();

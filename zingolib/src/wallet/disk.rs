@@ -58,6 +58,7 @@ use zingolib_common::{
 pub use zingolib_file_format::{WalletFile, WalletFileRef};
 
 use super::LightWallet;
+use super::locks::OutputLocks;
 use pepper_sync::{keys::transparent, wallet::KeyIdInterface};
 
 impl LightWallet {
@@ -175,6 +176,7 @@ impl LightWallet {
             price_list,
             #[cfg(any(test, feature = "testutils"))]
             send_proposal: None,
+            output_locks: OutputLocks::default(),
             save_required: false,
             encryption: None,
         })

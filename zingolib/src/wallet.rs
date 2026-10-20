@@ -18,6 +18,7 @@ use zingolib_price::PriceList;
 use crate::config::{ChainType, WalletConfig};
 use error::{PriceError, WalletError};
 use keys::unified::{ReceiverSelection, UnifiedAddressId, UnifiedKeyStore};
+use locks::OutputLocks;
 use pepper_sync::keys::transparent::TransparentScope;
 use zcash_transparent::keys::NonHardenedChildIndex;
 
@@ -28,6 +29,7 @@ pub mod utils;
 pub mod balance;
 pub mod disk;
 pub mod keys;
+mod locks;
 pub mod output;
 pub mod spendable;
 pub mod summary;
@@ -154,6 +156,8 @@ pub struct LightWallet {
     /// exists only for the tests.
     #[cfg(any(test, feature = "testutils"))]
     pub(crate) send_proposal: Option<crate::testutils::send::proposal::ZingoProposal>,
+    /// Advisory output locks held by in-flight proposals. Not persisted.
+    output_locks: OutputLocks,
     /// Boolean for tracking whether the wallet state has changed since last save.
     pub save_required: bool,
     /// At-rest encryption session. When `Some`, the serialized wallet is wrapped in a

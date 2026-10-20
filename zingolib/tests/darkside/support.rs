@@ -14,7 +14,7 @@ use zingolib::lightclient::LightClient;
 use zingolib::testutils::chain_generics::conduct_chain::ConductChain;
 use zingolib::testutils::default_test_wallet_settings;
 use zingolib::testutils::mock_indexer::{MockChain, MockNet};
-use zingolib::testutils::scenarios::{ClientBuilder, pre_ironwood_activation_heights};
+use zingolib::testutils::scenarios::ClientBuilder;
 
 use crate::constants::{
     ABANDON_TO_DARKSIDE_SAP_10_000_000_ZAT, DARKSIDE_SEED, GENESIS_BLOCK,
@@ -24,10 +24,11 @@ use crate::constants::{
 /// The height of the first block of the recorded reorg datasets.
 pub const DATASET_START: u32 = 202;
 
-/// The activation schedule of the darkside chains: the recorded
-/// transactions predate NU6.3.
+/// The activation schedule of the darkside chains. The recorded transactions predate NU6.3,
+/// but the Zakura Orchard crate only builds bundles for the current protocol version, so
+/// Ironwood is active from the first block and the sends these suites make are V6.
 pub fn activation_heights() -> ActivationHeights {
-    pre_ironwood_activation_heights()
+    ActivationHeights::default()
 }
 
 /// Launches an empty mock chain on the darkside schedule.
