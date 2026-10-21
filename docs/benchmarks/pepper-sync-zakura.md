@@ -151,3 +151,109 @@ back-off is unchanged. Measured on the same machine and harness as the table abo
   decryption work itself is unchanged.
 - The workspace test suite, which syncs mock chains hundreds of times, runs about four times
   faster for the same reason.
+
+## Checkpoints only where the wallet holds them, and a 1000-block re-org allowance
+
+A port of zingolib #2984 and #3040 onto the signal-driven tree above (`f8a0c05df`). The scan places
+a shard tree checkpoint only on the blocks the wallet will keep one for: the rolling window of
+`SHARDTREE_CHECKPOINT_ROLLING_WINDOW_SIZE` blocks hanging from the chain height when the scan task
+was selected, and the last block of every batch. Before, every block of a batch above the highest
+scanned height carried a checkpoint in every pool's tree, and the next batch's inserts pruned
+almost all of them. In the same change `MAX_REORG_ALLOWANCE` rises from 100 to 1000, zebra's
+re-org limit, so the window holds 1001 checkpoints per pool instead of 100, the wallet keeps 1000
+wallet blocks below its highest scanned block, and transparent address discovery searches the
+1000 blocks below the last known chain height at the start of a session. Same machine and harness.
+`before` is a full run of the signal-driven tree, which the previous section measured for two
+scenarios only.
+
+| scenario | variant | phase | blocks | outputs s/i | before best | before median | after best | after median | ratio |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| empty_blocks | high/minimal | full | 3000 | 0/0 | 0.02 | 0.02 | 0.02 | 0.03 | 1.11 |
+| empty_blocks | high/minimal | incremental | 300 | 0/0 | 0.01 | 0.01 | 0.01 | 0.01 | 1.76 |
+| empty_blocks | high/minimal | rescan | 3300 | 0/0 | 0.03 | 0.03 | 0.02 | 0.03 | 0.98 |
+| sapling_noise_10 | high/minimal | full | 3000 | 30000/0 | 4.60 | 4.62 | 4.24 | 4.29 | 0.93 |
+| sapling_noise_10 | high/minimal | incremental | 300 | 3000/0 | 0.74 | 0.75 | 2.00 | 2.01 | 2.67 |
+| sapling_noise_10 | high/minimal | rescan | 3300 | 33000/0 | 4.97 | 5.03 | 4.78 | 4.78 | 0.95 |
+| ironwood_noise_10 | low/minimal | full | 3000 | 0/30000 | 2.69 | 2.69 | 2.32 | 2.35 | 0.87 |
+| ironwood_noise_10 | medium/minimal | full | 3000 | 0/30000 | 2.50 | 2.51 | 2.23 | 2.27 | 0.90 |
+| ironwood_noise_10 | high/minimal | full | 3000 | 0/30000 | 2.48 | 2.50 | 2.23 | 2.25 | 0.90 |
+| ironwood_noise_10 | maximum/minimal | full | 3000 | 0/30000 | 2.56 | 2.59 | 2.33 | 2.35 | 0.90 |
+| ironwood_noise_10 | low/minimal | incremental | 300 | 0/3000 | 0.37 | 0.38 | 1.06 | 1.07 | 2.79 |
+| ironwood_noise_10 | medium/minimal | incremental | 300 | 0/3000 | 0.39 | 0.39 | 1.07 | 1.09 | 2.81 |
+| ironwood_noise_10 | high/minimal | incremental | 300 | 0/3000 | 0.39 | 0.39 | 1.06 | 1.06 | 2.72 |
+| ironwood_noise_10 | maximum/minimal | incremental | 300 | 0/3000 | 0.48 | 0.48 | 1.14 | 1.14 | 2.37 |
+| ironwood_noise_10 | low/minimal | rescan | 3300 | 0/33000 | 2.96 | 2.97 | 2.62 | 2.64 | 0.89 |
+| ironwood_noise_10 | medium/minimal | rescan | 3300 | 0/33000 | 2.74 | 2.75 | 2.48 | 2.53 | 0.92 |
+| ironwood_noise_10 | high/minimal | rescan | 3300 | 0/33000 | 2.73 | 2.74 | 2.53 | 2.57 | 0.94 |
+| ironwood_noise_10 | maximum/minimal | rescan | 3300 | 0/33000 | 2.86 | 2.86 | 2.63 | 2.64 | 0.92 |
+| mixed_noise | high/minimal | full | 3000 | 15000/15000 | 4.22 | 4.28 | 3.56 | 3.57 | 0.83 |
+| mixed_noise | high/minimal | incremental | 300 | 1500/1500 | 0.70 | 0.71 | 1.82 | 1.82 | 2.57 |
+| mixed_noise | high/minimal | rescan | 3300 | 16500/16500 | 4.63 | 4.63 | 4.01 | 4.07 | 0.88 |
+| wallet_sapling_notes | high/minimal | full | 3000 | 15300/15000 | 4.60 | 4.61 | 3.90 | 3.92 | 0.85 |
+| wallet_sapling_notes | high/minimal | incremental | 300 | 1530/1500 | 0.87 | 0.87 | 1.95 | 1.95 | 2.24 |
+| wallet_sapling_notes | high/minimal | rescan | 3300 | 16830/16500 | 5.23 | 5.29 | 4.57 | 4.71 | 0.89 |
+| wallet_ironwood_notes | high/minimal | full | 3000 | 15000/15300 | 4.34 | 4.43 | 3.81 | 3.86 | 0.87 |
+| wallet_ironwood_notes | high/minimal | incremental | 300 | 1500/1530 | 0.81 | 0.82 | 1.88 | 1.88 | 2.31 |
+| wallet_ironwood_notes | high/minimal | rescan | 3300 | 16500/16830 | 5.18 | 5.42 | 4.43 | 4.53 | 0.84 |
+| wallet_ironwood_dense | high/minimal | full | 3000 | 3000/6000 | 5.00 | 5.04 | 4.52 | 4.54 | 0.90 |
+| wallet_ironwood_dense | high/minimal | incremental | 300 | 300/600 | 0.70 | 0.70 | 0.93 | 0.93 | 1.34 |
+| wallet_ironwood_dense | high/minimal | rescan | 3300 | 3300/6600 | 7.48 | 7.59 | 6.82 | 6.91 | 0.91 |
+| wallet_transparent | high/disabled | full | 3000 | 15000/15000 | 1.33 | 1.41 | 0.85 | 0.91 | 0.65 |
+| wallet_transparent | high/minimal | full | 3000 | 15000/15000 | 4.08 | 4.17 | 3.61 | 3.63 | 0.87 |
+| wallet_transparent | high/recovery | full | 3000 | 15000/15000 | 55.40 | 55.65 | 54.72 | 54.98 | 0.99 |
+| wallet_transparent | high/disabled | incremental | 300 | 1500/1500 | 0.32 | 0.32 | 0.66 | 0.67 | 2.11 |
+| wallet_transparent | high/minimal | incremental | 300 | 1500/1500 | 0.68 | 0.68 | 1.81 | 1.82 | 2.67 |
+| wallet_transparent | high/recovery | incremental | 300 | 1500/1500 | 7.43 | 7.44 | 23.65 | 23.80 | 3.20 |
+| wallet_transparent | high/disabled | rescan | 3300 | 16500/16500 | 1.40 | 1.41 | 1.00 | 1.08 | 0.77 |
+| wallet_transparent | high/minimal | rescan | 3300 | 16500/16500 | 4.35 | 4.53 | 4.04 | 4.05 | 0.89 |
+| wallet_transparent | high/recovery | rescan | 3300 | 16500/16500 | 59.80 | 59.91 | 59.66 | 59.73 | 1.00 |
+
+- The full and rescan phases drop by 8 to 17 percent on every shielded scenario, and more on the
+  transparent scenario with discovery disabled, where decryption is cheap and the checkpoint
+  work was a larger share.
+- Every 300-block incremental phase is 2 to 3 times slower. The next table attributes it.
+
+The port rerun with `MAX_REORG_ALLOWANCE` at 100 and everything else the same, two fresh wallets
+per variant. `before` is the port at 100, `after` the port at 1000.
+
+| scenario | variant | phase | blocks | outputs s/i | before best | before median | after best | after median | ratio |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| ironwood_noise_10 | low/minimal | full | 3000 | 0/30000 | 2.03 | 2.03 | 2.32 | 2.35 | 1.15 |
+| ironwood_noise_10 | medium/minimal | full | 3000 | 0/30000 | 2.06 | 2.07 | 2.23 | 2.27 | 1.10 |
+| ironwood_noise_10 | high/minimal | full | 3000 | 0/30000 | 2.07 | 2.08 | 2.23 | 2.25 | 1.08 |
+| ironwood_noise_10 | maximum/minimal | full | 3000 | 0/30000 | 2.12 | 2.13 | 2.33 | 2.35 | 1.10 |
+| ironwood_noise_10 | low/minimal | incremental | 300 | 0/3000 | 0.31 | 0.31 | 1.06 | 1.07 | 3.42 |
+| ironwood_noise_10 | medium/minimal | incremental | 300 | 0/3000 | 0.34 | 0.34 | 1.07 | 1.09 | 3.16 |
+| ironwood_noise_10 | high/minimal | incremental | 300 | 0/3000 | 0.34 | 0.34 | 1.06 | 1.06 | 3.08 |
+| ironwood_noise_10 | maximum/minimal | incremental | 300 | 0/3000 | 0.41 | 0.42 | 1.14 | 1.14 | 2.73 |
+| ironwood_noise_10 | low/minimal | rescan | 3300 | 0/33000 | 2.25 | 2.26 | 2.62 | 2.64 | 1.17 |
+| ironwood_noise_10 | medium/minimal | rescan | 3300 | 0/33000 | 2.24 | 2.25 | 2.48 | 2.53 | 1.13 |
+| ironwood_noise_10 | high/minimal | rescan | 3300 | 0/33000 | 2.25 | 2.26 | 2.53 | 2.57 | 1.14 |
+| ironwood_noise_10 | maximum/minimal | rescan | 3300 | 0/33000 | 2.41 | 2.42 | 2.63 | 2.64 | 1.09 |
+| wallet_transparent | high/disabled | full | 3000 | 15000/15000 | 0.39 | 0.40 | 0.85 | 0.91 | 2.28 |
+| wallet_transparent | high/minimal | full | 3000 | 15000/15000 | 3.13 | 3.15 | 3.61 | 3.63 | 1.15 |
+| wallet_transparent | high/recovery | full | 3000 | 15000/15000 | 53.93 | 54.05 | 54.72 | 54.98 | 1.02 |
+| wallet_transparent | high/disabled | incremental | 300 | 1500/1500 | 0.27 | 0.27 | 0.66 | 0.67 | 2.45 |
+| wallet_transparent | high/minimal | incremental | 300 | 1500/1500 | 0.64 | 0.64 | 1.81 | 1.82 | 2.83 |
+| wallet_transparent | high/recovery | incremental | 300 | 1500/1500 | 7.46 | 7.49 | 23.65 | 23.80 | 3.18 |
+| wallet_transparent | high/disabled | rescan | 3300 | 16500/16500 | 0.43 | 0.47 | 1.00 | 1.08 | 2.29 |
+| wallet_transparent | high/minimal | rescan | 3300 | 16500/16500 | 3.43 | 3.45 | 4.04 | 4.05 | 1.17 |
+| wallet_transparent | high/recovery | rescan | 3300 | 16500/16500 | 59.35 | 59.41 | 59.66 | 59.73 | 1.01 |
+
+- The checkpoint change alone takes the Ironwood full sync from 2.50 s to 2.08 s and the
+  incremental sync from 0.39 s to 0.34 s. Raising the allowance to 1000 gives back 0.2 s on the
+  full sync and adds 0.7 s to the incremental one.
+- The harness now sums the phase timings of the `RangeScanned` events beside the wall-clock time.
+  At the 1000 allowance the 300-block incremental sync with discovery disabled spends 0.53 s of
+  its 0.66 s in the shard tree insert stage, against 0.62 s for the whole 3000-block full sync:
+  inserting into a tree that already holds a full 1001-checkpoint window costs about as much as
+  building it, and the same sync at the 100 allowance spends 0.05 s there over the same two ranges.
+  `bench_support::tests::insert_against_a_held_checkpoint_window` isolates the shard tree: a
+  300-block batch into a held window of 1001 checkpoints costs 135 ms against 97 ms into 100, in two
+  pools, so the tree accounts for a tenth of the live difference and the rest sits elsewhere in
+  that stage. With minimal discovery a further 0.8 s is session start, the transparent address
+  search over 1000 blocks. The mock indexer's address lookup parses every transaction in the
+  searched range for every address, so that part, and the recovery variant's 7.5 s to 23.8 s,
+  overstate what an indexed server costs. The insert stage is the target for the next change.
+- The raw measurements are `pepper-sync-signals-f8a0c05df-full.jsonl`,
+  `pepper-sync-checkpoint-targets.jsonl` and `pepper-sync-checkpoint-targets-allowance-100.jsonl`.

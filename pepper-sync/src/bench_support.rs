@@ -202,6 +202,38 @@ mod tests {
         );
     }
 
+    /// The insert cost of a 300-block batch against a tree already holding a full checkpoint
+    /// window, for the held window of `SHARDTREE_CHECKPOINT_ROLLING_WINDOW_SIZE` and for 100,
+    /// and for the same tree with a one-checkpoint batch that prunes one checkpoint only.
+    #[test]
+    #[ignore = "checkpoint window insert timing, run with --release --ignored --nocapture"]
+    fn insert_against_a_held_checkpoint_window() {
+        for held in [
+            100u32,
+            crate::sync::SHARDTREE_CHECKPOINT_ROLLING_WINDOW_SIZE,
+        ] {
+            for batch_blocks in [300u32, 1] {
+                let mut trees = ShardTrees::new();
+                let (sapling_pos, orchard_pos) =
+                    prefill_shard(&mut trees, held, held * 10, MAXIMUM_LOCATED_TREE_SIZE);
+                let sapling = synthetic_sapling_leaves(batch_blocks, 3_000, &[]);
+                let orchard = synthetic_orchard_leaves(batch_blocks, 3_000, &[]);
+                let timing = commit_batch(
+                    &mut trees,
+                    sapling,
+                    orchard,
+                    sapling_pos,
+                    orchard_pos,
+                    MAXIMUM_LOCATED_TREE_SIZE,
+                );
+                println!(
+                    "held {held} checkpoints, batch of {batch_blocks} blocks: tree_build={:?} insert={:?}",
+                    timing.tree_build, timing.insert,
+                );
+            }
+        }
+    }
+
     /// Committing a batch with marked notes produces a tree with a valid root and a witness for
     /// every marked note. A small batch (under `MAX_REORG_ALLOWANCE` blocks) so nothing prunes and
     /// all marks stay witnessable. This is the regression guard for future commit optimizations.

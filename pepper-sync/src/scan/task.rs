@@ -729,6 +729,8 @@ pub(crate) struct ScanTask {
     pub(crate) end_seam_block: Option<WalletBlock>,
     pub(crate) scan_targets: BTreeSet<ScanTarget>,
     pub(crate) transparent_addresses: HashMap<String, TransparentAddressId>,
+    // the chain height when the task was selected, which the rolling checkpoint window of each batch hangs from
+    pub(crate) chain_height: BlockHeight,
 }
 
 impl ScanTask {
@@ -761,6 +763,7 @@ impl ScanTask {
         end_seam_block: Option<WalletBlock>,
         scan_targets: BTreeSet<ScanTarget>,
         transparent_addresses: HashMap<String, TransparentAddressId>,
+        chain_height: BlockHeight,
     ) -> Self {
         Self {
             compact_blocks: Vec::new(),
@@ -769,6 +772,7 @@ impl ScanTask {
             end_seam_block,
             scan_targets,
             transparent_addresses,
+            chain_height,
         }
     }
 
@@ -840,6 +844,7 @@ impl ScanTask {
                 end_seam_block: upper_task_first_block,
                 scan_targets: lower_task_scan_targets,
                 transparent_addresses: self.transparent_addresses.clone(),
+                chain_height: self.chain_height,
             },
             ScanTask {
                 compact_blocks: upper_compact_blocks,
@@ -851,6 +856,7 @@ impl ScanTask {
                 end_seam_block: self.end_seam_block,
                 scan_targets: upper_task_scan_targets,
                 transparent_addresses: self.transparent_addresses,
+                chain_height: self.chain_height,
             },
         ))
     }
@@ -896,6 +902,7 @@ mod tests {
             None,
             BTreeSet::new(),
             HashMap::new(),
+            BlockHeight::from_u32(3),
         );
         scan_task.compact_blocks = vec![
             compact_block(2, 1, 4),

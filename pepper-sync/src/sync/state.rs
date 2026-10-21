@@ -73,6 +73,10 @@ where
     else {
         return Ok(None);
     };
+    let chain_height = wallet
+        .get_sync_state()?
+        .last_known_chain_height()
+        .expect("the scan ranges hold the selected range");
 
     if selected_range.priority() == ScanPriority::ScannedWithoutMapping {
         // all continuity checks and scanning is already complete, the scan worker will only re-fetch the nullifiers
@@ -83,6 +87,7 @@ where
             None,
             BTreeSet::new(),
             HashMap::new(),
+            chain_height,
         )));
     }
 
@@ -108,6 +113,7 @@ where
         end_seam_block,
         scan_targets,
         transparent_addresses,
+        chain_height,
     )))
 }
 

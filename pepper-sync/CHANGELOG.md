@@ -9,6 +9,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Deprecated
 
+### Fixed
+- A hash discontinuity more than `MAX_REORG_ALLOWANCE` blocks below the chain height the wallet's
+  state was formed against clears the wallet with the chain error. The depth was measured from the
+  wallet's highest scanned block, so a wallet stopped between the batches of a task attempted a
+  truncation there and was cleared with a truncation error instead.
+
 ### Added
 - `wallet::OutputId`, `keys::KeyId` and `keys::transparent::TransparentAddressId`: unversioned
   `read` and `write`, replacing the field-by-field encoding repeated in every note writer.
@@ -38,6 +44,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `config::DEFAULT_EVENT_CHANNEL_CAPACITY`). Serialized version incremented to 2.
 
 ### Changed
+- `sync::MAX_REORG_ALLOWANCE` is 1000, following zebra's `MAX_BLOCK_REORG_HEIGHT`, which zebra
+  5.2.0 raised from 100 and has kept since. A re-org up to 1000 blocks deep is truncated and
+  scanned again, where a re-org deeper than 100 blocks cleared the wallet's chain data before.
+  The wallet keeps the wallet blocks and, through the new
+  `sync::SHARDTREE_CHECKPOINT_ROLLING_WINDOW_SIZE`, the shard tree checkpoints of the last 1000
+  blocks, and transparent address discovery searches the 1000 blocks below the last known chain
+  height at the start of a sync session. A wallet whose last known chain height is more than 1000
+  blocks above the server's chain height returns `SyncError::ChainError`, where the bound was 100.
+- Scanning places a shard tree checkpoint only on the blocks the wallet will hold one for: the
+  blocks inside the rolling window hanging from the chain height when the scan task was selected,
+  and the last block of every batch, so a session stopped after it anchors a spend there. Every
+  other block's checkpoint was built, inserted and pruned from each pool's tree for nothing, a
+  fixed cost per block per active pool. The heights come from one function,
+  `witness::checkpoint_heights`, which the shard tree update also uses to decide the checkpoints
+  it adds for blocks that leave a pool's tree unchanged, so the two sides agree. A scan task
+  carries the chain height from its selection for this.
+- BREAKING: `wallet::traits::SyncShardTrees::update_shard_trees` takes the chain height the scan
+  task was selected at in place of the wallet's highest scanned block. A batch's rolling
+  checkpoint window hangs from the chain height, so only the batches inside the top window of the
+  chain place it, whatever task they belong to. Before, every batch above the highest scanned
+  height placed a full window hanging from its own last block, which the next batch's inserts
+  pruned.
 - wallet readers reject malformed input with `InvalidData` where they could panic or allocate
   without bound: non-canonical nullifiers, rho and rseed values, invalid recipients, values
   above the money range, scan ranges that end before they start or leave gaps, repeated scan
