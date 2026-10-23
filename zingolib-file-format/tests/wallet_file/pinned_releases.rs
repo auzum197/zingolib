@@ -31,7 +31,8 @@ use orchard::{
     value::NoteValue,
 };
 use secrecy::SecretString;
-use shardtree::store::ShardStore;
+use shardtree::ShardTree;
+use shardtree::store::{ShardStore, memory::MemoryShardStore};
 use zcash_encoding::{CompactSize, Optional, Vector};
 use zcash_keys::keys::UnifiedSpendingKey;
 use zcash_primitives::transaction::TxId;
@@ -52,9 +53,9 @@ use pepper_sync::{
     },
     sync::{ScanPriority, ScanRange},
     wallet::{
-        IronwoodNote, NullifierMap, OrchardNote, OutgoingIronwoodNote, OutgoingOrchardNote,
-        OutputId, OutputInterface, SaplingNote, ScanTarget, ShardTrees, SyncState, TransparentCoin,
-        WalletTransaction,
+        IronwoodNote, IronwoodShardStore, NullifierMap, OrchardNote, OutgoingIronwoodNote,
+        OutgoingOrchardNote, OutputId, OutputInterface, SaplingNote, ScanTarget, ShardTrees,
+        SyncState, TransparentCoin, WalletTransaction,
     },
 };
 use zingolib_common::{
@@ -68,9 +69,13 @@ use zingolib_price::PriceList;
 
 const PASSPHRASE: &str = "conformance";
 const BIRTHDAY: u32 = 2_000_000;
-/// Leaves appended to each note commitment tree, each with its own checkpoint. Above
-/// pepper-sync's reorg allowance of 100, so the trees prune their oldest checkpoints.
+/// Leaves appended to each note commitment tree, each with its own checkpoint. Above the
+/// checkpoints the pinned releases kept, so the trees prune their oldest checkpoints.
 const TREE_LEAVES: u32 = 110;
+/// The checkpoints the pinned releases kept per tree, pepper-sync's re-org allowance when they
+/// were written. This build keeps `SHARDTREE_CHECKPOINT_ROLLING_WINDOW_SIZE`, so a fresh build
+/// takes the pinned budget to prune as the pinned writers did.
+const PINNED_CHECKPOINTS: usize = 100;
 
 #[derive(Clone, Copy)]
 enum Release {
@@ -114,6 +119,19 @@ fn chain(name: &str) -> ChainType {
         "regtest" => ChainType::Regtest(ActivationHeights::default()),
         _ => unreachable!("vectors only exist for the three chains"),
     }
+}
+
+/// `ShardTrees::new` with the pinned releases' checkpoint budget.
+fn pinned_shard_trees() -> ShardTrees {
+    let mut trees = ShardTrees {
+        sapling: ShardTree::new(MemoryShardStore::empty(), PINNED_CHECKPOINTS),
+        orchard: ShardTree::new(MemoryShardStore::empty(), PINNED_CHECKPOINTS),
+        ironwood: ShardTree::new(IronwoodShardStore::empty(), PINNED_CHECKPOINTS),
+    };
+    trees.sapling.checkpoint(BlockHeight::from_u32(0)).unwrap();
+    trees.orchard.checkpoint(BlockHeight::from_u32(0)).unwrap();
+    trees.ironwood.checkpoint(BlockHeight::from_u32(0)).unwrap();
+    trees
 }
 
 fn height(offset: u32) -> BlockHeight {
@@ -356,7 +374,7 @@ fn wallet(
         wallet_transactions: HashMap::new(),
         nullifier_map: NullifierMap::new(),
         outpoint_map: BTreeMap::new(),
-        shard_trees: ShardTrees::new(),
+        shard_trees: pinned_shard_trees(),
         sync_state: SyncState::new(),
         wallet_settings: WalletSettings::default(),
         price_list: PriceList::new(),
