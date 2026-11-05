@@ -54,7 +54,14 @@ pub(crate) mod scheduler;
 pub(crate) mod spend;
 pub(crate) mod state;
 
-pub(crate) const MAX_REORG_ALLOWANCE: u32 = 100;
+/// The deepest chain reorganization the wallet tolerates. It follows zebra's
+/// `zebra_chain::parameters::constants::MAX_BLOCK_REORG_HEIGHT` (1000 since zebra 5.2.0), the depth
+/// below its tip at which zebra finalizes a block and follows no fork beneath it. Zebra crates are
+/// not dependencies of this workspace, so the value is pinned to its upstream by documentation.
+pub(crate) const MAX_REORG_ALLOWANCE: u32 = 1000;
+/// The checkpoints a shard tree holds in its rolling window for re-org handling and chain tip anchor
+/// spends: one for every block a re-org inside the allowance may truncate to, and one for the tip.
+pub(crate) const SHARDTREE_CHECKPOINT_ROLLING_WINDOW_SIZE: u32 = MAX_REORG_ALLOWANCE + 1;
 const VERIFY_BLOCK_RANGE_SIZE: u32 = 10;
 
 /// A snapshot of the current state of sync: scan range coverage and cumulative scanned counts.
@@ -366,7 +373,7 @@ where
     )
     .await?;
 
-    let initial_reorg_detection_start_height = state::update_scan_ranges(
+    state::update_scan_ranges(
         consensus_parameters,
         fetch_request_sender.clone(),
         last_known_chain_height,
@@ -451,7 +458,7 @@ where
                     &ufvks,
                     scan_range,
                     scan_results,
-                    initial_reorg_detection_start_height,
+                    last_known_chain_height,
                     config.performance_level,
                     &mut nullifier_map_limit_exceeded,
                 )
@@ -918,6 +925,10 @@ pub fn set_transactions_failed(
 /// Returns the [`crate::events::SyncEvent`]s describing what this call committed, for the caller
 /// to emit once the wallet lock is released. Events are built on committed paths only, so an event
 /// is never returned for data a reorg in the same call truncates.
+/// `previous_chain_height` is the chain height the wallet's scanned state was formed against, the chain tip
+/// of the previous session. The validator finalizes every block more than the re-org allowance below its tip,
+/// so a hash that disagrees that far below it is a different chain and clears the wallet with the chain error,
+/// as a re-org deeper than the allowance does.
 #[allow(clippy::too_many_arguments)]
 async fn process_scan_results<W>(
     consensus_parameters: &impl consensus::Parameters,
@@ -926,7 +937,7 @@ async fn process_scan_results<W>(
     ufvks: &HashMap<AccountId, UnifiedFullViewingKey>,
     scan_range: ScanRange,
     scan_results: Result<ScanResults, ScanError>,
-    initial_reorg_detection_start_height: BlockHeight,
+    previous_chain_height: BlockHeight,
     performance_level: PerformanceLevel,
     nullifier_map_limit_exceeded: &mut bool,
 ) -> Result<Vec<SyncEvent>, SyncError<W::Error>>
@@ -950,6 +961,7 @@ where
                 sapling_located_trees,
                 orchard_located_trees,
                 ironwood_located_trees,
+                chain_height,
                 fetch_duration,
                 decryption_duration,
                 tree_duration,
@@ -1168,6 +1180,7 @@ where
                     fetch_request_sender.clone(),
                     ufvks,
                     &scan_range,
+                    chain_height,
                     if map_nullifiers {
                         Some(&mut nullifiers)
                     } else {
@@ -1264,7 +1277,10 @@ where
                     .start;
                 sync_state.merge_scan_ranges(ScanPriority::Verify);
 
-                if initial_reorg_detection_start_height - current_reorg_detection_start_height
+                // a block more than the allowance below the chain height the wallet's state was formed against is
+                // final on the wallet's chain, whatever its highest scanned block, so a disagreement there is a
+                // different chain rather than a re-org to truncate
+                if previous_chain_height - current_reorg_detection_start_height
                     > MAX_REORG_ALLOWANCE
                 {
                     clear_wallet_data(wallet)?;
@@ -1491,6 +1507,7 @@ async fn update_wallet_data<W>(
     fetch_request_sender: mpsc::UnboundedSender<FetchRequest>,
     ufvks: &HashMap<AccountId, UnifiedFullViewingKey>,
     scan_range: &ScanRange,
+    chain_height: BlockHeight,
     nullifiers: Option<&mut NullifierMap>,
     outpoints: Option<&mut BTreeMap<OutputId, ScanTarget>>,
     mut transactions: HashMap<TxId, WalletTransaction>,
@@ -1504,9 +1521,6 @@ where
     let sync_state = wallet
         .get_sync_state_mut()
         .map_err(SyncError::WalletError)?;
-    let highest_scanned_height = sync_state
-        .highest_scanned_height()
-        .expect("scan ranges should not be empty in this scope");
     for transaction in transactions.values() {
         sync_state.update_found_note_shard_priority(
             consensus_parameters,
@@ -1578,7 +1592,7 @@ where
         .update_shard_trees(
             fetch_request_sender,
             scan_range,
-            highest_scanned_height,
+            chain_height,
             sapling_located_trees,
             orchard_located_trees,
             ironwood_located_trees,
@@ -2202,6 +2216,7 @@ mod test {
                 sapling_located_trees,
                 orchard_located_trees,
                 ironwood_located_trees,
+                chain_height: BlockHeight::from_u32(range_end - 1),
                 fetch_duration: Duration::ZERO,
                 decryption_duration: Duration::ZERO,
                 tree_duration: Duration::ZERO,
@@ -2253,8 +2268,7 @@ mod test {
                 BlockHeight::from_u32(1)..BlockHeight::from_u32(10),
                 ScanPriority::Historic,
             );
-            // the processed range is mid-scan in the wallet's state, with a higher range already
-            // scanned so no shard tree checkpoints are added (no fetcher in this test)
+            // the processed range is mid-scan in the wallet's state, with a higher range already scanned
             let sync_state = SyncState::new_for_test(vec![
                 ScanRange::from_parts(
                     BlockHeight::from_u32(1)..BlockHeight::from_u32(10),
@@ -2282,6 +2296,9 @@ mod test {
                 sapling_located_trees: Vec::new(),
                 orchard_located_trees: Vec::new(),
                 ironwood_located_trees: Vec::new(),
+                // the rolling window hangs from the chain height and covers the range, so every checkpoint
+                // copies the one below it and no tree state is fetched
+                chain_height: BlockHeight::from_u32(1000),
                 fetch_duration: Duration::ZERO,
                 decryption_duration: Duration::ZERO,
                 tree_duration: Duration::ZERO,
@@ -2320,8 +2337,8 @@ mod test {
                     assert_eq!(*orchard_outputs, 9);
                     assert_eq!(*ironwood_outputs, 0);
                     // the mock bypasses the scan phases, but the commit phase is measured here.
-                    // with a higher range already scanned the checkpoint window is empty, so no
-                    // `get_frontiers` fetch occurs and the frontier time is deterministically zero
+                    // every checkpoint copies the one below it, so no `get_frontiers` fetch occurs and
+                    // the frontier time is deterministically zero
                     assert_eq!(timing.fetch, Duration::ZERO);
                     assert_eq!(timing.decryption, Duration::ZERO);
                     assert_eq!(timing.tree, Duration::ZERO);
@@ -2392,9 +2409,11 @@ mod test {
             use super::*;
             #[tokio::test]
             async fn above_allowance() {
-                const LAST_KNOWN_HEIGHT: BlockHeight = BlockHeight::from_u32(211);
+                // the scan range ends one above the last known chain height, which sits the whole
+                // allowance above the chain height
+                let last_known_height = DEFAULT_CHAIN_HEIGHT + MAX_REORG_ALLOWANCE + 1;
                 let lkch = vec![ScanRange::from_parts(
-                    DEFAULT_START_HEIGHT..LAST_KNOWN_HEIGHT,
+                    DEFAULT_START_HEIGHT..last_known_height,
                     crate::sync::ScanPriority::Scanned,
                 )];
                 let state = SyncState::new_for_test(lkch);
@@ -2407,7 +2426,7 @@ mod test {
                         e.to_string(),
                         format!(
                             "wallet height {} is more than {} blocks ahead of best chain height {}",
-                            LAST_KNOWN_HEIGHT - 1,
+                            last_known_height - 1,
                             MAX_REORG_ALLOWANCE,
                             DEFAULT_CHAIN_HEIGHT
                         )

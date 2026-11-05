@@ -19,6 +19,7 @@ use std::io::Write as _;
 use std::time::{Duration, Instant};
 
 use pepper_sync::config::{PerformanceLevel, SyncConfig, TransparentAddressDiscovery};
+use pepper_sync::events::{SequencedSyncEvent, SyncEvent};
 use pepper_sync::sync::SyncResult;
 use zcash_protocol::value::Zatoshis;
 use zingolib::data::PollReport;
@@ -304,6 +305,7 @@ impl Measurement {
 }
 
 async fn timed(client: &mut LightClient, rescan: bool) -> (Duration, SyncResult) {
+    let mut events = client.subscribe_sync_events();
     let start = Instant::now();
     if rescan {
         client.rescan().await
@@ -316,10 +318,78 @@ async fn timed(client: &mut LightClient, rescan: bool) -> (Duration, SyncResult)
             PollReport::NoHandle => panic!("the sync task vanished"),
             PollReport::NotReady => tokio::time::sleep(Duration::from_millis(1)).await,
             PollReport::Ready(result) => {
-                return (start.elapsed(), result.expect("the mock chain syncs"));
+                let elapsed = start.elapsed();
+                report_phases(&mut events, elapsed);
+                return (elapsed, result.expect("the mock chain syncs"));
             }
         }
     }
+}
+
+/// Sums the phase timings of every range the session committed and prints them beside the
+/// wall-clock time. The remainder is session start (transparent discovery, re-org detection) and
+/// time the scanner spent idle.
+fn report_phases(
+    events: &mut tokio::sync::broadcast::Receiver<SequencedSyncEvent>,
+    elapsed: Duration,
+) {
+    let mut phases = [Duration::ZERO; 10];
+    let mut ranges = 0u32;
+    let mut lagged = 0u64;
+    loop {
+        match events.try_recv() {
+            Ok(sequenced) => {
+                if let SyncEvent::RangeScanned { timing, .. } = sequenced.event {
+                    ranges += 1;
+                    let commit = timing.commit;
+                    for (sum, phase) in phases.iter_mut().zip([
+                        timing.fetch,
+                        timing.decryption,
+                        timing.tree,
+                        commit.checkpoints,
+                        commit.frontiers,
+                        commit.insert_tree,
+                        commit.spend_fetch,
+                        commit.spend_cpu,
+                        commit.cleanup,
+                        commit.other,
+                    ]) {
+                        *sum += phase;
+                    }
+                }
+            }
+            Err(tokio::sync::broadcast::error::TryRecvError::Lagged(n)) => lagged += n,
+            Err(_) => break,
+        }
+    }
+    let attributed = phases.iter().sum::<Duration>();
+    let names = [
+        "fetch",
+        "decrypt",
+        "tree",
+        "checkpoints",
+        "frontiers",
+        "insert",
+        "spend_fetch",
+        "spend_cpu",
+        "cleanup",
+        "other",
+    ];
+    let breakdown = names
+        .iter()
+        .zip(phases)
+        .map(|(name, phase)| format!("{name} {:.2}", phase.as_secs_f64()))
+        .collect::<Vec<_>>()
+        .join(" ");
+    eprintln!(
+        "    phases ({ranges} ranges): {breakdown} | unattributed {:.2}{}",
+        elapsed.saturating_sub(attributed).as_secs_f64(),
+        if lagged > 0 {
+            format!(" (lagged {lagged} events)")
+        } else {
+            String::new()
+        }
+    );
 }
 
 async fn run_scenario(

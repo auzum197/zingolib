@@ -43,6 +43,7 @@ pub(super) fn scan_compact_blocks<P>(
     ufvks: &HashMap<AccountId, UnifiedFullViewingKey>,
     initial_scan_data: InitialScanData,
     trial_decrypt_task_size: usize,
+    checkpoint_heights: &BTreeSet<BlockHeight>,
 ) -> Result<ScanData, ScanError>
 where
     P: consensus::Parameters + Sync + Send + 'static,
@@ -175,18 +176,21 @@ where
                 .expect("should not be more than 2^32 outputs in a transaction");
         }
 
-        set_checkpoint_retentions(
-            block_height,
-            &mut witness_data.sapling_leaves_and_retentions,
-        );
-        set_checkpoint_retentions(
-            block_height,
-            &mut witness_data.orchard_leaves_and_retentions,
-        );
-        set_checkpoint_retentions(
-            block_height,
-            &mut witness_data.ironwood_leaves_and_retentions,
-        );
+        // a checkpoint on any other block would be built, inserted and pruned from the shard tree for nothing
+        if checkpoint_heights.contains(&block_height) {
+            set_checkpoint_retentions(
+                block_height,
+                &mut witness_data.sapling_leaves_and_retentions,
+            );
+            set_checkpoint_retentions(
+                block_height,
+                &mut witness_data.orchard_leaves_and_retentions,
+            );
+            set_checkpoint_retentions(
+                block_height,
+                &mut witness_data.ironwood_leaves_and_retentions,
+            );
+        }
 
         let wallet_block = WalletBlock {
             block_height: get_compact_block_height(block),

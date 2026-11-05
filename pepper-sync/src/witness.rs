@@ -1,6 +1,7 @@
 //! Module for structs and types associated with witness construction
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
+use std::ops::Range;
 
 use incrementalmerkletree::{
     Position, Retention,
@@ -12,6 +13,8 @@ use shardtree::LocatedPrunableTree;
 use zcash_primitives::{block::BlockHash, merkle_tree::read_commitment_tree};
 use zcash_protocol::consensus::BlockHeight;
 use zingo_netutils::lightwallet_protocol::TreeState;
+
+use crate::sync::SHARDTREE_CHECKPOINT_ROLLING_WINDOW_SIZE;
 
 #[cfg(not(feature = "darkside_test"))]
 use {
@@ -332,5 +335,85 @@ pub(crate) fn get_ironwood_tree(
         read_commitment_tree::<MerkleHashOrchard, _, { orchard::NOTE_COMMITMENT_TREE_DEPTH as u8 }>(
             &ironwood_tree_bytes[..],
         )
+    }
+}
+
+// checkpoints are held for the top SHARDTREE_CHECKPOINT_ROLLING_WINDOW_SIZE blocks of the chain only: a re-org is
+// measured from the chain height and a spend anchors close to it, so no anchor or truncation needs a checkpoint
+// below this window once the chain tip is scanned.
+fn checkpoint_range(
+    block_range: &Range<BlockHeight>,
+    chain_height: BlockHeight,
+) -> Range<BlockHeight> {
+    let window_start = chain_height.saturating_sub(SHARDTREE_CHECKPOINT_ROLLING_WINDOW_SIZE - 1);
+
+    std::cmp::max(block_range.start, window_start)..block_range.end
+}
+
+// the blocks of `block_range`, one batch of a scan task, the shard trees hold a checkpoint for: the blocks inside
+// the rolling window hanging from `chain_height`, and the batch's last block, so a session stopped after this
+// batch anchors a spend there. the scan places a leaf checkpoint on these blocks and on no other, and the shard
+// tree update adds a checkpoint to every tree the block leaves unchanged.
+pub(crate) fn checkpoint_heights(
+    block_range: &Range<BlockHeight>,
+    chain_height: BlockHeight,
+) -> BTreeSet<BlockHeight> {
+    let window = checkpoint_range(block_range, chain_height);
+    let mut heights = (u32::from(window.start)..u32::from(window.end))
+        .map(BlockHeight::from_u32)
+        .collect::<BTreeSet<_>>();
+    heights.insert(block_range.end - 1);
+
+    heights
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const CHAIN_HEIGHT: u32 = 20_000;
+    const WINDOW_START: u32 = CHAIN_HEIGHT - SHARDTREE_CHECKPOINT_ROLLING_WINDOW_SIZE + 1;
+
+    fn heights(block_range: Range<u32>) -> Vec<u32> {
+        checkpoint_heights(
+            &(BlockHeight::from_u32(block_range.start)..BlockHeight::from_u32(block_range.end)),
+            BlockHeight::from_u32(CHAIN_HEIGHT),
+        )
+        .into_iter()
+        .map(u32::from)
+        .collect()
+    }
+
+    /// A batch inside the top window of the chain holds a checkpoint on every block from the window start.
+    #[test]
+    fn a_batch_inside_the_window_checkpoints_every_block_from_the_window_start() {
+        let range = WINDOW_START - 10..WINDOW_START + 10;
+
+        assert_eq!(
+            heights(range.clone()),
+            (WINDOW_START..range.end).collect::<Vec<_>>()
+        );
+    }
+
+    /// A batch reaching the chain height holds a checkpoint on every block of the window.
+    #[test]
+    fn a_batch_at_the_chain_tip_checkpoints_the_whole_window() {
+        let range = WINDOW_START - 10..CHAIN_HEIGHT + 1;
+
+        let heights = heights(range);
+        assert_eq!(
+            heights.len(),
+            SHARDTREE_CHECKPOINT_ROLLING_WINDOW_SIZE as usize
+        );
+        assert_eq!(heights.first(), Some(&WINDOW_START));
+        assert_eq!(heights.last(), Some(&CHAIN_HEIGHT));
+    }
+
+    /// A batch below the window holds a checkpoint on its last block and on no other.
+    #[test]
+    fn a_batch_below_the_window_checkpoints_its_last_block_only() {
+        let range = WINDOW_START - 2_000..WINDOW_START - 1_000;
+
+        assert_eq!(heights(range.clone()), vec![range.end - 1]);
     }
 }

@@ -35,7 +35,7 @@ use crate::{
         KeyId, decode_unified_address,
         transparent::{TransparentAddressId, TransparentScope},
     },
-    sync::{MAX_REORG_ALLOWANCE, ScanPriority, ScanRange},
+    sync::{SHARDTREE_CHECKPOINT_ROLLING_WINDOW_SIZE, ScanPriority, ScanRange},
     wallet::ScanTarget,
 };
 
@@ -1239,9 +1239,9 @@ impl ShardTrees {
                 Checkpoint::from_parts(tree_state, marks_removed),
             ))
         })?;
-        if checkpoints.len() > MAX_REORG_ALLOWANCE as usize {
+        if checkpoints.len() > SHARDTREE_CHECKPOINT_ROLLING_WINDOW_SIZE as usize {
             return Err(invalid_data(format!(
-                "{} checkpoints exceed the {MAX_REORG_ALLOWANCE} a wallet file keeps",
+                "{} checkpoints exceed the {SHARDTREE_CHECKPOINT_ROLLING_WINDOW_SIZE} a wallet file keeps",
                 checkpoints.len()
             )));
         }
@@ -1258,7 +1258,7 @@ impl ShardTrees {
 
         Ok(shardtree::ShardTree::new(
             S::from(store),
-            MAX_REORG_ALLOWANCE as usize,
+            SHARDTREE_CHECKPOINT_ROLLING_WINDOW_SIZE as usize,
         ))
     }
 
@@ -1338,8 +1338,8 @@ impl ShardTrees {
                 Ok(())
             })
             .expect("Infallible");
-        if checkpoints.len() > MAX_REORG_ALLOWANCE as usize {
-            let keep_from = checkpoints.len() - MAX_REORG_ALLOWANCE as usize;
+        if checkpoints.len() > SHARDTREE_CHECKPOINT_ROLLING_WINDOW_SIZE as usize {
+            let keep_from = checkpoints.len() - SHARDTREE_CHECKPOINT_ROLLING_WINDOW_SIZE as usize;
             checkpoints.drain(..keep_from);
         }
         write_checkpoints(&mut writer, &checkpoints)?;
@@ -1823,7 +1823,7 @@ mod tests {
 
     #[test]
     fn more_checkpoints_than_the_writer_keeps_are_rejected() {
-        let checkpoints = (0..=MAX_REORG_ALLOWANCE)
+        let checkpoints = (0..=SHARDTREE_CHECKPOINT_ROLLING_WINDOW_SIZE)
             .map(|id| checkpoint(id, &[]))
             .collect::<Vec<_>>();
         let tree = sapling_tree(&[], &checkpoints);
@@ -1888,9 +1888,13 @@ mod tests {
 
     #[test]
     fn shardtree_roundtrip_keeps_newest_checkpoints() {
+        // checkpoints appended past the rolling window, so the writer drops some
+        const APPENDED: u32 = SHARDTREE_CHECKPOINT_ROLLING_WINDOW_SIZE + 49;
+        const OLDEST_KEPT: u32 = APPENDED - SHARDTREE_CHECKPOINT_ROLLING_WINDOW_SIZE + 1;
+
         let mut shard_trees = ShardTrees::new();
 
-        for height in 1..=150 {
+        for height in 1..=APPENDED {
             let height = BlockHeight::from_u32(height);
             shard_trees
                 .sapling
@@ -1919,33 +1923,39 @@ mod tests {
         let sapling_store = roundtripped.sapling.store();
         let orchard_store = roundtripped.orchard.store();
 
-        assert_eq!(sapling_store.checkpoint_count().expect("infallible"), 100);
-        assert_eq!(orchard_store.checkpoint_count().expect("infallible"), 100);
+        assert_eq!(
+            sapling_store.checkpoint_count().expect("infallible"),
+            SHARDTREE_CHECKPOINT_ROLLING_WINDOW_SIZE as usize
+        );
+        assert_eq!(
+            orchard_store.checkpoint_count().expect("infallible"),
+            SHARDTREE_CHECKPOINT_ROLLING_WINDOW_SIZE as usize
+        );
         assert_eq!(
             sapling_store.min_checkpoint_id().expect("infallible"),
-            Some(BlockHeight::from_u32(51))
+            Some(BlockHeight::from_u32(OLDEST_KEPT))
         );
         assert_eq!(
             sapling_store.max_checkpoint_id().expect("infallible"),
-            Some(BlockHeight::from_u32(150))
+            Some(BlockHeight::from_u32(APPENDED))
         );
         assert_eq!(
             orchard_store.min_checkpoint_id().expect("infallible"),
-            Some(BlockHeight::from_u32(51))
+            Some(BlockHeight::from_u32(OLDEST_KEPT))
         );
         assert_eq!(
             orchard_store.max_checkpoint_id().expect("infallible"),
-            Some(BlockHeight::from_u32(150))
+            Some(BlockHeight::from_u32(APPENDED))
         );
         assert!(
             sapling_store
-                .get_checkpoint(&BlockHeight::from_u32(149))
+                .get_checkpoint(&BlockHeight::from_u32(APPENDED - 1))
                 .expect("infallible")
                 .is_some()
         );
         assert!(
             sapling_store
-                .get_checkpoint(&BlockHeight::from_u32(50))
+                .get_checkpoint(&BlockHeight::from_u32(OLDEST_KEPT - 1))
                 .expect("infallible")
                 .is_none()
         );

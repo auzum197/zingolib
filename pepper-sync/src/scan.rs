@@ -97,6 +97,9 @@ pub(crate) struct ScanResults {
     pub(crate) sapling_located_trees: Vec<LocatedTreeData<sapling_crypto::Node>>,
     pub(crate) orchard_located_trees: Vec<LocatedTreeData<MerkleHashOrchard>>,
     pub(crate) ironwood_located_trees: Vec<LocatedTreeData<MerkleHashOrchard>>,
+    /// The chain height the task was selected at, which the shard tree update takes the
+    /// checkpoint heights of the located trees from.
+    pub(crate) chain_height: BlockHeight,
     /// Wall-clock time spent fetching this batch's tree state and any discovered full
     /// transactions. One phase of the timing carried out to consumers on
     /// [`crate::events::SyncEvent::RangeScanned`].
@@ -147,6 +150,7 @@ where
         end_seam_block,
         mut scan_targets,
         transparent_addresses,
+        chain_height,
     } = scan_task;
 
     if compact_blocks
@@ -183,6 +187,7 @@ where
             sapling_located_trees: Vec::new(),
             orchard_located_trees: Vec::new(),
             ironwood_located_trees: Vec::new(),
+            chain_height,
             // this path only collects nullifiers, so none of the timed phases run
             fetch_duration: Duration::ZERO,
             decryption_duration: Duration::ZERO,
@@ -205,6 +210,7 @@ where
     .await?;
     let mut fetch_duration = fetch_started.elapsed();
 
+    let checkpoint_heights = witness::checkpoint_heights(scan_range.block_range(), chain_height);
     let consensus_parameters_clone = consensus_parameters.clone();
     let ufvks_clone = ufvks.clone();
     let decrypt_started = Instant::now();
@@ -215,6 +221,7 @@ where
             &ufvks_clone,
             initial_scan_data,
             max_batch_outputs / 8,
+            &checkpoint_heights,
         )
     })
     .await
@@ -288,6 +295,7 @@ where
         sapling_located_trees,
         orchard_located_trees,
         ironwood_located_trees,
+        chain_height,
         fetch_duration,
         decryption_duration,
         tree_duration,
