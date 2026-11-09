@@ -14,6 +14,7 @@
 //! - `PEPPER_BENCH_BLOCKS`: blocks per chain (default 3000). The incremental phase mines a tenth more.
 //! - `PEPPER_BENCH_RUNS`: fresh wallets per scenario (default 3). The table reports the minimum.
 //! - `PEPPER_BENCH_OUT`: path of a JSON lines file that receives every measurement.
+//! - `PEPPER_BENCH_VARIANTS`: comma-separated variant names to keep (default all).
 
 use std::io::Write as _;
 use std::time::{Duration, Instant};
@@ -86,6 +87,7 @@ impl Variant {
     };
 }
 
+#[derive(Clone)]
 struct Scenario {
     name: &'static str,
     shape: Shape,
@@ -506,9 +508,20 @@ fn main() {
     let foreign = addresses(FOREIGN_SEED);
 
     let mut all = Vec::new();
-    for scenario in scenarios() {
+    let variant_filter: Option<Vec<String>> = std::env::var("PEPPER_BENCH_VARIANTS")
+        .ok()
+        .map(|list| list.split(',').map(|name| name.trim().to_string()).collect());
+    for mut scenario in scenarios() {
         if !filters.is_empty() && !filters.iter().any(|filter| scenario.name.contains(filter)) {
             continue;
+        }
+        if let Some(keep) = &variant_filter {
+            scenario
+                .variants
+                .retain(|variant| keep.iter().any(|name| name == &variant.name));
+            if scenario.variants.is_empty() {
+                continue;
+            }
         }
         let measurements =
             runtime.block_on(run_scenario(&scenario, blocks, runs, &wallet, &foreign));
