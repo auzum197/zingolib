@@ -9,3 +9,9 @@ compare before after:
     python3 "{{ justfile_directory() }}/docs/benchmarks/compare.py" \
         "{{ justfile_directory() }}/docs/benchmarks/pepper-sync-{{ before }}.jsonl" \
         "{{ justfile_directory() }}/docs/benchmarks/pepper-sync-{{ after }}.jsonl"
+
+# Interleaved A/B: builds each commit in a worktree, then alternates scenarios
+# between the two so session drift hits both sides. Writes both jsonl files.
+ab before after runs="5" blocks="3000":
+    python3 "{{ justfile_directory() }}/docs/benchmarks/ab_bench.py" {{ before }} {{ after }} \
+        --runs {{ runs }} --blocks {{ blocks }}
