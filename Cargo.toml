@@ -47,26 +47,26 @@ tokio-stream = { version = "0.1", features = ["net"] }
 
 ### Zcash
 incrementalmerkletree = "0.8.2"
-orchard = { version = "=4.0.0-rc1", package = "zakura-orchard", features = ["backend-halo2"] }
-sapling-crypto = { version = "=4.0.0-rc1", package = "zakura-sapling-crypto" }
+orchard = { version = "=4.0.0", package = "zakura-orchard", features = ["backend-halo2"] }
+sapling-crypto = { version = "=4.0.0", package = "zakura-sapling-crypto" }
 shardtree = "0.7.1"
-zcash_address = { version = "=4.0.0-rc1", package = "zakura-address" }
-zcash_client_backend = { git = "https://github.com/zakura-core/wallet-libraries", rev = "a2f87e6f235dc16840be1dd7fc88e6dd06f0a268", package = "zakura-client-backend", features = [
+zcash_address = { version = "=4.0.0", package = "zakura-address" }
+zcash_client_backend = { git = "https://github.com/zakura-core/wallet-libraries", rev = "5c83ec2ed72a8d28bde27271d1fc442128191046", package = "zakura-client-backend", features = [
     "lightwalletd-tonic",
     "orchard",
     "transparent-inputs",
 ] }
 zcash_encoding = "0.4.0"
-zcash_keys = { version = "=4.0.0-rc1", package = "zakura-keys", features = [
+zcash_keys = { version = "=4.0.0", package = "zakura-keys", features = [
     "transparent-inputs",
     "sapling",
     "orchard",
 ] }
-zcash_note_encryption = { version = "=4.0.0-rc1", package = "zakura-note-encryption" }
-zcash_primitives = { version = "=4.0.0-rc1", package = "zakura-primitives" }
-zcash_proofs = { version = "=4.0.0-rc1", package = "zakura-proofs" }
-zcash_protocol = { version = "=4.0.0-rc1", package = "zakura-protocol" }
-zcash_transparent = { version = "=4.0.0-rc1", package = "zakura-transparent" }
+zcash_note_encryption = { version = "=4.0.0", package = "zakura-note-encryption" }
+zcash_primitives = { version = "=4.0.0", package = "zakura-primitives" }
+zcash_proofs = { version = "=4.0.0", package = "zakura-proofs" }
+zcash_protocol = { version = "=4.0.0", package = "zakura-protocol" }
+zcash_transparent = { version = "=4.0.0", package = "zakura-transparent" }
 
 ### Blockchain Protocol
 bip0039 = { version = "0.14", features = ["rand"] }
@@ -76,7 +76,7 @@ zip32 = "0.2.0"
 ### Cryptographic
 argon2 = "0.5"
 chacha20poly1305 = "0.10"
-jubjub = { version = "=4.0.0-rc1", package = "zakura-jubjub" }
+jubjub = { version = "=4.0.0", package = "zakura-jubjub" }
 ring = "0.17.14"
 secp256k1 = "0.33"
 secrecy = "0.8"
