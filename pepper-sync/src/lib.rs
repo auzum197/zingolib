@@ -105,8 +105,13 @@ After the sync process is initialized, it will be in a state of verification, on
 #![doc = simple_mermaid::mermaid!("../diagrams/process_scan_results.mmd")]
 
 pub(crate) mod client;
-pub mod config;
 pub mod error;
+
+/// Operations on the wallet data that only the sync engine performs.
+pub mod engine {
+    pub use zingolib_common::engine::*;
+}
+
 pub mod events;
 pub mod keys;
 pub(crate) mod scan;
@@ -123,6 +128,7 @@ pub use sync::scan_pending_transaction;
 pub use sync::set_transactions_failed;
 pub use sync::sync;
 pub use sync::sync_status;
+pub use zingolib_common::config;
 
 #[cfg(test)]
 mod mocks;

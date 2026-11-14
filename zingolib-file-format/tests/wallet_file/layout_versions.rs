@@ -6,18 +6,19 @@
 
 use zcash_keys::keys::UnifiedFullViewingKey;
 
-use pepper_sync::config::{PerformanceLevel, SyncConfig};
-use pepper_sync::wallet::{
-    IronwoodNote, NullifierMap, OrchardNote, OutgoingIronwoodNote, OutgoingOrchardNote,
-    OutgoingSaplingNote, SaplingNote, ScanTarget, ShardTrees, SyncState, TransparentCoin,
-    TreeBounds, WalletBlock, WalletTransaction,
-};
 use zingolib_common::chain::ChainType;
+use zingolib_common::config::{PerformanceLevel, SyncConfig};
 use zingolib_common::keys::{ReceiverSelection, UnifiedKeyStore};
+use zingolib_common::price::PriceList;
 use zingolib_common::serialization::ReadableWriteable;
 use zingolib_common::status::ConfirmationStatus;
+use zingolib_common::sync::SyncState;
+use zingolib_common::wallet::{
+    IronwoodNote, NullifierMap, OrchardNote, OutgoingIronwoodNote, OutgoingOrchardNote,
+    OutgoingSaplingNote, SaplingNote, ScanTarget, ShardTrees, TransparentCoin, TreeBounds,
+    WalletBlock, WalletTransaction,
+};
 use zingolib_file_format::WalletFile;
-use zingolib_price::PriceList;
 
 #[test]
 fn struct_versions_are_pinned() {

@@ -4,7 +4,7 @@ use std::{
 };
 
 use byteorder::{LittleEndian, ReadBytesExt, WriteBytesExt};
-use pepper_sync::config::SyncConfig;
+use zingolib_common::config::SyncConfig;
 use zingolib_common::serialization::ReadableWriteable;
 
 /// Wallet settings.

@@ -23,6 +23,7 @@ use zingolib_common::status::ConfirmationStatus;
 
 use crate::client::{self, FetchRequest};
 use crate::config::{PerformanceLevel, SyncConfig};
+use crate::engine::{InitialSyncStateOps as _, SyncStateOps as _, WalletNoteOps as _};
 use crate::error::{
     ContinuityError, MempoolError, ScanError, ServerError, SyncError, SyncModeError,
     SyncStatusError,
@@ -39,6 +40,7 @@ use crate::wallet::traits::{
 use crate::wallet::{
     InitialSyncState, KeyIdInterface, NoteInterface, NullifierMap, OutputId, OutputInterface,
     ScanTarget, SyncMode, SyncState, WalletBlock, WalletTransaction,
+    wallet_block_from_compact_block,
 };
 use crate::witness::LocatedTreeData;
 
@@ -50,19 +52,14 @@ use zingo_netutils::lightwallet_protocol::SubtreeRoot;
 #[cfg(not(feature = "darkside_test"))]
 pub(crate) mod transparent;
 
-pub(crate) mod scheduler;
 pub(crate) mod spend;
 pub(crate) mod state;
 
-/// The deepest chain reorganization the wallet tolerates. It follows zebra's
-/// `zebra_chain::parameters::constants::MAX_BLOCK_REORG_HEIGHT` (1000 since zebra 5.2.0), the depth
-/// below its tip at which zebra finalizes a block and follows no fork beneath it. Zebra crates are
-/// not dependencies of this workspace, so the value is pinned to its upstream by documentation.
-pub(crate) const MAX_REORG_ALLOWANCE: u32 = 1000;
-/// The checkpoints a shard tree holds in its rolling window for re-org handling and chain tip anchor
-/// spends: one for every block a re-org inside the allowance may truncate to, and one for the tip.
-pub(crate) const SHARDTREE_CHECKPOINT_ROLLING_WINDOW_SIZE: u32 = MAX_REORG_ALLOWANCE + 1;
-const VERIFY_BLOCK_RANGE_SIZE: u32 = 10;
+pub(crate) use zingolib_common::engine::VerifyEnd;
+pub use zingolib_common::sync::{ScanPriority, ScanRange};
+pub(crate) use zingolib_common::wallet::{
+    MAX_REORG_ALLOWANCE, SHARDTREE_CHECKPOINT_ROLLING_WINDOW_SIZE,
+};
 
 /// A snapshot of the current state of sync: scan range coverage and cumulative scanned counts.
 ///
@@ -129,137 +126,6 @@ impl std::fmt::Display for SyncResult {
             self.orchard_outputs_scanned,
             self.ironwood_outputs_scanned,
         )
-    }
-}
-
-/// Scanning range priority levels.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
-pub enum ScanPriority {
-    /// Block ranges that are currently refetching nullifiers.
-    RefetchingNullifiers,
-    /// Block ranges that are currently being scanned.
-    Scanning,
-    /// Block ranges that have already been scanned will not be re-scanned.
-    Scanned,
-    /// Block ranges that have already been scanned. The nullifiers from this range were not mapped after scanning and
-    /// spend detection to reduce memory consumption and/or storage for non-linear scanning. These nullifiers will need
-    /// to be re-fetched for final spend detection when this range is the lowest unscanned range in the wallet's list
-    /// of scan ranges.
-    ScannedWithoutMapping,
-    /// Block ranges to be scanned to advance the fully-scanned height.
-    Historic,
-    /// Block ranges adjacent to heights at which the user opened the wallet.
-    OpenAdjacent,
-    /// Blocks that must be scanned to complete note commitment tree shards adjacent to found notes.
-    FoundNote,
-    /// Blocks that must be scanned to complete the latest note commitment tree shard.
-    ChainTip,
-    /// A previously scanned range that must be verified to check it is still in the
-    /// main chain, has highest priority.
-    Verify,
-}
-
-/// A range of blocks to be scanned, along with its associated priority.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ScanRange {
-    block_range: Range<BlockHeight>,
-    priority: ScanPriority,
-}
-
-impl std::fmt::Display for ScanRange {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(
-            f,
-            "{:?}({}..{})",
-            self.priority, self.block_range.start, self.block_range.end,
-        )
-    }
-}
-
-impl ScanRange {
-    /// Constructs a scan range from its constituent parts.
-    #[must_use]
-    pub fn from_parts(block_range: Range<BlockHeight>, priority: ScanPriority) -> Self {
-        assert!(
-            block_range.end >= block_range.start,
-            "{block_range:?} is invalid for ScanRange({priority:?})",
-        );
-        ScanRange {
-            block_range,
-            priority,
-        }
-    }
-
-    /// Returns the range of block heights to be scanned.
-    #[must_use]
-    pub fn block_range(&self) -> &Range<BlockHeight> {
-        &self.block_range
-    }
-
-    /// Returns the priority with which the scan range should be scanned.
-    #[must_use]
-    pub fn priority(&self) -> ScanPriority {
-        self.priority
-    }
-
-    /// Returns whether or not the scan range is empty.
-    #[must_use]
-    pub fn is_empty(&self) -> bool {
-        self.block_range.is_empty()
-    }
-
-    /// Returns the number of blocks in the scan range.
-    #[must_use]
-    pub fn len(&self) -> usize {
-        usize::try_from(u32::from(self.block_range.end) - u32::from(self.block_range.start))
-            .expect("due to number of max blocks should always be valid usize")
-    }
-
-    /// Shifts the start of the block range to the right if `block_height >
-    /// self.block_range().start`. Returns `None` if the resulting range would
-    /// be empty (or the range was already empty).
-    #[must_use]
-    pub fn truncate_start(&self, block_height: BlockHeight) -> Option<Self> {
-        if block_height >= self.block_range.end || self.is_empty() {
-            None
-        } else {
-            Some(ScanRange {
-                block_range: self.block_range.start.max(block_height)..self.block_range.end,
-                priority: self.priority,
-            })
-        }
-    }
-
-    /// Shifts the end of the block range to the left if `block_height <
-    /// self.block_range().end`. Returns `None` if the resulting range would
-    /// be empty (or the range was already empty).
-    #[must_use]
-    pub fn truncate_end(&self, block_height: BlockHeight) -> Option<Self> {
-        if block_height <= self.block_range.start || self.is_empty() {
-            None
-        } else {
-            Some(ScanRange {
-                block_range: self.block_range.start..self.block_range.end.min(block_height),
-                priority: self.priority,
-            })
-        }
-    }
-
-    /// Splits this scan range at the specified height, such that the provided height becomes the
-    /// end of the first range returned and the start of the second. Returns `None` if
-    /// `p <= self.block_range().start || p >= self.block_range().end`.
-    #[must_use]
-    pub fn split_at(&self, p: BlockHeight) -> Option<(Self, Self)> {
-        (p > self.block_range.start && p < self.block_range.end).then_some((
-            ScanRange {
-                block_range: self.block_range.start..p,
-                priority: self.priority,
-            },
-            ScanRange {
-                block_range: p..self.block_range.end,
-                priority: self.priority,
-            },
-        ))
     }
 }
 
@@ -400,9 +266,9 @@ where
         .expect("scan ranges must be non-empty after initialisation");
     let initial_scan_plan = sync_state.scan_ranges().to_vec();
     let initial_sync_state = sync_state.initial_sync_state();
-    let wallet_tree_bounds = &initial_sync_state.wallet_tree_bounds;
+    let wallet_tree_bounds = initial_sync_state.wallet_tree_bounds();
     events.emit(SyncEvent::SessionStarted {
-        sync_start_height: initial_sync_state.sync_start_height,
+        sync_start_height: initial_sync_state.sync_start_height(),
         birthday,
         tip: chain_height,
         total_sapling_outputs: wallet_tree_bounds.sapling_final_tree_size
@@ -411,10 +277,10 @@ where
             - wallet_tree_bounds.orchard_initial_tree_size,
         total_ironwood_outputs: wallet_tree_bounds.ironwood_final_tree_size
             - wallet_tree_bounds.ironwood_initial_tree_size,
-        already_scanned_sapling_outputs: initial_sync_state.previously_scanned_sapling_outputs,
-        already_scanned_orchard_outputs: initial_sync_state.previously_scanned_orchard_outputs,
-        already_scanned_ironwood_outputs: initial_sync_state.previously_scanned_ironwood_outputs,
-        already_scanned_blocks: initial_sync_state.previously_scanned_blocks,
+        already_scanned_sapling_outputs: initial_sync_state.previously_scanned_sapling_outputs(),
+        already_scanned_orchard_outputs: initial_sync_state.previously_scanned_orchard_outputs(),
+        already_scanned_ironwood_outputs: initial_sync_state.previously_scanned_ironwood_outputs(),
+        already_scanned_blocks: initial_sync_state.previously_scanned_blocks(),
     });
     events.emit(SyncEvent::ScanPlanUpdated {
         ranges: initial_scan_plan.clone(),
@@ -579,14 +445,14 @@ where
         .map_err(SyncError::WalletError)?
         .values_mut()
     {
-        for note in transaction.sapling_notes.as_mut_slice() {
-            note.refetch_nullifier_ranges = Vec::new();
+        for note in transaction.sapling_notes_mut() {
+            note.set_refetch_nullifier_ranges(Vec::new());
         }
-        for note in transaction.orchard_notes.as_mut_slice() {
-            note.refetch_nullifier_ranges = Vec::new();
+        for note in transaction.orchard_notes_mut() {
+            note.set_refetch_nullifier_ranges(Vec::new());
         }
-        for note in transaction.ironwood_notes.as_mut_slice() {
-            note.refetch_nullifier_ranges = Vec::new();
+        for note in transaction.ironwood_notes_mut() {
+            note.set_refetch_nullifier_ranges(Vec::new());
         }
     }
     wallet_guard
@@ -619,13 +485,13 @@ fn build_sync_result(sync_status: SyncStatus, initial_sync_state: &InitialSyncSt
             .end
             - 1),
         blocks_scanned: sync_status.total_blocks_scanned
-            - initial_sync_state.previously_scanned_blocks,
+            - initial_sync_state.previously_scanned_blocks(),
         sapling_outputs_scanned: sync_status.total_sapling_outputs_scanned
-            - initial_sync_state.previously_scanned_sapling_outputs,
+            - initial_sync_state.previously_scanned_sapling_outputs(),
         orchard_outputs_scanned: sync_status.total_orchard_outputs_scanned
-            - initial_sync_state.previously_scanned_orchard_outputs,
+            - initial_sync_state.previously_scanned_orchard_outputs(),
         ironwood_outputs_scanned: sync_status.total_ironwood_outputs_scanned
-            - initial_sync_state.previously_scanned_ironwood_outputs,
+            - initial_sync_state.previously_scanned_ironwood_outputs(),
     }
 }
 
@@ -724,7 +590,7 @@ where
 
     Ok(SyncStatus {
         scan_ranges: sync_state.scan_ranges().to_vec(),
-        sync_start_height: sync_state.initial_sync_state().sync_start_height,
+        sync_start_height: sync_state.initial_sync_state().sync_start_height(),
         total_blocks_scanned: sync_state.calculate_scanned_blocks(),
         total_sapling_outputs_scanned,
         total_orchard_outputs_scanned,
@@ -857,7 +723,7 @@ pub fn reset_spends(
         .flat_map(|transaction| transaction.ironwood_notes_mut())
         .filter(|output| {
             output
-                .spending_transaction
+                .spending_transaction()
                 .is_some_and(|spending_txid| invalid_txids.contains(&spending_txid))
         })
         .for_each(|output| {
@@ -868,7 +734,7 @@ pub fn reset_spends(
         .flat_map(|transaction| transaction.orchard_notes_mut())
         .filter(|output| {
             output
-                .spending_transaction
+                .spending_transaction()
                 .is_some_and(|spending_txid| invalid_txids.contains(&spending_txid))
         })
         .for_each(|output| {
@@ -879,7 +745,7 @@ pub fn reset_spends(
         .flat_map(|transaction| transaction.sapling_notes_mut())
         .filter(|output| {
             output
-                .spending_transaction
+                .spending_transaction()
                 .is_some_and(|spending_txid| invalid_txids.contains(&spending_txid))
         })
         .for_each(|output| {
@@ -890,7 +756,7 @@ pub fn reset_spends(
         .flat_map(|transaction| transaction.transparent_coins_mut())
         .filter(|output| {
             output
-                .spending_transaction
+                .spending_transaction()
                 .is_some_and(|spending_txid| invalid_txids.contains(&spending_txid))
         })
         .for_each(|output| {
@@ -1013,7 +879,7 @@ where
                         if wallet.get_wallet_block(block_bound).is_err() {
                             missing_block_bounds.insert(
                                 block_bound,
-                                WalletBlock::from_compact_block(
+                                wallet_block_from_compact_block(
                                     consensus_parameters,
                                     fetch_request_sender.clone(),
                                     &client::get_compact_block(
@@ -1272,7 +1138,7 @@ where
 
                 // extend verification range to VERIFY_BLOCK_RANGE_SIZE blocks below current verification range
                 let current_reorg_detection_start_height = sync_state
-                    .set_verify_scan_range(height - 1, scheduler::VerifyEnd::VerifyHighest)
+                    .set_verify_scan_range(height - 1, VerifyEnd::VerifyHighest)
                     .block_range()
                     .start;
                 sync_state.merge_scan_ranges(ScanPriority::Verify);
@@ -1561,14 +1427,14 @@ where
             .to_vec()
     };
     for transaction in transactions.values_mut() {
-        for note in transaction.sapling_notes.as_mut_slice() {
-            note.refetch_nullifier_ranges = refetch_nullifier_ranges.clone();
+        for note in transaction.sapling_notes_mut() {
+            note.set_refetch_nullifier_ranges(refetch_nullifier_ranges.clone());
         }
-        for note in transaction.orchard_notes.as_mut_slice() {
-            note.refetch_nullifier_ranges = refetch_nullifier_ranges.clone();
+        for note in transaction.orchard_notes_mut() {
+            note.set_refetch_nullifier_ranges(refetch_nullifier_ranges.clone());
         }
-        for note in transaction.ironwood_notes.as_mut_slice() {
-            note.refetch_nullifier_ranges = refetch_nullifier_ranges.clone();
+        for note in transaction.ironwood_notes_mut() {
+            note.set_refetch_nullifier_ranges(refetch_nullifier_ranges.clone());
         }
     }
     for transaction in transactions.values() {
@@ -2080,6 +1946,7 @@ mod test {
 
         use crate::bench_support::{synthetic_orchard_leaves, synthetic_sapling_leaves};
         use crate::config::PerformanceLevel;
+        use crate::engine::{WalletBlockOps as _, WalletTransactionOps as _};
         use crate::events::SyncEvent;
         use crate::mocks::MockWalletBuilder;
         use crate::scan::ScanResults;
@@ -2110,13 +1977,13 @@ mod test {
             let block_height = BlockHeight::from_u32(height);
             (
                 block_height,
-                WalletBlock {
+                WalletBlock::from_parts(
                     block_height,
-                    block_hash: BlockHash([0; 32]),
-                    prev_hash: BlockHash([0; 32]),
-                    time: 0,
-                    txids: Vec::new(),
-                    tree_bounds: TreeBounds {
+                    BlockHash([0; 32]),
+                    BlockHash([0; 32]),
+                    0,
+                    Vec::new(),
+                    TreeBounds {
                         sapling_initial_tree_size: 0,
                         sapling_final_tree_size: sapling_outputs,
                         orchard_initial_tree_size: 0,
@@ -2124,7 +1991,7 @@ mod test {
                         ironwood_initial_tree_size: 0,
                         ironwood_final_tree_size: 0,
                     },
-                },
+                ),
             )
         }
 
@@ -2142,19 +2009,19 @@ mod test {
             .freeze()
             .expect("empty v5 transaction should always be valid");
 
-            WalletTransaction {
+            WalletTransaction::from_parts(
                 txid,
                 status,
                 transaction,
-                datetime: 0,
-                transparent_coins: Vec::new(),
-                sapling_notes: Vec::new(),
-                orchard_notes: Vec::new(),
-                ironwood_notes: Vec::new(),
-                outgoing_sapling_notes: Vec::new(),
-                outgoing_orchard_notes: Vec::new(),
-                outgoing_ironwood_notes: Vec::new(),
-            }
+                0,
+                Vec::new(),
+                Vec::new(),
+                Vec::new(),
+                Vec::new(),
+                Vec::new(),
+                Vec::new(),
+                Vec::new(),
+            )
         }
 
         fn checkpoint_wallet_block(height: u32) -> (BlockHeight, WalletBlock) {
@@ -2162,13 +2029,13 @@ mod test {
             let initial_tree_size = height - 1;
             (
                 block_height,
-                WalletBlock {
+                WalletBlock::from_parts(
                     block_height,
-                    block_hash: BlockHash([height as u8; 32]),
-                    prev_hash: BlockHash([initial_tree_size as u8; 32]),
-                    time: 0,
-                    txids: Vec::new(),
-                    tree_bounds: TreeBounds {
+                    BlockHash([height as u8; 32]),
+                    BlockHash([initial_tree_size as u8; 32]),
+                    0,
+                    Vec::new(),
+                    TreeBounds {
                         sapling_initial_tree_size: initial_tree_size,
                         sapling_final_tree_size: height,
                         orchard_initial_tree_size: initial_tree_size,
@@ -2176,7 +2043,7 @@ mod test {
                         ironwood_initial_tree_size: initial_tree_size,
                         ironwood_final_tree_size: height,
                     },
-                },
+                ),
             )
         }
 

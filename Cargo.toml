@@ -3,7 +3,6 @@ members = [
     "pepper-sync",
     "zingolib-common",
     "zingolib-file-format",
-    "zingolib-price",
     "zingolib",
     "zingolib-tui",
 ]
@@ -14,7 +13,6 @@ resolver = "2"
 pepper-sync = { path = "pepper-sync" }         # NOTE: for development between releases
 zingolib-common = { path = "zingolib-common" }
 zingolib-file-format = { path = "zingolib-file-format" }
-zingolib-price = { path = "zingolib-price" }
 zingolib = { path = "zingolib" }
 
 ### Tests and Integration Tests
@@ -51,8 +49,9 @@ orchard = { version = "=4.0.0", package = "zakura-orchard", features = ["backend
 sapling-crypto = { version = "=4.0.0", package = "zakura-sapling-crypto" }
 shardtree = "0.7.1"
 zcash_address = { version = "=4.0.0", package = "zakura-address" }
+# `lightwalletd-tonic` is enabled per crate by the gRPC client users, so the wallet file
+# crates build without tonic.
 zcash_client_backend = { git = "https://github.com/zakura-core/wallet-libraries", rev = "5c83ec2ed72a8d28bde27271d1fc442128191046", package = "zakura-client-backend", features = [
-    "lightwalletd-tonic",
     "orchard",
     "transparent-inputs",
 ] }

@@ -8,6 +8,7 @@ use crate::config::ChainType;
 pub mod config;
 pub mod data;
 pub mod lightclient;
+pub mod price;
 pub mod utils;
 pub mod wallet;
 

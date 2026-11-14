@@ -19,6 +19,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Depends on `zingolib-common` for all wallet data and no longer on `pepper-sync` or
+  `zingolib-price`. The crate builds with no network code and no sync engine.
+
 - `WalletFileRef::write` lists transactions in txid order, so a wallet always writes the same
   bytes.
 - Readers reject malformed input with `InvalidData` where they could panic or allocate without

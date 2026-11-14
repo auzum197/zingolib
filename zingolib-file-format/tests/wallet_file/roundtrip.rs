@@ -32,26 +32,28 @@ use zcash_transparent::address::TransparentAddress;
 use zcash_transparent::keys::NonHardenedChildIndex;
 use zip32::{AccountId, Scope};
 
-use pepper_sync::config::{
-    PerformanceLevel, SyncConfig, TransparentAddressDiscovery, TransparentAddressDiscoveryScopes,
-};
-use pepper_sync::keys::KeyId;
-use pepper_sync::keys::transparent::{TransparentAddressId, encode_address};
-use pepper_sync::sync::ScanPriority;
-use pepper_sync::wallet::{
-    IronwoodNote, OrchardNote, OutgoingIronwoodNote, OutgoingOrchardNote, OutgoingSaplingNote,
-    OutputId, OutputInterface, SaplingNote, ScanTarget, ShardTrees, SyncState, TransparentCoin,
-    WalletBlock, WalletNote, WalletTransaction,
-};
+use pepper_sync::keys::transparent::encode_address;
 use zingo_common_components::protocol::ActivationHeights;
 use zingolib_common::chain::ChainType;
+use zingolib_common::config::{
+    PerformanceLevel, SyncConfig, TransparentAddressDiscovery, TransparentAddressDiscoveryScopes,
+};
+use zingolib_common::keys::KeyId;
+use zingolib_common::keys::TransparentAddressId;
 use zingolib_common::keys::{
     ReceiverSelection, TransparentScope, UnifiedAddressId, UnifiedKeyStore,
 };
+use zingolib_common::price::{Price, PriceList};
 use zingolib_common::serialization::ReadableWriteable;
 use zingolib_common::status::ConfirmationStatus;
+use zingolib_common::sync::ScanPriority;
+use zingolib_common::sync::SyncState;
+use zingolib_common::wallet::{
+    IronwoodNote, OrchardNote, OutgoingIronwoodNote, OutgoingOrchardNote, OutgoingSaplingNote,
+    OutputId, OutputInterface, SaplingNote, ScanTarget, ShardTrees, TransparentCoin, WalletBlock,
+    WalletNote, WalletTransaction,
+};
 use zingolib_file_format::{WalletFile, WalletSettings};
-use zingolib_price::{Price, PriceList};
 
 use super::support::{bytes, fast_session, fresh};
 
