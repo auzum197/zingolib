@@ -22,7 +22,7 @@ use {
     zingo_netutils::lightwallet_protocol::SubtreeRoot,
 };
 
-pub(crate) const SHARD_HEIGHT: u8 = 16;
+pub(crate) use zingolib_common::wallet::SHARD_HEIGHT;
 
 /// Required data for updating [`shardtree::ShardTree`]
 #[derive(Debug)]

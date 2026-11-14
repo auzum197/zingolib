@@ -21,6 +21,7 @@ use zip32::AccountId;
 use crate::{
     client::{self, FetchRequest},
     config::PerformanceLevel,
+    engine::SyncStateOps as _,
     error::{ScanError, ServerError, SyncError},
     events::{SyncEmitter, SyncEvent},
     keys::transparent::TransparentAddressId,
@@ -29,6 +30,7 @@ use crate::{
     wallet::{
         ScanTarget, WalletBlock,
         traits::{SyncBlocks, SyncNullifiers, SyncWallet},
+        wallet_block_from_compact_block,
     },
 };
 
@@ -496,7 +498,7 @@ where
                         }
                         if first_batch {
                             previous_task_first_block = Some(
-                                WalletBlock::from_compact_block(
+                                wallet_block_from_compact_block(
                                     &consensus_parameters,
                                     fetch_request_sender.clone(),
                                     &compact_block,
@@ -509,7 +511,7 @@ where
                             == scan_task.scan_range.block_range().end - 1
                         {
                             previous_task_last_block = Some(
-                                WalletBlock::from_compact_block(
+                                wallet_block_from_compact_block(
                                     &consensus_parameters,
                                     fetch_request_sender.clone(),
                                     &compact_block,
@@ -810,7 +812,7 @@ impl ScanTask {
 
         let lower_task_last_block = if let Some(block) = lower_compact_blocks.last() {
             Some(
-                WalletBlock::from_compact_block(
+                wallet_block_from_compact_block(
                     consensus_parameters,
                     fetch_request_sender.clone(),
                     block,
@@ -822,7 +824,7 @@ impl ScanTask {
         };
         let upper_task_first_block = if let Some(block) = upper_compact_blocks.first() {
             Some(
-                WalletBlock::from_compact_block(
+                wallet_block_from_compact_block(
                     consensus_parameters,
                     fetch_request_sender.clone(),
                     block,

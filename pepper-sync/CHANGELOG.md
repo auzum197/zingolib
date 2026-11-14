@@ -16,6 +16,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   truncation there and was cleared with a truncation error instead.
 
 ### Added
+- `engine` module: re-export of `zingolib_common::engine`, the sealed traits that hold the
+  operations only the sync engine performs on the wallet data.
 - `wallet::OutputId`, `keys::KeyId` and `keys::transparent::TransparentAddressId`: unversioned
   `read` and `write`, replacing the field-by-field encoding repeated in every note writer.
 - `events` module: push-based sync event stream so consumers subscribe to committed
@@ -44,6 +46,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `config::DEFAULT_EVENT_CHANNEL_CAPACITY`). Serialized version incremented to 2.
 
 ### Changed
+- The wallet state types, the key identifiers, the scan scheduler, the scan ranges, the sync
+  configuration and their codecs moved to `zingolib-common`. Every item is re-exported from its
+  original path, so `use pepper_sync::…` paths are unchanged.
+- `zcash_client_backend`: the `lightwalletd-tonic` feature is enabled here instead of in the
+  workspace dependency.
 - `sync::MAX_REORG_ALLOWANCE` is 1000, following zebra's `MAX_BLOCK_REORG_HEIGHT`, which zebra
   5.2.0 raised from 100 and has kept since. A re-org up to 1000 blocks deep is truncated and
   scanned again, where a re-org deeper than 100 blocks cleared the wallet's chain data before.
@@ -85,6 +92,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `sync::SyncStatus`: `Display` impl now summarises raw counts.
 
 ### Removed
+- `wallet_essentials` feature: the codecs always compile, in `zingolib-common`.
+- `WalletBlock::from_compact_block`: replaced by a crate-private function wrapping
+  `WalletBlock::new`.
 - Struct layouts older than the ones the first pendrake-watch release wrote: scan target and
   output id fallbacks, `SyncState` scan priorities before layout 3, and the `SyncConfig`
   defaults for layouts 0 and 1. The Ironwood upgrades (`SyncState` 4, `NullifierMap` 2,

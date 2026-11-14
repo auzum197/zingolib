@@ -28,6 +28,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `moved_to` in the JSON of a transaction summary: the destination pool of a pool move, or null.
 
 ### Changed
+- `zingolib-price` no longer exists. `PriceList` and `Price` are in `zingolib_common::price`, and
+  the fetch with its `PriceError` is the new `price` module here.
 - `LightWallet::write` takes `&self`.
 - `LightWallet::new`: address derivation errors now surface as `WalletError::KeyError` in every
   case, and a wallet file naming an account without keys fails with `KeyError::NoAccountKeys`.

@@ -16,16 +16,17 @@ use zcash_protocol::consensus::BlockHeight;
 use zcash_protocol::{PoolType, ShieldedPool};
 use zip32::AccountId;
 
+use crate::client::FetchRequest;
 use crate::error::{ServerError, SyncError};
 use crate::keys::transparent::TransparentAddressId;
 use crate::sync::{SHARDTREE_CHECKPOINT_ROLLING_WINDOW_SIZE, ScanRange};
 use crate::wallet::{
     NullifierMap, OutputId, ShardTrees, SyncState, WalletBlock, WalletTransaction,
 };
-use crate::witness::LocatedTreeData;
+use crate::witness::{self, LocatedTreeData};
 use crate::{Ironwood, Orchard, Sapling, SyncDomain, client, set_transactions_failed};
 
-use super::{FetchRequest, ScanTarget, witness};
+use super::ScanTarget;
 
 /// Trait for interfacing wallet with the sync engine.
 pub trait SyncWallet {

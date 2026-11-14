@@ -41,31 +41,28 @@ use zcash_transparent::{address::TransparentAddress, keys::NonHardenedChildIndex
 use zingo_common_components::protocol::ActivationHeights;
 use zip32::{AccountId, Scope};
 
-use pepper_sync::{
-    add_scan_targets,
+use pepper_sync::{add_scan_targets, keys::transparent::encode_address};
+use zingolib_common::price::PriceList;
+use zingolib_common::{
+    chain::ChainType,
     config::{
         PerformanceLevel, SyncConfig, TransparentAddressDiscovery,
         TransparentAddressDiscoveryScopes,
     },
     keys::{
-        KeyId,
-        transparent::{TransparentAddressId, encode_address},
+        KeyId, ReceiverSelection, TransparentAddressId, TransparentScope, UnifiedAddressId,
+        UnifiedKeyStore,
     },
-    sync::{ScanPriority, ScanRange},
+    serialization::ReadableWriteable,
+    status::ConfirmationStatus,
+    sync::{ScanPriority, ScanRange, SyncState},
     wallet::{
         IronwoodNote, IronwoodShardStore, NullifierMap, OrchardNote, OutgoingIronwoodNote,
         OutgoingOrchardNote, OutputId, OutputInterface, SaplingNote, ScanTarget, ShardTrees,
-        SyncState, TransparentCoin, WalletTransaction,
+        TransparentCoin, WalletTransaction,
     },
 };
-use zingolib_common::{
-    chain::ChainType,
-    keys::{ReceiverSelection, TransparentScope, UnifiedAddressId, UnifiedKeyStore},
-    serialization::ReadableWriteable,
-    status::ConfirmationStatus,
-};
 use zingolib_file_format::{WalletFile, WalletFileRef, WalletSettings, encryption};
-use zingolib_price::PriceList;
 
 const PASSPHRASE: &str = "conformance";
 const BIRTHDAY: u32 = 2_000_000;

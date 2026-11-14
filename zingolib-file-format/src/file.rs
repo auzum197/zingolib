@@ -16,17 +16,14 @@ use zcash_primitives::transaction::TxId;
 use zcash_protocol::consensus::{self, BlockHeight, NetworkUpgrade, Parameters};
 
 use secrecy::SecretString;
+use zingolib_common::price::PriceList;
+use zingolib_common::sync::SyncState;
 use zingolib_common::{
     chain::ChainType,
-    keys::{ReceiverSelection, UnifiedAddressId, UnifiedKeyStore},
+    keys::{ReceiverSelection, TransparentAddressId, UnifiedAddressId, UnifiedKeyStore},
     serialization::ReadableWriteable,
-};
-use zingolib_price::PriceList;
-
-use pepper_sync::{
-    keys::transparent::TransparentAddressId,
     wallet::{
-        KeyIdInterface, NullifierMap, OutputId, ScanTarget, ShardTrees, SyncState, WalletBlock,
+        KeyIdInterface, NullifierMap, OutputId, ScanTarget, ShardTrees, WalletBlock,
         WalletTransaction,
     },
 };

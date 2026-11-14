@@ -42,3 +42,36 @@ pub trait ReadableWriteable<ReadInput = (), WriteInput = ()>: Sized {
         }
     }
 }
+
+/// An `InvalidData` error carrying `message`.
+pub fn invalid_data(message: impl std::fmt::Display) -> io::Error {
+    io::Error::new(io::ErrorKind::InvalidData, message.to_string())
+}
+
+/// Rejects a struct version older than the one the first layout 41 release wrote. Those layouts are
+/// no longer readable, and decoding one with the current layout would misread its fields.
+pub fn check_oldest_version(version: u8, oldest: u8, name: &str) -> io::Result<u8> {
+    if version < oldest {
+        Err(invalid_data(format!(
+            "{name} version {version} predates the oldest readable version {oldest}"
+        )))
+    } else {
+        Ok(version)
+    }
+}
+
+/// Collects decoded entries into a map or set, rejecting repeats. Every writer iterates a map or
+/// set, so a repeat is corruption, and collecting it would silently drop an entry.
+pub fn collect_unique<T, C: FromIterator<T>>(
+    entries: Vec<T>,
+    len: fn(&C) -> usize,
+    name: &str,
+) -> io::Result<C> {
+    let count = entries.len();
+    let collected = entries.into_iter().collect();
+    if len(&collected) == count {
+        Ok(collected)
+    } else {
+        Err(invalid_data(format!("duplicate {name}")))
+    }
+}
