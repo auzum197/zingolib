@@ -1236,7 +1236,7 @@ mod fast {
             new_address_id,
             UnifiedAddressId {
                 account_id: zip32::AccountId::ZERO,
-                address_index: 2
+                address_index: 5
             }
         );
         assert!(new_address.has_orchard());
@@ -1245,8 +1245,8 @@ mod fast {
         assert_eq!(
             new_address.encode(&network),
             "\
-uregtest1ds3zxwluuzmcwvdxh4wf8xsger96c5yyzqhwzwu7vt85crj4jyf7nsn258rn89g68lvelsjhkqywz8w70wxdg2cmnul4zadukwu2ywezgjwt36\
-f06qvre5qdlkqp5fksyy9j5dm0fdwxwptkk04gzt84r5qv0wfdlx250n0gdcdd6e00"
+uregtest1d26ca8tv9hun2zt7z8er5ljwr95wqw3hf3f60c2avkapvmxjlfze7zatslhkxf0ddy33halrpmgerczhuw6wgf5akm37zvcax0mz0amg327l09\
+s8ldntck2ku9huggr2wnmfj4uv75lwk3tlwkppqmq0n59d6t33ryla5eaply7dwu45"
         );
 
         let (sapling_address_id, sapling_address) = recipient
@@ -1257,7 +1257,7 @@ f06qvre5qdlkqp5fksyy9j5dm0fdwxwptkk04gzt84r5qv0wfdlx250n0gdcdd6e00"
             sapling_address_id,
             UnifiedAddressId {
                 account_id: zip32::AccountId::ZERO,
-                address_index: 3
+                address_index: 6
             }
         );
         assert!(!sapling_address.has_orchard());
@@ -1266,7 +1266,7 @@ f06qvre5qdlkqp5fksyy9j5dm0fdwxwptkk04gzt84r5qv0wfdlx250n0gdcdd6e00"
         assert_eq!(
             sapling_address.encode(&network),
             "\
-uregtest1n22mmna853578fakgx6z6adn24ey5r7wfye8ulhscqc9hvm0rf5czxjuz9te0zzc8j93y35gzw53tdmgz6dtfvlnfmjwl2a84cx5m3fq"
+uregtest1y94pplhf0lkgdy8ae7062h454qv6038rhd6mgw7x74muy8hqcqz02qvg8pal79kel2089t9fk2njr6n4f5xr75ryjvk9zsnmvcwcml74"
         );
 
         let (taddress_id, new_taddress) = recipient

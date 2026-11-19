@@ -55,21 +55,23 @@ impl LightWallet {
         receivers: ReceiverSelection,
         account_id: zip32::AccountId,
     ) -> Result<(UnifiedAddressId, UnifiedAddress), KeyError> {
-        let address_id = UnifiedAddressId {
-            account_id,
-            address_index: self
-                .unified_addresses
-                .keys()
-                .filter(|&address_id| address_id.account_id == account_id)
-                .map(|&address_id| address_id.address_index)
-                .max()
-                .map_or(0, |address_id| address_id + 1),
-        };
-        let unified_address = self
+        let key_store = self
             .unified_key_store
             .get(&account_id)
-            .ok_or(KeyError::NoAccountKeys)?
-            .generate_unified_address(address_id.address_index, receivers)?;
+            .ok_or(KeyError::NoAccountKeys)?;
+        let unused_index = self
+            .unified_addresses
+            .keys()
+            .filter(|&address_id| address_id.account_id == account_id)
+            .map(|&address_id| address_id.address_index)
+            .max()
+            .map_or(0, |address_index| address_index + 1);
+        let address_id = UnifiedAddressId {
+            account_id,
+            address_index: key_store.next_unified_address_index(unused_index, receivers)?,
+        };
+        let unified_address =
+            key_store.generate_unified_address(address_id.address_index, receivers)?;
         self.unified_addresses
             .insert(address_id, unified_address.clone());
         self.save_required = true;
@@ -316,28 +318,23 @@ impl LightWallet {
                     }
                 } else if let Some((account_id, diversifier_index)) = sapling {
                     // a unified address index will not be assigned if it does not match the address in the wallet
-                    let address_index = Some(
-                        self.unified_key_store
-                            .get(&account_id)
-                            .expect("key must exist in this scope")
-                            .determine_nth_valid_sapling_diversifier(diversifier_index)
-                            .expect("key must exist in this scope")
-                            - 1,
-                    )
-                    .and_then(|address_index| {
-                        self.unified_addresses()
-                            .get(&UnifiedAddressId {
-                                account_id,
-                                address_index,
-                            })
-                            .and_then(|unified_address| {
-                                if *unified_address == address {
-                                    Some(address_index)
-                                } else {
-                                    None
-                                }
-                            })
-                    });
+                    let address_index =
+                        u32::try_from(diversifier_index)
+                            .ok()
+                            .and_then(|address_index| {
+                                self.unified_addresses()
+                                    .get(&UnifiedAddressId {
+                                        account_id,
+                                        address_index,
+                                    })
+                                    .and_then(|unified_address| {
+                                        if *unified_address == address {
+                                            Some(address_index)
+                                        } else {
+                                            None
+                                        }
+                                    })
+                            });
 
                     Some(WalletAddressRef::Unified {
                         account_id,

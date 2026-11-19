@@ -162,7 +162,11 @@ impl UnifiedKeyStore {
         };
 
         let sapling_receiver = if receivers.sapling {
-            Some(self.derive_sapling_address(unified_address_index)?)
+            let fvk = sapling_crypto::zip32::DiversifiableFullViewingKey::try_from(self)?;
+            Some(
+                fvk.address(DiversifierIndex::from(unified_address_index))
+                    .ok_or(KeyError::InvalidSaplingDiversifierIndex)?,
+            )
         } else {
             None
         };
@@ -172,6 +176,25 @@ impl UnifiedKeyStore {
                 .ok_or(KeyError::UnifiedAddressError)?;
 
         Ok(unified_address)
+    }
+
+    /// Returns the lowest unified address index, starting at `from`, that every receiver in `receivers` can be
+    /// derived at.
+    ///
+    /// Roughly half of all diversifier indexes have no sapling address, so indexes are skipped when a sapling
+    /// receiver is selected.
+    pub fn next_unified_address_index(
+        &self,
+        from: u32,
+        receivers: ReceiverSelection,
+    ) -> Result<u32, KeyError> {
+        if !receivers.sapling {
+            return Ok(from);
+        }
+        let fvk = sapling_crypto::zip32::DiversifiableFullViewingKey::try_from(self)?;
+        fvk.find_address(DiversifierIndex::from(from))
+            .and_then(|(diversifier_index, _)| u32::try_from(diversifier_index).ok())
+            .ok_or(KeyError::InvalidSaplingDiversifierIndex)
     }
 
     /// Generates a transparent address for the given `address_index` and `scope`.
@@ -198,65 +221,6 @@ impl UnifiedKeyStore {
         };
 
         Ok(transparent_address)
-    }
-
-    fn derive_sapling_address(
-        &self,
-        unified_address_index: u32,
-    ) -> Result<sapling_crypto::PaymentAddress, KeyError> {
-        let fvk = sapling_crypto::zip32::DiversifiableFullViewingKey::try_from(self)?;
-        let mut address;
-        let mut diversifier_index = DiversifierIndex::new();
-        let mut valid_diversifier_count = 0;
-
-        // not all sapling diversifier indexes produce valid sapling diversifiers.
-        // therefore, `diversifier_index` may be larger than `unified_address_index` as only the valid payment
-        // addresses are counted.
-        loop {
-            (diversifier_index, address) = fvk
-                .find_address(diversifier_index)
-                .expect("diversifier index overflow");
-            valid_diversifier_count += 1;
-            if valid_diversifier_count - 1 == unified_address_index {
-                break;
-            }
-
-            diversifier_index
-                .increment()
-                .expect("diversifier index overflow");
-        }
-
-        Ok(address)
-    }
-
-    /// Returns the number of valid sapling diversifiers when incrementing from 0 to `sapling_diversifier_index` inclusive.
-    ///
-    /// For example, if 10 is returned, the `sapling_diversifier_index` is associated with the 10th valid sapling
-    /// diversifier when incrementing from a diversifier index of 0.
-    pub fn determine_nth_valid_sapling_diversifier(
-        &self,
-        sapling_diversifier_index: DiversifierIndex,
-    ) -> Result<u32, KeyError> {
-        let fvk = sapling_crypto::zip32::DiversifiableFullViewingKey::try_from(self)?;
-        let mut _address;
-        let mut diversifier_index = DiversifierIndex::new();
-        let mut valid_diversifier_count = 0;
-
-        loop {
-            (diversifier_index, _address) = fvk
-                .find_address(diversifier_index)
-                .expect("diversifier index overflow");
-            valid_diversifier_count += 1;
-            if diversifier_index == sapling_diversifier_index {
-                break;
-            }
-
-            diversifier_index
-                .increment()
-                .expect("diversifier index overflow");
-        }
-
-        Ok(valid_diversifier_count)
     }
 }
 
@@ -608,6 +572,45 @@ fn spending_key_store_round_trips() {
 }
 
 #[test]
+fn unified_addresses_match_zip_316_derivation() {
+    use zcash_keys::keys::{ReceiverRequirement::*, UnifiedAddressRequest};
+
+    let usk = test_usk();
+    let ufvk = usk.to_unified_full_viewing_key();
+    let keys = UnifiedKeyStore::Spend(Box::new(usk));
+    let shielded = UnifiedAddressRequest::unsafe_custom(Require, Require, Omit);
+
+    let mut skipped = 0;
+    for from in 0..64 {
+        let index = keys
+            .next_unified_address_index(from, ReceiverSelection::all_shielded())
+            .unwrap();
+        let address = keys
+            .generate_unified_address(index, ReceiverSelection::all_shielded())
+            .unwrap();
+        assert_eq!(
+            (address, DiversifierIndex::from(index)),
+            ufvk.find_address(DiversifierIndex::from(from), shielded)
+                .unwrap()
+        );
+        assert_eq!(
+            keys.next_unified_address_index(from, ReceiverSelection::orchard_only())
+                .unwrap(),
+            from
+        );
+
+        if index != from {
+            skipped += 1;
+            assert!(matches!(
+                keys.generate_unified_address(from, ReceiverSelection::sapling_only()),
+                Err(KeyError::InvalidSaplingDiversifierIndex)
+            ));
+        }
+    }
+    assert!(skipped > 0);
+}
+
+#[test]
 fn malformed_sapling_ask_is_an_error_not_a_panic() {
     let usk = test_usk();
     let valid = usk.to_bytes(Era::Orchard);
@@ -741,6 +744,9 @@ pub enum KeyError {
     /// Unified address missing shielded receiver
     #[error("Unified address must contain a shielded receiver")]
     UnifiedAddressError,
+    /// No sapling address exists at the unified address index.
+    #[error("No sapling address exists at this unified address index")]
+    InvalidSaplingDiversifierIndex,
     /// Transparent address generation failed. Latest transparent address has not received funds.
     #[error(
         "Transparent address generation failed. Latest transparent address has not received funds."
