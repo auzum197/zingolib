@@ -5,11 +5,10 @@
 //! indented line per scan range with an estimated batch bar and spinner. When a batch commits,
 //! its line is marked DONE in place and lingers next to any still-scanning sibling until the
 //! next batch starts, when it is flushed into the scrollback log. Progress is computed from the
-//! event stream (the consumer-side recipe from SYNC_UX_SPEC.md §7.3). Each batch line follows
-//! the engine's lifecycle: a scanning bar, then `WAITING FOR OTHER TASKS` while it is blocked
-//! behind the serialized commit stage, then a committing bar, each estimated from the engine's
-//! measured per-phase timing. A finished batch prints its wait and per-phase times. Nothing is
-//! written to disk.
+//! event stream. Each batch line follows the engine's lifecycle: a scanning bar, then
+//! `WAITING FOR OTHER TASKS` while it is blocked behind the serialized commit stage, then a
+//! committing bar, each estimated from the engine's measured per-phase timing. A finished batch
+//! prints its wait and per-phase times. Nothing is written to disk.
 //!
 //! ```text
 //! cargo run --release -p zingolib --example sync_events -- <UFVK> <BIRTHDAY> \
@@ -651,7 +650,7 @@ async fn handle_event(event: SequencedSyncEvent, view: &mut View, lc: &LightClie
     }
 }
 
-/// On a lagged stream, reconcile counters against wallet state (SYNC_UX_SPEC.md §7.2).
+/// On a lagged stream, reconcile counters against wallet state.
 async fn reconcile(view: &mut View, lc: &LightClient, skipped: u64) {
     let wallet = lc.wallet().read().await;
     if let Ok(status) = pepper_sync::sync_status(&*wallet).await {

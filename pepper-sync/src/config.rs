@@ -18,7 +18,6 @@ pub const DEFAULT_EVENT_CHANNEL_CAPACITY: usize = 512;
 /// Performance level.
 ///
 /// The higher the performance level the higher the memory usage and storage.
-// TODO: revisit after implementing nullifier refetching
 #[derive(Default, Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PerformanceLevel {
     /// - number of outputs per batch is quartered

@@ -711,7 +711,7 @@ pub enum KeyError {
     /// Invalid account ID
     #[error("Account ID should be at most 31 bits")]
     InvalidAccountId(#[from] zip32::TryFromIntError),
-    /// Invalid account ID
+    /// No keys for the account ID
     #[error("No keys found for the given account id. Try adding the account.")]
     NoAccountKeys,
     /// Key derivation failed

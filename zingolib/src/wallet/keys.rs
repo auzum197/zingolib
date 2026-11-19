@@ -80,7 +80,7 @@ impl LightWallet {
     /// Generates a new transparent address of `external` scope for the given `account_id`.
     /// The new address is added to the wallet and returned.
     ///
-    /// If `enforced_no_gap` is `true`, an error is returned if the latest transparent address has not received funds.
+    /// If `enforce_no_gap` is `true`, an error is returned if the latest transparent address has not received funds.
     pub fn generate_transparent_address(
         &mut self,
         account_id: zip32::AccountId,

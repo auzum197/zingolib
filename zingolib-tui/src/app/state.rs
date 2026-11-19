@@ -5,7 +5,7 @@ use std::time::{Duration, Instant};
 
 /// How long a footer notice stays visible.
 pub const NOTICE_TTL: Duration = Duration::from_secs(4);
-/// Sync events kept for the Sync screen log.
+/// Sync events kept in `SyncView::events`.
 pub const EVENT_LOG_CAP: usize = 100;
 /// Progress samples kept for the ETA rate window.
 const PROGRESS_WINDOW: usize = 12;
@@ -178,7 +178,6 @@ pub struct PassphrasePrompt {
     pub error: Option<String>,
 }
 
-/// Lifecycle phase of the application.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Phase {
     Wizard(Wizard),
@@ -769,7 +768,6 @@ impl Default for SyncView {
     }
 }
 
-/// Complete application state.
 #[derive(Clone, Debug)]
 pub struct State {
     pub phase: Phase,

@@ -1,7 +1,8 @@
 //! A Lightclient test may involve hosting a server to send data to the LightClient. This trait can be asked to set simple scenarios where a mock LightServer sends data showing a note to a LightClient, the LightClient updates and responds by sending the note, and the Lightserver accepts the transaction and rebroadcasts it...
-//! The initial two implementors are
-//! lib-to-node, which links a lightserver to a zcashd in regtest mode. see `impl ConductChain for LibtoNode
-//! darkside, a mode for the lightserver which mocks zcashd. search 'impl ConductChain for DarksideScenario
+//! The implementors are
+//! `MockNet` and `RegtestEnvironment`, which run on the in-process mock indexer
+//! `NetworkedTestEnvironment`, which follows a live testnet indexer
+//! darkside, a mode for the lightserver which mocks zcashd. search 'impl ConductChain for DarksideEnvironment
 
 use crate::config::{ClientConfig, WalletConfig};
 use crate::get_base_address_macro;
@@ -42,7 +43,7 @@ pub trait ConductChain {
         lightclient
     }
 
-    /// loads a client from bytes
+    /// loads a client from its wallet file
     async fn load_client(&mut self, config: ClientConfig) -> LightClient {
         assert!(matches!(config.wallet_config(), WalletConfig::Read));
         LightClient::new(config, false, None).await.unwrap()

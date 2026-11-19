@@ -36,7 +36,7 @@ pub(crate) struct WitnessData {
 }
 
 impl WitnessData {
-    /// Creates new `ShardTreeData`
+    /// Creates new `WitnessData`
     pub(crate) fn new(
         sapling_initial_position: Position,
         orchard_initial_position: Position,
@@ -56,9 +56,7 @@ impl WitnessData {
 /// Located prunable tree data built from nodes and retentions during scanning for insertion into the shard store.
 #[derive(Debug)]
 pub struct LocatedTreeData<H> {
-    /// Located prunable tree
     pub(crate) subtree: LocatedPrunableTree<H>,
-    /// Checkpoints
     pub(crate) checkpoints: BTreeMap<BlockHeight, Position>,
 }
 
@@ -182,7 +180,6 @@ impl Frontiers {
         }
     }
 
-    /// Construct a new [`Frontiers`] from its constituent parts.
     pub(crate) fn new(
         block_height: BlockHeight,
         block_hash: BlockHash,
@@ -213,7 +210,6 @@ impl Frontiers {
         self.block_height
     }
 
-    /// Return the hash of the block.
     pub(crate) fn block_hash(&self) -> BlockHash {
         self.block_hash
     }
@@ -295,7 +291,7 @@ pub(crate) fn get_sapling_tree(
     }
 }
 
-/// Deserializes and returns the Sapling note commitment tree field of the tree state.
+/// Deserializes and returns the Orchard note commitment tree field of the tree state.
 pub(crate) fn get_orchard_tree(
     tree_state: &TreeState,
 ) -> std::io::Result<CommitmentTree<MerkleHashOrchard, { orchard::NOTE_COMMITMENT_TREE_DEPTH as u8 }>>
@@ -384,7 +380,6 @@ mod tests {
         .collect()
     }
 
-    /// A batch inside the top window of the chain holds a checkpoint on every block from the window start.
     #[test]
     fn a_batch_inside_the_window_checkpoints_every_block_from_the_window_start() {
         let range = WINDOW_START - 10..WINDOW_START + 10;
@@ -395,7 +390,6 @@ mod tests {
         );
     }
 
-    /// A batch reaching the chain height holds a checkpoint on every block of the window.
     #[test]
     fn a_batch_at_the_chain_tip_checkpoints_the_whole_window() {
         let range = WINDOW_START - 10..CHAIN_HEIGHT + 1;
@@ -409,7 +403,6 @@ mod tests {
         assert_eq!(heights.last(), Some(&CHAIN_HEIGHT));
     }
 
-    /// A batch below the window holds a checkpoint on its last block and on no other.
     #[test]
     fn a_batch_below_the_window_checkpoints_its_last_block_only() {
         let range = WINDOW_START - 2_000..WINDOW_START - 1_000;

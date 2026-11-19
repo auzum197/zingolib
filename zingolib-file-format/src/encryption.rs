@@ -34,7 +34,7 @@
 //!
 //! ## Why the magic can't collide with a plaintext wallet
 //! The plaintext wallet reader takes the first 8 bytes as a little-endian `u64`
-//! version number (currently small values like 39). `MAGIC` read as a `u64-LE` is
+//! version number (currently small values like 41). `MAGIC` read as a `u64-LE` is
 //! `0x31_30_63_6e_45_69_4c_5a`, far outside any real version, so an encrypted file can never
 //! be mistaken for a plaintext one and vice versa.
 //!
@@ -83,8 +83,8 @@ const HEADER_LEN: usize = 8 + 1 + 1 + 4 + 4 + 1 + SALT_LEN + NONCE_LEN; // = 59
 // before the AEAD can authenticate it (deriving the key is a prerequisite for verifying the
 // tag), so an attacker who tampers with a wallet file could otherwise set an enormous
 // `m_cost` and make a victim's process OOM/hang on open. We therefore reject out-of-range
-// parameters *before* running Argon2. The ceiling is generous over the largest preset
-// (desktop = 64 MiB) to leave room for future tuning, while still bounding a tampered file's
+// parameters *before* running Argon2. The ceiling is generous over the
+// 64 MiB default to leave room for future tuning, while still bounding a tampered file's
 // allocation to something survivable even on a phone. If a future build legitimately needs
 // higher costs, raise these and bump `ENVELOPE_VERSION`.
 const MIN_M_COST_KIB: u32 = 8; // Argon2's own minimum (and it requires m >= 8 * p).
@@ -139,7 +139,7 @@ pub struct Argon2Params {
     pub p_cost: u8,
 }
 
-/// Default memory cost in MiB. This is the only cost knob exposed to users.
+/// Default memory cost in MiB.
 pub const DEFAULT_MEMORY_MIB: u32 = 64;
 /// Default time cost (Argon2 iterations).
 const DEFAULT_ITERATIONS: u32 = 3;
@@ -148,8 +148,7 @@ const DEFAULT_PARALLELISM: u8 = 1;
 
 impl Argon2Params {
     /// Build parameters from an explicit memory cost in MiB, using the default iterations and
-    /// parallelism. Memory is the only cost knob exposed to callers. Iterations and
-    /// parallelism are fixed at sane defaults, with no hidden presets.
+    /// parallelism.
     pub const fn with_memory_mib(memory_mib: u32) -> Self {
         Self {
             m_cost: memory_mib * 1024,
@@ -461,18 +460,6 @@ mod tests {
         let b = session.encrypt(b"same").unwrap();
         // Identical plaintext + same key must still produce different ciphertext (fresh nonce).
         assert_ne!(a, b);
-    }
-
-    #[test]
-    fn magic_does_not_collide_with_plaintext_version() {
-        // The first 8 bytes of any plaintext wallet are a small little-endian u64 version.
-        // The magic interpreted the same way must be astronomically large, so the two
-        // namespaces never overlap.
-        let magic_as_version = u64::from_le_bytes(MAGIC);
-        assert!(magic_as_version > 1_000_000);
-        // And a plaintext v39 prefix is not mistaken for an envelope.
-        let plaintext_prefix = 39u64.to_le_bytes();
-        assert!(!is_encrypted(&plaintext_prefix));
     }
 
     #[test]

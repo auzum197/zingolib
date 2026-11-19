@@ -38,7 +38,7 @@ pub(crate) async fn fetch<C>(
     let mut fetch_request_queue: Vec<FetchRequest> = Vec::new();
 
     loop {
-        // `fetcher` returns `Ok` here when all requests have successfully been fetched and the
+        // `fetch` returns here when all requests have successfully been fetched and the
         // fetch_request channel is closed on sync completion.
         if receive_fetch_requests(&mut fetch_request_receiver, &mut fetch_request_queue).await {
             return;
@@ -97,7 +97,6 @@ fn select_fetch_request(fetch_request_queue: &mut Vec<FetchRequest>) -> Option<F
     }
 }
 
-//
 async fn fetch_from_server<C>(client: &mut C, fetch_request: FetchRequest)
 where
     C: Clone + Indexer + TransparentIndexer + Sync + Send + 'static,

@@ -62,14 +62,11 @@ use super::locks::OutputLocks;
 use pepper_sync::{keys::transparent, wallet::KeyIdInterface};
 
 impl LightWallet {
-    /// Changes in version 41:
-    /// `ChainType` serialized as u8 instead of string to decouple from fmt::Display and reduce bytes stored.
     #[must_use]
     pub const fn serialized_version() -> u64 {
         WalletFile::VERSION
     }
 
-    /// Serialize into `writer`
     pub fn write<W: Write>(
         &self,
         writer: W,
@@ -182,7 +179,6 @@ impl LightWallet {
         })
     }
 
-    /// Deserialize into `reader`
     /// Read a wallet, transparently decrypting it first if the file is an encrypted envelope.
     ///
     /// If the file begins with the encryption magic, `passphrase` is required and is used to

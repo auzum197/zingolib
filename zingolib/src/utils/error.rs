@@ -1,17 +1,10 @@
-//! Error sub-module for utils module.
-
 use std::fmt;
 
-/// The error type for conversion errors.
 #[derive(thiserror::Error, Debug, PartialEq)]
 pub enum ConversionError {
-    /// Failed to decode hex
     DecodeHexFailed(hex::FromHexError),
-    /// Invalid string length
     InvalidTxidLength(usize),
-    /// Invalid recipient address
     InvalidAddress(#[from] zcash_address::ParseError),
-    /// Amount is outside the valid range of zatoshis
     OutsideValidRange,
 }
 

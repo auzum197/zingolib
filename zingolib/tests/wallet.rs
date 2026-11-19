@@ -27,7 +27,7 @@ mod load_wallet {
             .fully_scanned_height()
             .unwrap();
 
-        // Verify that wallet is still back at 6.
+        // Verify that wallet is still back at 8.
         assert_eq!(client_fully_scanned_height, 8.into());
 
         // Interrupt generating send

@@ -34,9 +34,9 @@ pub enum ParsedMemo {
 }
 
 /// Packs a list of UAs into a memo. The UA only memo is version 0 of the protocol
-/// Note that a UA's raw representation is 1 byte for length, +21 for a T-receiver,
-/// +44 for a Sapling receiver, and +44 for an Orchard receiver. This totals a maximum
-/// of 110 bytes per UA, and attempting to write more than 510 bytes will cause an error.
+/// Note that a UA's raw representation is 1 byte for length, +22 for a T-receiver,
+/// +45 for a Sapling receiver, and +45 for an Orchard receiver. This totals a maximum
+/// of 113 bytes per UA, and attempting to write more than 511 bytes will cause an error.
 #[deprecated(note = "prefer version 1")]
 pub fn create_wallet_internal_memo_version_0(
     consensus_parameters: &impl Parameters,
@@ -60,9 +60,9 @@ pub fn create_wallet_internal_memo_version_0(
 }
 
 /// Packs a list of UAs and/or ephemeral address indexes. into a memo.
-/// Note that a UA's raw representation is 1 byte for length, +21 for a T-receiver,
-/// +44 for a Sapling receiver, and +44 for an Orchard receiver. This totals a maximum
-/// of 110 bytes per UA, and attempting to write more than 510 bytes will cause an error.
+/// Note that a UA's raw representation is 1 byte for length, +22 for a T-receiver,
+/// +45 for a Sapling receiver, and +45 for an Orchard receiver. This totals a maximum
+/// of 113 bytes per UA, and attempting to write more than 511 bytes will cause an error.
 /// Ephemeral address indexes are `CompactSize` encoded, so for most use cases will only be
 /// one byte.
 pub fn create_wallet_internal_memo_version_1(
@@ -209,10 +209,8 @@ mod tests {
     use zcash_protocol::consensus::MAIN_NETWORK;
 
     fn get_some_number_of_ephemeral_indexes() -> Vec<u32> {
-        // Generate a random number of elements between 0 and 10
         let count = rand::random_range(0..=10);
 
-        // Create a vector of increasing natural numbers
         (0..count).collect::<Vec<u32>>()
     }
     fn get_serialiazed_ua(test_vector: &TestVector) -> (UnifiedAddress, Vec<u8>) {
@@ -229,7 +227,6 @@ mod tests {
     fn parse_zingolib_memo_version_n() {
         for test_vector in zingomemo_vectors::UA_TEST_VECTORS {
             let (ua, _serialized_ua) = get_serialiazed_ua(test_vector);
-            // version0
             #[allow(deprecated)]
             let version0_bytes =
                 create_wallet_internal_memo_version_0(&MAIN_NETWORK, std::slice::from_ref(&ua))
@@ -238,7 +235,6 @@ mod tests {
             if let ParsedMemo::Version0 { uas } = success_parse {
                 assert_eq!(uas[0], ua);
             }
-            // version1
             let random_rejection_indexes = get_some_number_of_ephemeral_indexes();
             let version1_bytes = create_wallet_internal_memo_version_1(
                 &MAIN_NETWORK,

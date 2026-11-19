@@ -21,7 +21,6 @@ const SYNC_START_TIMEOUT: Duration = Duration::from_secs(3);
 impl LightClient {
     /// Launches a task for syncing the wallet to the latest state of the block chain, storing the handle in the
     /// `sync_handle` field.
-    // TODO: add realtime sync updates to zingo-cli when it can handle printing during user input
     pub async fn sync(&mut self) -> Result<(), LightClientError> {
         if self.sync_mode() != SyncMode::NotRunning {
             return Err(LightClientError::SyncModeError(
@@ -111,7 +110,6 @@ impl LightClient {
         self.sync_events.subscribe()
     }
 
-    /// Returns the lightclient's current sync mode.
     pub fn sync_mode(&self) -> SyncMode {
         *self.sync_mode.borrow()
     }
@@ -184,13 +182,11 @@ impl LightClient {
         sync_result.map_err(LightClientError::SyncError)
     }
 
-    /// Calls [`crate::lightclient::LightClient::sync`] and then [`crate::lightclient::LightClient::await_sync`].
     pub async fn sync_and_await(&mut self) -> Result<SyncResult, LightClientError> {
         self.sync().await?;
         self.await_sync().await
     }
 
-    /// Calls [`crate::lightclient::LightClient::rescan`] and then [`crate::lightclient::LightClient::await_sync`].
     pub async fn rescan_and_await(&mut self) -> Result<SyncResult, LightClientError> {
         self.rescan().await?;
         self.await_sync().await

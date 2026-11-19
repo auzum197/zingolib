@@ -129,8 +129,9 @@ impl DecryptedNoteData {
 
 /// Scans a given range and returns all data relevant to the specified keys.
 ///
-/// `start_seam_block` and `end_seam_block` are the blocks adjacent to the `scan_range` for verification of continuity.
-/// `scan_targets` are the block height and txid of transactions in the `scan_range` that are known to be relevant to the
+/// The `start_seam_block` and `end_seam_block` of `scan_task` are the blocks adjacent to its `scan_range` for
+/// verification of continuity.
+/// Its `scan_targets` are the block height and txid of transactions in the `scan_range` that are known to be relevant to the
 /// wallet and are appended to during scanning if trial decryption succeeds. If there are no known relevant transctions
 /// then `scan_targets` will start empty.
 pub(crate) async fn scan<P>(

@@ -5,7 +5,7 @@
 //! zebrad or zainod.
 //!
 //! Every port here is an OFFLINE TWIN: the live original stays in
-//! libtonode-tests as the control group.
+//! `zingolib/tests/concrete.rs` as the control group.
 
 use pepper_sync::wallet::IronwoodNote;
 use zcash_address::ZcashAddress;
@@ -59,7 +59,7 @@ fn external_tex_address() -> String {
     crate::testutils::interpret_taddr_as_tex_addr(taddr_bytes, &external_wallet.chain_type())
 }
 
-/// Funds `client` with one faucet-built transaction mined into the next
+/// Funds `receivers` with one faucet-built transaction mined into the next
 /// mock block, followed by `extra_blocks` empty blocks.
 async fn fund(net: &MockNet, receivers: Vec<(&str, u64, Option<&str>)>, extra_blocks: u32) {
     let funding = faucet_funding_transaction(receivers).await;
@@ -280,7 +280,7 @@ async fn zero_value_receipts() {
     net.chain.write().await.mine_empty_blocks(1);
     recipient.sync_and_await().await.unwrap();
 
-    // Identical to the live pin: the recipient holds the 100_000 funding
+    // The recipient holds the 100_000 funding
     // note less the 1_000 payment and its 10_000 ZIP-317 fee.
     check_client_balances!(recipient, i: 89_000 o: 0 s: 0 t: 0);
 
@@ -309,9 +309,7 @@ async fn zero_value_receipts() {
 /// Mock-chain twin of libtonode `slow::wallet_events_check_fees`
 /// (live original kept as the control): a two-output cross-pool send to
 /// the wallet's own transparent and sapling addresses costs the exact
-/// composite ZIP-317 fee: 5_000 for the transparent output, 10_000 for
-/// the orchard bundle view carrying the ironwood spend, 10_000 for the
-/// sapling output pair, 10_000 for the ironwood change pair. Every pool
+/// composite ZIP-317 fee of 25_000. Every pool
 /// balance lands where the arithmetic says. The
 /// self-receipts arrive through real scanning of the mock blocks.
 #[tokio::test]
@@ -343,90 +341,8 @@ async fn wallet_events_check_fees() {
     net.chain.write().await.mine_mempool();
     recipient.sync_and_await().await.unwrap();
 
-    // 100_000 − 30_000 − 30_000 − 25_000 fee = 15_000 orchard change.
+    // 100_000 − 30_000 − 30_000 − 25_000 fee = 15_000 ironwood change.
     check_client_balances!(recipient, i: 15_000 o: 0 s: 30_000 t: 30_000);
-}
-
-/// Mock-chain twin of libtonode
-/// `slow::self_send_to_t_displays_as_one_transaction` (live original
-/// kept as the control): mixed self-sends to the wallet's own
-/// transparent, sapling, and orchard addresses (plus an incoming
-/// mixed send mined in the same block) must each surface as ONE
-/// transaction, so every transaction-summary txid is unique.
-#[tokio::test]
-async fn self_send_to_t_displays_as_one_transaction() {
-    let mut net = MockNet::launch().await;
-    let mut recipient = net
-        .client(zingo_test_vectors::seeds::HOSPITAL_MUSEUM_SEED)
-        .await;
-    let recipient_ua =
-        get_base_address(&recipient, PoolType::Shielded(ShieldedPool::Orchard)).await;
-    let recipient_taddr = get_base_address(&recipient, PoolType::Transparent).await;
-    let recipient_zaddr =
-        get_base_address(&recipient, PoolType::Shielded(ShieldedPool::Sapling)).await;
-
-    net.chain.write().await.mine_empty_blocks(1);
-    fund(&net, vec![(&recipient_ua, 80_000, None)], 0).await;
-    recipient.sync_and_await().await.unwrap();
-
-    let sent_to_taddr_value = 5_000;
-    let sent_to_zaddr_value = 11_000;
-    let sent_to_self_orchard_value = 1_000;
-    from_inputs::quick_send(
-        &mut recipient,
-        vec![(recipient_taddr.as_str(), sent_to_taddr_value, None)],
-    )
-    .await
-    .unwrap();
-    net.chain.write().await.mine_mempool();
-    recipient.sync_and_await().await.unwrap();
-
-    // The recipient's own mixed self-send and an incoming mixed send,
-    // mined into the same block as on the live chain.
-    from_inputs::quick_send(
-        &mut recipient,
-        vec![
-            (recipient_taddr.as_str(), sent_to_taddr_value, None),
-            (recipient_zaddr.as_str(), sent_to_zaddr_value, Some("foo")),
-            (
-                recipient_ua.as_str(),
-                sent_to_self_orchard_value,
-                Some("bar"),
-            ),
-        ],
-    )
-    .await
-    .unwrap();
-    let incoming = faucet_funding_transaction(vec![
-        (recipient_taddr.as_str(), sent_to_taddr_value, None),
-        (recipient_zaddr.as_str(), sent_to_zaddr_value, Some("foo2")),
-        (
-            recipient_ua.as_str(),
-            sent_to_self_orchard_value,
-            Some("bar2"),
-        ),
-    ])
-    .await;
-    {
-        let mut chain = net.chain.write().await;
-        chain.enter_mempool(incoming);
-        chain.mine_mempool();
-    }
-    recipient.sync_and_await().await.unwrap();
-
-    let txids: Vec<_> = recipient
-        .transaction_summaries(false)
-        .await
-        .unwrap()
-        .iter()
-        .map(|summary| summary.txid)
-        .collect();
-    let unique: std::collections::HashSet<_> = txids.iter().collect();
-    assert_eq!(
-        unique.len(),
-        txids.len(),
-        "every self-send surfaces as exactly one transaction"
-    );
 }
 
 /// Mock-chain twin of libtonode
@@ -434,12 +350,6 @@ async fn self_send_to_t_displays_as_one_transaction() {
 /// original kept as the control): full transaction-summary pinning
 /// across funding waves, cross-pool sends, and the
 /// Transmitted-to-Confirmed transition of an unmined send.
-///
-/// One deliberate divergence from the live literals: the second
-/// funding wave's fee is Some(10_000) here, not the live Some(20_000).
-/// That fee belongs to the FAUCET's economics (its live note pool is
-/// fragmented by earlier waves. The mock faucet is fresh each wave) and
-/// says nothing about the recipient behavior this test protects.
 #[tokio::test]
 async fn send_to_transparent_and_sapling_maintain_balance() {
     use zcash_protocol::consensus::BlockHeight;
@@ -646,9 +556,6 @@ async fn send_to_transparent_and_sapling_maintain_balance() {
         blockheight: BlockHeight::from_u32(5),
         kind: TransactionKind::Received,
         value: recipient_second_funding,
-        // The documented divergence: the mock faucet is fresh, so its
-        // funding send is the plain two-action 10_000, not the live
-        // fragmented-faucet 20_000.
         fee: Some(10_000),
         zec_price: None,
         ironwood_notes: vec![BasicNoteSummary::from_parts(

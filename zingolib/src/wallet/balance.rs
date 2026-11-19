@@ -157,7 +157,6 @@ impl LightWallet {
             return true;
         }
 
-        // Check if this is a coinbase transaction
         let is_coinbase = transaction
             .transaction()
             .transparent_bundle()
@@ -170,7 +169,6 @@ impl LightWallet {
                 .unwrap_or(self.birthday);
             let tx_height = transaction.status().get_height();
 
-            // Work with u32 values
             let current_height_u32: u32 = current_height.into();
             let tx_height_u32: u32 = tx_height.into();
 
@@ -185,7 +183,6 @@ impl LightWallet {
         }
     }
 
-    /// Returns account balance.
     pub fn account_balance(
         &self,
         account_id: zip32::AccountId,
@@ -400,7 +397,7 @@ impl LightWallet {
         )?)
     }
 
-    /// Returns total balance of unspent notes in confirmed blocks for a given shielded pool and `account_id`.
+    /// Returns total balance of unspent notes in confirmed blocks for a given pool and `account_id`.
     ///
     /// # Error
     ///
@@ -424,8 +421,8 @@ impl LightWallet {
         )
     }
 
-    /// Returns total balance of unspent notes in confirmed blocks for a given shielded pool and `account_id`,
-    /// excluding any notes with value less than marginal fee (`5_000`).
+    /// Returns total balance of unspent notes in confirmed blocks for a given pool and `account_id`,
+    /// excluding any notes with value less than or equal to marginal fee (`5_000`).
     ///
     /// # Error
     ///
@@ -450,7 +447,7 @@ impl LightWallet {
         )
     }
 
-    /// Returns total balance of unspent notes not yet confirmed on the block chain for a given shielded pool and
+    /// Returns total balance of unspent notes not yet confirmed on the block chain for a given pool and
     /// `account_id`.
     ///
     /// # Error
@@ -472,8 +469,8 @@ impl LightWallet {
         )
     }
 
-    /// Returns total balance of unspent notes not yet confirmed on the block chain for a given shielded pool and
-    /// `account_id`, excluding any notes with value less than marginal fee (`5_000`).
+    /// Returns total balance of unspent notes not yet confirmed on the block chain for a given pool and
+    /// `account_id`, excluding any notes with value less than or equal to marginal fee (`5_000`).
     ///
     /// # Error
     ///
@@ -592,82 +589,4 @@ impl LightWallet {
             .and_then(|shielded| shielded + sapling_balance)
             .ok_or(BalanceError::Overflow)
     }
-}
-
-#[cfg(any(test, feature = "testutils"))]
-mod test {
-
-    // FIXME: zingo2 rewrite as an integration test
-    // #[tokio::test]
-    // async fn confirmed_balance_excluding_dust() {
-    //     let wallet = LightWallet::new(
-    //         ZingoConfigBuilder::default().create().chain,
-    //         WalletBase::FreshEntropy,
-    //         1.into(),
-    //     )
-    //     .unwrap();
-    //     let confirmed_tx_record = TransactionRecordBuilder::default()
-    //         .status(ConfirmationStatus::Confirmed(80.into()))
-    //         .transparent_outputs(TransparentOutputBuilder::default())
-    //         .sapling_notes(SaplingNoteBuilder::default())
-    //         .sapling_notes(SaplingNoteBuilder::default())
-    //         .sapling_notes(
-    //             SaplingNoteBuilder::default()
-    //                 .note(
-    //                     SaplingCryptoNoteBuilder::default()
-    //                         .value(sapling_crypto::value::NoteValue::from_raw(3_000))
-    //                         .clone(),
-    //                 )
-    //                 .clone(),
-    //         )
-    //         .orchard_notes(OrchardNoteBuilder::default())
-    //         .orchard_notes(OrchardNoteBuilder::default())
-    //         .orchard_notes(
-    //             OrchardNoteBuilder::default()
-    //                 .note(
-    //                     OrchardCryptoNoteBuilder::default()
-    //                         .value(orchard::value::NoteValue::from_raw(5_001))
-    //                         .clone(),
-    //                 )
-    //                 .clone(),
-    //         )
-    //         .orchard_notes(
-    //             OrchardNoteBuilder::default()
-    //                 .note(
-    //                     OrchardCryptoNoteBuilder::default()
-    //                         .value(orchard::value::NoteValue::from_raw(2_000))
-    //                         .clone(),
-    //                 )
-    //                 .clone(),
-    //         )
-    //         .build();
-    //     let mempool_tx_record = TransactionRecordBuilder::default()
-    //         .status(ConfirmationStatus::Mempool(95.into()))
-    //         .transparent_outputs(TransparentOutputBuilder::default())
-    //         .sapling_notes(SaplingNoteBuilder::default())
-    //         .orchard_notes(OrchardNoteBuilder::default())
-    //         .build();
-    //     {
-    //         let mut tx_map = wallet
-    //             .transaction_context
-    //             .transaction_metadata_set
-    //             .write()
-    //             .await;
-    //         tx_map
-    //             .transaction_records_by_id
-    //             .insert_transaction_record(confirmed_tx_record);
-    //         tx_map
-    //             .transaction_records_by_id
-    //             .insert_transaction_record(mempool_tx_record);
-    //     }
-
-    //     assert_eq!(
-    //         wallet.confirmed_balance_excluding_dust::<Sapling>().await,
-    //         Some(400_000)
-    //     );
-    //     assert_eq!(
-    //         wallet.confirmed_balance_excluding_dust::<Orchard>().await,
-    //         Some(1_605_001)
-    //     );
-    // }
 }

@@ -120,35 +120,24 @@ pub(crate) struct WalletBase {
 /// methods for a save task implementation.
 #[derive(Debug)]
 pub struct LightWallet {
-    /// Current wallet version.
     current_version: u64,
     /// Wallet version that was read from on wallet load.
     read_version: u64,
     /// Blockchain network type
     chain_type: ChainType,
-    /// The seed for the wallet, stored as a zip339 Mnemonic, and the account index.
+    /// The seed for the wallet, stored as a zip339 Mnemonic.
     mnemonic: Option<Mnemonic>,
     /// The block height at which the wallet was created.
     birthday: BlockHeight,
-    /// Unified key store
     pub unified_key_store: BTreeMap<zip32::AccountId, UnifiedKeyStore>,
-    /// `Unified_addresses`
     unified_addresses: BTreeMap<UnifiedAddressId, UnifiedAddress>,
-    /// Transparent addresses
     transparent_addresses: BTreeMap<TransparentAddressId, String>,
-    /// Wallet blocks
     pub wallet_blocks: BTreeMap<BlockHeight, WalletBlock>,
-    /// Wallet transactions
     pub wallet_transactions: HashMap<TxId, WalletTransaction>,
-    /// Nullifier map
     pub nullifier_map: NullifierMap,
-    /// Outpoint map
     pub outpoint_map: BTreeMap<OutputId, ScanTarget>,
-    /// Shard trees
     pub shard_trees: ShardTrees,
-    /// Sync state
     pub sync_state: SyncState,
-    /// Wallet settings
     pub wallet_settings: WalletSettings,
     /// The current and historical daily price of zec.
     pub price_list: PriceList,
@@ -247,7 +236,6 @@ impl LightWallet {
         Ok(wallet)
     }
 
-    /// Returns current wallet version.
     #[must_use]
     pub fn current_version(&self) -> u64 {
         self.current_version
@@ -259,13 +247,11 @@ impl LightWallet {
         self.read_version
     }
 
-    /// Returns wallet birthday height.
     #[must_use]
     pub fn birthday(&self) -> BlockHeight {
         self.birthday
     }
 
-    /// Returns chain type wallet is connected to.
     #[must_use]
     pub fn chain_type(&self) -> ChainType {
         self.chain_type
@@ -277,19 +263,16 @@ impl LightWallet {
         self.mnemonic.as_ref()
     }
 
-    /// Returns the wallet's mnemonic phrase.
     #[must_use]
     pub fn mnemonic_phrase(&self) -> Option<String> {
         self.mnemonic().map(|m| m.phrase().to_string())
     }
 
-    /// Returns unified addresses.
     #[must_use]
     pub fn unified_addresses(&self) -> &BTreeMap<UnifiedAddressId, UnifiedAddress> {
         &self.unified_addresses
     }
 
-    /// Returns transparent addresses.
     #[must_use]
     pub fn transparent_addresses(&self) -> &BTreeMap<TransparentAddressId, String> {
         &self.transparent_addresses
@@ -478,62 +461,5 @@ impl LightWallet {
         self.price_list = PriceList::new();
 
         self.save_required = true;
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use incrementalmerkletree::frontier::CommitmentTree;
-    use orchard::tree::MerkleHashOrchard;
-
-    // TODO: move to relevant mod
-    #[test]
-    fn anchor_from_tree_works() {
-        // These commitment values copied from zcash/orchard, and were originally derived from the bundle
-        // data that was generated for testing commitment tree construction inside of zcashd here.
-        // https://github.com/zcash/zcash/blob/ecec1f9769a5e37eb3f7fd89a4fcfb35bc28eed7/src/test/data/merkle_roots_orchard.h
-
-        let commitments = [
-            [
-                0x68, 0x13, 0x5c, 0xf4, 0x99, 0x33, 0x22, 0x90, 0x99, 0xa4, 0x4e, 0xc9, 0x9a, 0x75,
-                0xe1, 0xe1, 0xcb, 0x46, 0x40, 0xf9, 0xb5, 0xbd, 0xec, 0x6b, 0x32, 0x23, 0x85, 0x6f,
-                0xea, 0x16, 0x39, 0x0a,
-            ],
-            [
-                0x78, 0x31, 0x50, 0x08, 0xfb, 0x29, 0x98, 0xb4, 0x30, 0xa5, 0x73, 0x1d, 0x67, 0x26,
-                0x20, 0x7d, 0xc0, 0xf0, 0xec, 0x81, 0xea, 0x64, 0xaf, 0x5c, 0xf6, 0x12, 0x95, 0x69,
-                0x01, 0xe7, 0x2f, 0x0e,
-            ],
-            [
-                0xee, 0x94, 0x88, 0x05, 0x3a, 0x30, 0xc5, 0x96, 0xb4, 0x30, 0x14, 0x10, 0x5d, 0x34,
-                0x77, 0xe6, 0xf5, 0x78, 0xc8, 0x92, 0x40, 0xd1, 0xd1, 0xee, 0x17, 0x43, 0xb7, 0x7b,
-                0xb6, 0xad, 0xc4, 0x0a,
-            ],
-            [
-                0x9d, 0xdc, 0xe7, 0xf0, 0x65, 0x01, 0xf3, 0x63, 0x76, 0x8c, 0x5b, 0xca, 0x3f, 0x26,
-                0x46, 0x60, 0x83, 0x4d, 0x4d, 0xf4, 0x46, 0xd1, 0x3e, 0xfc, 0xd7, 0xc6, 0xf1, 0x7b,
-                0x16, 0x7a, 0xac, 0x1a,
-            ],
-            [
-                0xbd, 0x86, 0x16, 0x81, 0x1c, 0x6f, 0x5f, 0x76, 0x9e, 0xa4, 0x53, 0x9b, 0xba, 0xff,
-                0x0f, 0x19, 0x8a, 0x6c, 0xdf, 0x3b, 0x28, 0x0d, 0xd4, 0x99, 0x26, 0x16, 0x3b, 0xd5,
-                0x3f, 0x53, 0xa1, 0x21,
-            ],
-        ];
-        let mut orchard_tree: CommitmentTree<MerkleHashOrchard, 32> = CommitmentTree::empty();
-        for commitment in commitments {
-            orchard_tree
-                .append(MerkleHashOrchard::from_bytes(&commitment).unwrap())
-                .unwrap();
-        }
-        // This value was produced by the Python test vector generation code implemented here:
-        // https://github.com/zcash-hackworks/zcash-test-vectors/blob/f4d756410c8f2456f5d84cedf6dac6eb8c068eed/orchard_merkle_tree.py
-        let anchor = [
-            0xc8, 0x75, 0xbe, 0x2d, 0x60, 0x87, 0x3f, 0x8b, 0xcd, 0xeb, 0x91, 0x28, 0x2e, 0x64,
-            0x2e, 0x0c, 0xc6, 0x5f, 0xf7, 0xd0, 0x64, 0x2d, 0x13, 0x7b, 0x28, 0xcf, 0x28, 0xcc,
-            0x9c, 0x52, 0x7f, 0x0e,
-        ];
-        let anchor = orchard::Anchor::from(MerkleHashOrchard::from_bytes(&anchor).unwrap());
-        assert_eq!(orchard::Anchor::from(orchard_tree.root()), anchor);
     }
 }

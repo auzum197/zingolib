@@ -188,7 +188,6 @@ impl SyncState {
             })
     }
 
-    /// Returns the scan targets within `block_range`.
     pub(crate) fn find_scan_targets(
         &self,
         block_range: &Range<BlockHeight>,
@@ -609,7 +608,7 @@ impl SyncState {
     /// If any scan ranges are found to overlap with the given `block_range`, they will be split at the boundary and
     /// the new scan ranges contained by `block_range` will be set to `scan_priority`.
     /// Any scan ranges that fully contain the `block_range` will be split out with the given `scan_priority`.
-    /// Any scan ranges with `Scanning`, `RefetchingNullifiers` or `Scanned` priority or with higher (or equal) priority than
+    /// Any scan ranges with `Scanning`, `RefetchingNullifiers`, `Scanned` or `ScannedWithoutMapping` priority or with higher (or equal) priority than
     /// `scan_priority` will be ignored.
     pub(crate) fn punch_scan_priority(
         &mut self,
@@ -836,7 +835,6 @@ impl SyncState {
                                     .clone()
                             }
                         } else {
-                            // select the last range in the list
                             (*index, highest_priority_range.clone())
                         }
                     })?

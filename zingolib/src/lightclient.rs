@@ -1,5 +1,3 @@
-//! TODO: Add Mod Description Here!
-
 use std::{
     collections::BTreeMap,
     fs::File,
@@ -55,7 +53,6 @@ struct WalletMeta {
     wallet_path: PathBuf,
     /// The chain type, extracted at construction for lock-free access.
     chain_type: ChainType,
-    /// The wallet birthday height.
     birthday: BlockHeight,
     /// The mnemonic seed phrase, if this is a spending wallet.
     mnemonic: Option<Mnemonic>,
@@ -183,7 +180,6 @@ impl LightClient {
         u32::from(self.wallet.birthday)
     }
 
-    /// Returns the wallet's mnemonic phrase as a string.
     pub fn mnemonic_phrase(&self) -> Option<String> {
         self.wallet
             .mnemonic
@@ -191,7 +187,6 @@ impl LightClient {
             .map(|m| m.phrase().to_string())
     }
 
-    /// Returns full path to wallet file.
     pub fn wallet_path(&self) -> PathBuf {
         self.wallet.wallet_path.clone()
     }

@@ -1,5 +1,3 @@
-//! Conversion specific utilities
-
 use zcash_address::ZcashAddress;
 use zcash_protocol::{TxId, value::Zatoshis};
 
@@ -16,12 +14,10 @@ pub fn txid_from_hex_encoded_str(txid: &str) -> Result<TxId, ConversionError> {
     Ok(TxId::from_bytes(txid_bytes))
 }
 
-/// Convert a &str to a `ZcashAddress`
 pub fn address_from_str(address: &str) -> Result<ZcashAddress, ConversionError> {
     Ok(ZcashAddress::try_from_encoded(address)?)
 }
 
-/// Convert a valid u64 into Zatoshis.
 pub fn zatoshis_from_u64(amount: u64) -> Result<Zatoshis, ConversionError> {
     Zatoshis::from_u64(amount).map_err(|_e| ConversionError::OutsideValidRange)
 }

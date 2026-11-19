@@ -28,7 +28,7 @@ pub(crate) fn get_compact_block_hash(compact_block: &CompactBlock) -> BlockHash 
 /// # Panics
 ///
 /// This function will panic if `compact_block.header` is not set and
-/// `compact_block.hash` is not exactly 32 bytes.
+/// `compact_block.prev_hash` is not exactly 32 bytes.
 pub(crate) fn get_compact_block_prev_hash(compact_block: &CompactBlock) -> BlockHash {
     if let Some(header) = get_compact_block_header(compact_block) {
         header.prev_block
@@ -49,7 +49,7 @@ pub(crate) fn get_compact_block_height(compact_block: &CompactBlock) -> BlockHei
 
 /// Returns the [`BlockHeader`] for this block if present.
 ///
-/// A convenience method that parses `compact_block.height` if present.
+/// A convenience method that parses `compact_block.header` if present.
 pub(crate) fn get_compact_block_header(compact_block: &CompactBlock) -> Option<BlockHeader> {
     if compact_block.header.is_empty() {
         None
@@ -58,7 +58,6 @@ pub(crate) fn get_compact_block_header(compact_block: &CompactBlock) -> Option<B
     }
 }
 
-/// Returns the transaction Id
 pub(crate) fn get_compact_tx_txid(compact_tx: &CompactTx) -> TxId {
     let mut txid_bytes = [0u8; 32];
     txid_bytes.copy_from_slice(&compact_tx.txid);

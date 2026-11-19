@@ -85,7 +85,6 @@ where
         let block_height = get_compact_block_height(block);
 
         for transaction in &block.vtx {
-            // collect trial decryption results by transaction
             let incoming_sapling_outputs = runners.sapling.collect_results(
                 get_compact_block_hash(block),
                 get_compact_tx_txid(transaction),
@@ -415,7 +414,6 @@ fn calculate_nullifiers_and_positions<D, K, Nf>(
 }
 
 // TODO: unify sapling and orchard leaf and retention fns
-/// Calculates the sapling note commitment tree leaves and shardtree retentions for a given compact transaction
 fn calculate_sapling_leaves_and_retentions<D: Domain>(
     outputs: &[CompactSaplingOutput],
     incoming_decrypted_outputs: &HashMap<OutputId, DecryptedOutput<D, ()>>,
@@ -456,7 +454,6 @@ fn calculate_sapling_leaves_and_retentions<D: Domain>(
     }
 }
 
-// calculates the orchard note commitment tree leaves and shardtree retentions for a given compact transaction
 fn calculate_orchard_leaves_and_retentions<D: Domain>(
     actions: &[CompactOrchardAction],
     incoming_decrypted_outputs: &HashMap<OutputId, DecryptedOutput<D, ()>>,

@@ -191,9 +191,7 @@ where
 pub(crate) struct DecryptedOutput<D: Domain, M> {
     /// The tag corresponding to the incoming viewing key used to decrypt the note.
     pub(crate) ivk_tag: KeyId,
-    /// The recipient of the note.
     pub(crate) recipient: D::Recipient,
-    /// The note!
     pub(crate) note: D::Note,
     /// The memo field, or `()` if this is a decrypted compact output.
     pub(crate) memo: M,
@@ -220,7 +218,6 @@ where
 pub(crate) trait Decryptor<D: BatchDomain, Output> {
     type Memo;
 
-    // Once we reach MSRV 1.75.0, this can return `impl Iterator`.
     fn batch_decrypt(
         tags: &[KeyId],
         ivks: &[D::IncomingViewingKey],
@@ -259,7 +256,6 @@ impl<D: BatchDomain, Output: ShieldedOutput<D, COMPACT_NOTE_SIZE>> Decryptor<D, 
 struct OutputIndex<V> {
     /// The index of the output within the corresponding shielded bundle.
     output_index: usize,
-    /// The value for the output index.
     value: V,
 }
 
@@ -393,7 +389,6 @@ where
     D: BatchDomain,
     Dec: Decryptor<D, Output>,
 {
-    /// Constructs a new batch.
     fn new(tags: Vec<KeyId>, ivks: Vec<D::IncomingViewingKey>) -> Self {
         assert_eq!(tags.len(), ivks.len());
         Self {
@@ -404,7 +399,6 @@ where
         }
     }
 
-    /// Returns `true` if the batch is currently empty.
     fn is_empty(&self) -> bool {
         self.outputs.is_empty()
     }
@@ -423,7 +417,6 @@ where
 {
     /// Runs the batch of trial decryptions, and reports the results.
     fn run(self) {
-        // Deconstruct self so we can consume the pieces individually.
         let Self {
             tags,
             ivks,
@@ -462,7 +455,7 @@ where
 {
     /// Adds the given outputs to this batch.
     ///
-    /// `replier` will be called with the result of every output.
+    /// `replier` is sent the result of every output that decrypts.
     fn add_outputs(
         &mut self,
         domain: impl Fn(&Output) -> D,
@@ -583,8 +576,7 @@ where
     /// Batches the given outputs for trial decryption.
     ///
     /// `block_tag` is the hash of the block that triggered this txid being added to the
-    /// batch, or the all-zeros hash to indicate that no block triggered it (i.e. it was a
-    /// mempool change).
+    /// batch.
     ///
     /// If after adding the given outputs, the accumulated batch size is at least the size
     /// threshold that was set via `Self::new`, `Self::flush` is called. Subsequent calls
@@ -620,8 +612,7 @@ where
     /// Collects the pending decryption results for the given transaction.
     ///
     /// `block_tag` is the hash of the block that triggered this txid being added to the
-    /// batch, or the all-zeros hash to indicate that no block triggered it (i.e. it was a
-    /// mempool change).
+    /// batch.
     pub(crate) fn collect_results(
         &mut self,
         block_tag: BlockHash,

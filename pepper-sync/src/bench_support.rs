@@ -27,7 +27,7 @@ pub const MAXIMUM_LOCATED_TREE_SIZE: usize = 4096;
 pub struct CommitTiming {
     /// Time spent in [`build_located_trees`] (the `tree` phase live).
     pub tree_build: Duration,
-    /// Time spent merging the located trees and pruning (the `insert` sub-phase live).
+    /// Time spent merging the located trees and pruning (the `insert_tree` sub-phase live).
     pub insert: Duration,
 }
 
@@ -166,42 +166,6 @@ pub fn prefill_shard(
 mod tests {
     use super::*;
 
-    /// Times a real-sized ChainTip commit in isolation. Ignored by default. Run with
-    /// `cargo test --release -p pepper-sync -- --ignored --nocapture` and read the breakdown.
-    ///
-    /// It commits a ~32k-output batch into a shard already partially filled by a prior batch (the
-    /// steady-state ChainTip condition). The measured intrinsic insert is about 6s, and a first
-    /// batch into an empty shard is about 2s. The live commit is about 51s. Nothing tried here
-    /// reproduces that 8x difference: output count, distinct versus constant leaf values, mark
-    /// density, tree depth over 40 batches, shard-boundary crossings, high tree positions, and
-    /// concurrent CPU or rayon load all leave the insert near 6s. Closing it needs located trees
-    /// captured from a live sync and replayed through this same path. Until then this measures the
-    /// intrinsic cost and is the fast offline tool for comparing commit changes.
-    #[test]
-    #[ignore = "intrinsic commit timing, run with --release --ignored --nocapture"]
-    fn commit_full_scale() {
-        let mut trees = ShardTrees::new();
-        // a prior batch leaves the current shard partially filled, as at steady-state ChainTip
-        let (sapling_pos, orchard_pos) =
-            prefill_shard(&mut trees, 27_234, 32_000, MAXIMUM_LOCATED_TREE_SIZE);
-        let sapling = synthetic_sapling_leaves(27_234, 8_000, &[100, 5_000]);
-        let orchard = synthetic_orchard_leaves(27_234, 24_000, &[200, 6_000]);
-        let timing = commit_batch(
-            &mut trees,
-            sapling,
-            orchard,
-            sapling_pos,
-            orchard_pos,
-            MAXIMUM_LOCATED_TREE_SIZE,
-        );
-        println!(
-            "commit (32k outputs): tree_build={:?} insert={:?} total={:?}",
-            timing.tree_build,
-            timing.insert,
-            timing.tree_build + timing.insert,
-        );
-    }
-
     /// The insert cost of a 300-block batch against a tree already holding a full checkpoint
     /// window, for the held window of `SHARDTREE_CHECKPOINT_ROLLING_WINDOW_SIZE` and for 100,
     /// and for the same tree with a one-checkpoint batch that prunes one checkpoint only.
@@ -280,7 +244,6 @@ mod tests {
         }
     }
 
-    /// Committing the same batch twice yields the same root.
     #[test]
     fn commit_is_deterministic() {
         let marks = [3u32, 17, 99];

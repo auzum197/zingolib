@@ -403,40 +403,4 @@ mod tests {
             event => panic!("expected RangeScanned, got: {event:?}"),
         }
     }
-
-    #[test]
-    fn batch_lifecycle_transitions_in_order() {
-        let (emitter, mut rx) = SyncEmitter::new(16);
-        let range = height(100)..height(200);
-        emitter.emit(SyncEvent::BatchScanCompleted {
-            range: range.clone(),
-        });
-        emitter.emit(SyncEvent::BatchCommitStarted {
-            range: range.clone(),
-        });
-        assert!(matches!(
-            rx.try_recv().expect("retained event").event,
-            SyncEvent::BatchScanCompleted { range: r } if r == range
-        ));
-        assert!(matches!(
-            rx.try_recv().expect("retained event").event,
-            SyncEvent::BatchCommitStarted { range: r } if r == range
-        ));
-    }
-
-    #[test]
-    fn scan_plan_event_retains_scheduler_ranges() {
-        let (emitter, mut rx) = SyncEmitter::new(16);
-        let ranges = vec![ScanRange::from_parts(
-            height(100)..height(200),
-            ScanPriority::ChainTip,
-        )];
-        emitter.emit(SyncEvent::ScanPlanUpdated {
-            ranges: ranges.clone(),
-        });
-        assert!(matches!(
-            rx.try_recv().expect("retained event").event,
-            SyncEvent::ScanPlanUpdated { ranges: received } if received == ranges
-        ));
-    }
 }

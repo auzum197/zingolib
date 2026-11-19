@@ -321,7 +321,6 @@ pub fn draw_detail(frame: &mut Frame, area: Rect, state: &State, t: &Theme, mode
     );
 }
 
-/// The amount with its sign, at full precision.
 fn signed_full(tx: &TxRow) -> String {
     let sign = match tx.kind {
         TxKind::Received => "+",

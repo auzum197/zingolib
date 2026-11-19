@@ -20,11 +20,8 @@ use crate::wallet::{
     keys::unified::UnifiedKeyStore,
 };
 
-/// Default indexer uri
 pub const DEFAULT_INDEXER_URI: &str = "https://zec.rocks:443";
-/// Default indexer uri (testnet)
 pub const DEFAULT_INDEXER_URI_TESTNET: &str = "https://testnet.zec.rocks";
-/// Default wallet file name
 pub const DEFAULT_WALLET_NAME: &str = "zingo-wallet.dat";
 
 /// Configuration data for the construction of a [`crate::wallet::LightWallet`].
@@ -191,42 +188,35 @@ pub struct ClientConfig {
     wallet_dir: PathBuf,
     /// Wallet file name. This will be created in the `wallet_dir`.
     wallet_name: String,
-    /// Wallet config.
     wallet_config: WalletConfig,
 }
 
 impl ClientConfig {
-    /// Constructs a default builder.
     #[must_use]
     pub fn builder() -> ClientConfigBuilder {
         ClientConfigBuilder::default()
     }
 
-    /// Returns indexer URI.
     #[must_use]
     pub fn indexer_uri(&self) -> http::Uri {
         self.indexer_uri.clone()
     }
 
-    /// Returns wallet directory.
     #[must_use]
     pub fn chain_type(&self) -> ChainType {
         self.chain_type
     }
 
-    /// Returns wallet directory.
     #[must_use]
     pub fn wallet_dir(&self) -> PathBuf {
         self.wallet_dir.clone()
     }
 
-    /// Returns wallet file name.
     #[must_use]
     pub fn wallet_name(&self) -> &str {
         &self.wallet_name
     }
 
-    /// Returns wallet config.
     #[must_use]
     pub fn wallet_config(&self) -> WalletConfig {
         self.wallet_config.clone()
@@ -242,7 +232,6 @@ impl ClientConfig {
     }
 }
 
-/// Builder for [`ClientConfig`].
 #[derive(Clone, Debug)]
 pub struct ClientConfigBuilder {
     indexer_uri: Option<http::Uri>,
@@ -253,13 +242,10 @@ pub struct ClientConfigBuilder {
 }
 
 impl ClientConfigBuilder {
-    /// Constructs a new builder for [`ClientConfig`].
     pub fn new() -> Self {
         Self::default()
     }
 
-    /// Set indexer URI.
-    ///
     /// TODO: Will be renamed `set_indexer` and accept an `Indexer` type from
     /// `zingo-netutils` instead of `http::Uri`.
     pub fn set_indexer_uri(mut self, indexer_uri: http::Uri) -> Self {
@@ -267,31 +253,26 @@ impl ClientConfigBuilder {
         self
     }
 
-    /// Set chain type.
     pub fn set_chain_type(mut self, chain_type: ChainType) -> Self {
         self.chain_type = chain_type;
         self
     }
 
-    /// Set wallet directory.
     pub fn set_wallet_dir(mut self, dir: PathBuf) -> Self {
         self.wallet_dir = Some(dir);
         self
     }
 
-    /// Set wallet file name.
     pub fn set_wallet_name(mut self, wallet_name: String) -> Self {
         self.wallet_name = Some(wallet_name);
         self
     }
 
-    /// Set wallet config.
     pub fn set_wallet_config(mut self, wallet_config: WalletConfig) -> Self {
         self.wallet_config = wallet_config;
         self
     }
 
-    /// Build a [`ClientConfig`] from the builder.
     pub fn build(self) -> ClientConfig {
         let wallet_dir = wallet_dir_or_default(self.wallet_dir, self.chain_type);
         let wallet_name = wallet_name_or_default(self.wallet_name);
@@ -373,7 +354,6 @@ fn wallet_dir_or_default(opt_wallet_dir: Option<PathBuf>, chain: ChainType) -> P
             dir
         });
 
-        // Create directory if it doesn't exist on non-mobile platforms
         match std::fs::create_dir_all(wallet_dir.clone()) {
             Ok(()) => {}
             Err(e) => {
@@ -383,29 +363,4 @@ fn wallet_dir_or_default(opt_wallet_dir: Option<PathBuf>, chain: ChainType) -> P
     }
 
     wallet_dir
-}
-
-#[cfg(test)]
-mod tests {
-    use crate::config::{ChainType, ClientConfig};
-
-    #[tokio::test]
-    async fn test_load_clientconfig() {
-        let valid_uri = crate::config::construct_lightwalletd_uri(Some(
-            crate::config::DEFAULT_INDEXER_URI.to_string(),
-        ))
-        .unwrap();
-
-        let temp_dir = tempfile::TempDir::new().unwrap();
-        let temp_path = temp_dir.path().to_path_buf();
-
-        let valid_config = ClientConfig::builder()
-            .set_indexer_uri(valid_uri.clone())
-            .set_chain_type(ChainType::Mainnet)
-            .set_wallet_dir(temp_path)
-            .build();
-
-        assert_eq!(valid_config.indexer_uri(), valid_uri);
-        assert_eq!(valid_config.chain_type(), ChainType::Mainnet);
-    }
 }

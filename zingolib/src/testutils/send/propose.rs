@@ -29,7 +29,6 @@ use crate::wallet::LightWallet;
 use crate::wallet::error::WalletError;
 
 impl LightWallet {
-    /// Creates a proposal from a transaction request.
     pub(crate) fn create_send_proposal(
         &mut self,
         request: TransactionRequest,
@@ -149,7 +148,6 @@ impl LightWallet {
         self.send_proposal = Some(proposal);
     }
 
-    /// Takes the proposal from the `send_proposal` field, leaving the field empty.
     pub(crate) fn take_proposal(&mut self) -> Option<ZingoProposal> {
         self.send_proposal.take()
     }

@@ -4,9 +4,10 @@
 //!
 //! The node-backed suites ran on zcashd regtest, which has no NU6.3, and
 //! mined a 625_000_000 zat reward to the faucet in every block, starting
-//! with three blocks at launch. The scenarios here keep both: the default
-//! chain never activates Ironwood, and [`MockNet::generate_blocks`] pays
-//! [`BLOCK_REWARD`] to the faucet's address for the chosen pool.
+//! with three blocks at launch. The scenarios here keep the reward:
+//! [`MockNet::generate_blocks`] pays [`BLOCK_REWARD`] to the faucet's address
+//! for the chosen pool. The `_default` scenarios use the default activation
+//! heights, where NU6.3 is active from height 1.
 
 use std::path::PathBuf;
 
@@ -174,7 +175,8 @@ pub async fn custom_clients(
     (local_net, client_builder)
 }
 
-/// [`custom_clients`] mining to orchard on the pre-Ironwood chain.
+/// [`custom_clients`] mining to the faucet's orchard receiver with the default
+/// activation heights.
 pub async fn custom_clients_default() -> (MockNet, ClientBuilder) {
     custom_clients(PoolType::IRONWOOD, ActivationHeights::default()).await
 }
@@ -197,7 +199,7 @@ pub async fn unfunded_client(
     (local_net, lightclient)
 }
 
-/// [`unfunded_client`] on the pre-Ironwood chain.
+/// [`unfunded_client`] with the default activation heights.
 pub async fn unfunded_client_default() -> (MockNet, LightClient) {
     unfunded_client(ActivationHeights::default()).await
 }
@@ -217,7 +219,8 @@ pub async fn faucet(
     (local_net, faucet)
 }
 
-/// [`faucet`] mining to orchard on the pre-Ironwood chain.
+/// [`faucet`] mining to the faucet's orchard receiver with the default
+/// activation heights.
 pub async fn faucet_default() -> (MockNet, LightClient) {
     faucet(PoolType::IRONWOOD, ActivationHeights::default()).await
 }
@@ -245,7 +248,8 @@ pub async fn faucet_recipient(
     (local_net, faucet, recipient)
 }
 
-/// [`faucet_recipient`] mining to orchard on the pre-Ironwood chain.
+/// [`faucet_recipient`] mining to the faucet's orchard receiver with the
+/// default activation heights.
 pub async fn faucet_recipient_default() -> (MockNet, LightClient, LightClient) {
     faucet_recipient(PoolType::IRONWOOD, ActivationHeights::default()).await
 }
@@ -304,8 +308,8 @@ pub async fn faucet_funded_recipient(
     )
 }
 
-/// [`faucet_funded_recipient`] with orchard funds only, on the pre-Ironwood
-/// chain.
+/// [`faucet_funded_recipient`] with orchard funds only and the default
+/// activation heights.
 pub async fn faucet_funded_recipient_default(
     orchard_funds: u64,
 ) -> (MockNet, LightClient, LightClient, String) {
@@ -378,8 +382,8 @@ fn hospital_museum_config() -> WalletConfig {
 }
 
 /// The chain-generics environment of the node-backed suite, on the mock:
-/// a pre-Ironwood chain whose miner address is the faucet's orchard
-/// address.
+/// a chain with the default activation heights whose miner address is the
+/// faucet's orchard address.
 pub struct RegtestEnvironment {
     /// The mock network.
     pub local_net: MockNet,

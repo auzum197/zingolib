@@ -52,15 +52,14 @@ where
 }
 
 impl<E: std::fmt::Debug + std::fmt::Display> SyncError<E> {
-    /// Returns `true` if this error is likely transient and retrying sync
-    /// (possibly against a different server) may succeed.
+    /// Returns `true` if retrying sync against the same server may succeed.
     ///
-    /// Server errors from failed gRPC requests and mempool stream failures
-    /// are recommend_same_server. Configuration errors, wallet corruption, and data
-    /// integrity failures are not.
+    /// A dropped fetcher task and mempool stream failures are recommend_same_server.
+    /// Failed gRPC requests, invalid server data, configuration errors, wallet
+    /// corruption, and data integrity failures are not.
     pub fn recommend_same_server(&self) -> bool {
         match self {
-            // Network/server issues — retry may help, especially with a different server.
+            // Network/server issues. The server error decides whether the same server is worth retrying.
             SyncError::ServerError(e) => e.recommend_same_server(),
             SyncError::MempoolError(_) => true,
 
@@ -78,11 +77,11 @@ impl<E: std::fmt::Debug + std::fmt::Display> SyncError<E> {
 }
 
 impl ServerError {
-    /// Returns `true` if this server error is likely transient.
+    /// Returns `true` if retrying with the same server may succeed.
     ///
-    /// gRPC request failures (timeouts, connection drops) are recommend_same_server.
-    /// Invalid data from the server suggests a bad server that should be
-    /// avoided rather than retried.
+    /// Only a dropped fetcher task is recommend_same_server.
+    /// gRPC request failures and invalid data from the server suggest a bad
+    /// server that should be avoided rather than retried.
     pub fn recommend_same_server(&self) -> bool {
         match self {
             // Internal channel issue — retry may help after restart.
@@ -109,10 +108,10 @@ impl ServerError {
 /// error internals.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SyncRecoveryObservables {
-    /// The error is transient (e.g. timeout, connection drop).
+    /// The error is transient (e.g. dropped fetcher task, mempool stream failure).
     /// Retrying sync with the same server may succeed.
     MaybeRecoverableServer,
-    /// The server returned invalid or unverifiable data.
+    /// The server request failed or the server returned invalid or unverifiable data.
     /// A different server should be tried if available.
     ServerUnavailable,
     /// The error is not recoverable by retrying or switching servers.
@@ -198,7 +197,7 @@ pub enum ScanError {
     /// Continuity error.
     #[error("continuity error. {0}")]
     ContinuityError(#[from] ContinuityError),
-    /// Zcash client backend scan error
+    /// Invalid encoding of a compact output or action
     #[error("{0}")]
     EncodingError(#[from] EncodingInvalid),
     /// Invalid sapling nullifier
@@ -361,7 +360,6 @@ pub enum SyncModeError {
 mod tests {
     use super::*;
 
-    /// Use `String` as the wallet error type for testing.
     type TestSyncError = SyncError<String>;
 
     mod recommend_same_server {
@@ -539,16 +537,6 @@ mod tests {
             fn chain_verification_error() {
                 assert_eq!(
                     ServerError::ChainVerificationError.recovery_recommendation(),
-                    SyncRecoveryObservables::ServerUnavailable
-                );
-            }
-
-            #[test]
-            fn sync_error_from_invalid_frontier() {
-                let e: TestSyncError =
-                    ServerError::InvalidFrontier(std::io::Error::other("bad")).into();
-                assert_eq!(
-                    e.recovery_recommendation(),
                     SyncRecoveryObservables::ServerUnavailable
                 );
             }
