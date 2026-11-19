@@ -155,7 +155,6 @@ async fn sent_transaction_reorged_into_mempool() {
     }
 
     recipient.sync_and_await().await.unwrap();
-    //  light_client.do_sync(false).await.unwrap();
     tracing::info!(
         "Recipient pre-reorg: {}",
         &recipient
