@@ -729,11 +729,8 @@ struct Receivers {
 }
 
 fn receivers(keys: &UnifiedKeyStore, chain_type: &ChainType) -> Receivers {
-    let index = keys
-        .next_unified_address_index(0, ReceiverSelection::all_shielded())
-        .unwrap();
-    let own = keys
-        .generate_unified_address(index, ReceiverSelection::all_shielded())
+    let (_, own) = keys
+        .find_unified_address(0, ReceiverSelection::all_shielded())
         .unwrap();
     Receivers {
         sapling: *own.sapling().unwrap(),

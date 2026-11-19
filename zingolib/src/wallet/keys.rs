@@ -66,12 +66,12 @@ impl LightWallet {
             .map(|&address_id| address_id.address_index)
             .max()
             .map_or(0, |address_index| address_index + 1);
+        let (address_index, unified_address) =
+            key_store.find_unified_address(unused_index, receivers)?;
         let address_id = UnifiedAddressId {
             account_id,
-            address_index: key_store.next_unified_address_index(unused_index, receivers)?,
+            address_index,
         };
-        let unified_address =
-            key_store.generate_unified_address(address_id.address_index, receivers)?;
         self.unified_addresses
             .insert(address_id, unified_address.clone());
         self.save_required = true;

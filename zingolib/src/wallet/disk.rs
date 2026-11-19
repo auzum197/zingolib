@@ -137,8 +137,8 @@ impl LightWallet {
         // which keeps a sapling-only first address unchanged.
         let mut receivers_by_id = BTreeMap::<UnifiedAddressId, ReceiverSelection>::new();
         for (mut address_id, receivers) in unified_addresses {
-            address_id.address_index = key_store(address_id.account_id)?
-                .next_unified_address_index(address_id.address_index, receivers)?;
+            (address_id.address_index, _) = key_store(address_id.account_id)?
+                .find_unified_address(address_id.address_index, receivers)?;
             receivers_by_id
                 .entry(address_id)
                 .and_modify(|merged| {

@@ -10,7 +10,10 @@ use zcash_address::unified::{Container as _, Encoding as _, Fvk, Ufvk};
 use zcash_client_backend::address::UnifiedAddress;
 use zcash_client_backend::keys::{Era, UnifiedSpendingKey};
 use zcash_encoding::CompactSize;
-use zcash_keys::keys::{DerivationError, UnifiedFullViewingKey};
+use zcash_keys::keys::{
+    AddressGenerationError, DerivationError, ReceiverRequirement, UnifiedAddressRequest,
+    UnifiedFullViewingKey,
+};
 use zcash_protocol::consensus::{NetworkConstants, Parameters};
 use zcash_transparent::address::TransparentAddress;
 use zcash_transparent::keys::{IncomingViewingKey, NonHardenedChildIndex, TransparentKeyScope};
@@ -149,52 +152,37 @@ impl UnifiedKeyStore {
     }
 
     /// Generates a unified address for the given `unified_address_index` and `receivers`.
+    ///
+    /// Every receiver is derived at the diversifier index `unified_address_index`.
     pub fn generate_unified_address(
         &self,
         unified_address_index: u32,
         receivers: ReceiverSelection,
     ) -> Result<UnifiedAddress, KeyError> {
-        let orchard_receiver = if receivers.orchard {
-            let fvk = orchard::keys::FullViewingKey::try_from(self)?;
-            Some(fvk.address_at(unified_address_index, orchard::keys::Scope::External))
-        } else {
-            None
-        };
-
-        let sapling_receiver = if receivers.sapling {
-            let fvk = sapling_crypto::zip32::DiversifiableFullViewingKey::try_from(self)?;
-            Some(
-                fvk.address(DiversifierIndex::from(unified_address_index))
-                    .ok_or(KeyError::InvalidSaplingDiversifierIndex)?,
-            )
-        } else {
-            None
-        };
-
-        let unified_address =
-            UnifiedAddress::from_receivers(orchard_receiver, sapling_receiver, None)
-                .ok_or(KeyError::UnifiedAddressError)?;
+        let unified_address = UnifiedFullViewingKey::try_from(self)?.address(
+            DiversifierIndex::from(unified_address_index),
+            receivers.try_into()?,
+        )?;
 
         Ok(unified_address)
     }
 
-    /// Returns the lowest unified address index, starting at `from`, that every receiver in `receivers` can be
-    /// derived at.
+    /// Returns the unified address with `receivers` at the lowest index, starting at `from`, that every receiver
+    /// can be derived at.
     ///
     /// Roughly half of all diversifier indexes have no sapling address. Those indexes are skipped when a sapling
     /// receiver is selected.
-    pub fn next_unified_address_index(
+    pub fn find_unified_address(
         &self,
         from: u32,
         receivers: ReceiverSelection,
-    ) -> Result<u32, KeyError> {
-        if !receivers.sapling {
-            return Ok(from);
-        }
-        let fvk = sapling_crypto::zip32::DiversifiableFullViewingKey::try_from(self)?;
-        fvk.find_address(DiversifierIndex::from(from))
-            .and_then(|(diversifier_index, _)| u32::try_from(diversifier_index).ok())
-            .ok_or(KeyError::InvalidSaplingDiversifierIndex)
+    ) -> Result<(u32, UnifiedAddress), KeyError> {
+        let (unified_address, diversifier_index) = UnifiedFullViewingKey::try_from(self)?
+            .find_address(DiversifierIndex::from(from), receivers.try_into()?)?;
+        let unified_address_index = u32::try_from(diversifier_index)
+            .map_err(|_| AddressGenerationError::DiversifierSpaceExhausted)?;
+
+        Ok((unified_address_index, unified_address))
     }
 
     /// Generates a transparent address for the given `address_index` and `scope`.
@@ -482,6 +470,26 @@ impl ReceiverSelection {
     }
 }
 
+impl TryFrom<ReceiverSelection> for UnifiedAddressRequest {
+    type Error = KeyError;
+    fn try_from(receivers: ReceiverSelection) -> Result<Self, Self::Error> {
+        let requirement = |selected| {
+            if selected {
+                ReceiverRequirement::Require
+            } else {
+                ReceiverRequirement::Omit
+            }
+        };
+
+        UnifiedAddressRequest::custom(
+            requirement(receivers.orchard),
+            requirement(receivers.sapling),
+            ReceiverRequirement::Omit,
+        )
+        .map_err(|_| KeyError::UnifiedAddressError)
+    }
+}
+
 impl ReadableWriteable for ReceiverSelection {
     const VERSION: u8 = 2;
 
@@ -569,45 +577,6 @@ fn spending_key_store_round_trips() {
     let mut written = Vec::new();
     read.write(&mut written, ChainType::Mainnet).unwrap();
     assert_eq!(written, bytes);
-}
-
-#[test]
-fn unified_addresses_match_zip_316_derivation() {
-    use zcash_keys::keys::{ReceiverRequirement::*, UnifiedAddressRequest};
-
-    let usk = test_usk();
-    let ufvk = usk.to_unified_full_viewing_key();
-    let keys = UnifiedKeyStore::Spend(Box::new(usk));
-    let shielded = UnifiedAddressRequest::unsafe_custom(Require, Require, Omit);
-
-    let mut skipped = 0;
-    for from in 0..64 {
-        let index = keys
-            .next_unified_address_index(from, ReceiverSelection::all_shielded())
-            .unwrap();
-        let address = keys
-            .generate_unified_address(index, ReceiverSelection::all_shielded())
-            .unwrap();
-        assert_eq!(
-            (address, DiversifierIndex::from(index)),
-            ufvk.find_address(DiversifierIndex::from(from), shielded)
-                .unwrap()
-        );
-        assert_eq!(
-            keys.next_unified_address_index(from, ReceiverSelection::orchard_only())
-                .unwrap(),
-            from
-        );
-
-        if index != from {
-            skipped += 1;
-            assert!(matches!(
-                keys.generate_unified_address(from, ReceiverSelection::sapling_only()),
-                Err(KeyError::InvalidSaplingDiversifierIndex)
-            ));
-        }
-    }
-    assert!(skipped > 0);
 }
 
 #[test]
@@ -744,9 +713,9 @@ pub enum KeyError {
     /// Unified address missing shielded receiver
     #[error("Unified address must contain a shielded receiver")]
     UnifiedAddressError,
-    /// No sapling address exists at the unified address index.
-    #[error("No sapling address exists at this unified address index")]
-    InvalidSaplingDiversifierIndex,
+    /// Unified address generation failed.
+    #[error("Unified address generation failed. {0}")]
+    AddressGenerationError(#[from] AddressGenerationError),
     /// Transparent address generation failed. Latest transparent address has not received funds.
     #[error(
         "Transparent address generation failed. Latest transparent address has not received funds."

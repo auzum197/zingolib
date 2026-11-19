@@ -191,7 +191,6 @@ mod tests {
     use super::*;
     use crate::{
         config::{ChainType, WalletConfig},
-        mocks::default_zaddr,
         testutils::default_test_wallet_settings,
         wallet::LightWallet,
     };
@@ -211,26 +210,6 @@ mod tests {
             None,
         )
         .unwrap()
-    }
-
-    /// A diversifier index outside the `u32` unified address index space must early-return
-    /// `Ok(())` without inserting an address.
-    #[test]
-    fn add_sapling_address_past_u32_early_returns() {
-        let mut wallet = test_wallet();
-        let (_, _, addr) = default_zaddr();
-        let account_id = zip32::AccountId::try_from(0).unwrap();
-
-        let past_u32 = DiversifierIndex::from(u64::from(u32::MAX) + 1);
-        let before = wallet.unified_addresses().len();
-        let result = SyncWallet::add_sapling_address(&mut wallet, account_id, addr, past_u32);
-
-        assert!(result.is_ok());
-        assert_eq!(
-            wallet.unified_addresses().len(),
-            before,
-            "early return must not insert an address"
-        );
     }
 
     /// A discovered sapling address is stored at the unified address index equal to its

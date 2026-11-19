@@ -239,8 +239,9 @@ fn sapling_receivers_without_an_address_move_up_on_load() {
 
     let keys = &file.unified_key_store[&zip32::AccountId::ZERO];
     let next_sapling = |from| {
-        keys.next_unified_address_index(from, ReceiverSelection::sapling_only())
+        keys.find_unified_address(from, ReceiverSelection::sapling_only())
             .unwrap()
+            .0
     };
     let without_sapling = (0..).find(|&index| next_sapling(index) != index).unwrap();
     let with_sapling = next_sapling(without_sapling);
