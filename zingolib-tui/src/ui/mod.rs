@@ -150,8 +150,8 @@ fn draw_main(frame: &mut Frame, area: Rect, state: &State, t: &Theme) {
     }
 }
 
-/// A row of tabs. The active one is a filled pill; the others show their key letter in the
-/// accent colour, so the tab bar doubles as the navigation hint.
+/// A row of tabs. The active one is a filled pill. With `keyed`, the others show their key
+/// letter in the accent colour, so the tab bar doubles as the navigation hint.
 pub fn tabs(labels: &[&str], active: usize, t: &Theme, keyed: bool) -> Line<'static> {
     let mut spans = Vec::new();
     for (i, label) in labels.iter().enumerate() {

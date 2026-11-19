@@ -54,7 +54,6 @@ impl ConductChain for NetworkedTestEnvironment {
 
     async fn increase_chain_height(&mut self) {
         let before_height = self.latest_known_server_height;
-        // loop until the server height increases
         loop {
             tokio::time::sleep(std::time::Duration::from_secs(1)).await;
             self.update_server_height().await;

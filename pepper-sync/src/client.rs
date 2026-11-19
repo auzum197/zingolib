@@ -130,7 +130,7 @@ pub(crate) async fn get_chain_height(
     Ok(BlockHeight::from_u32(chain_tip.height as u32))
 }
 
-/// Gets the specified range of compact blocks from the server (end exclusive).
+/// Gets the compact block of the given block height from the server.
 ///
 /// Requires [`crate::client::fetch::fetch`] to be running concurrently, connected via the `fetch_request` channel.
 pub(crate) async fn get_compact_block(

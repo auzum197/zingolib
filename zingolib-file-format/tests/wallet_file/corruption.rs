@@ -36,8 +36,8 @@ const FUZZ_CASES: u32 = 4096;
 const MAX_CHAIN_LENGTH: usize = 6;
 const MAX_SPLICE_LENGTH: usize = 16;
 
-/// `tests/wallet_file/data/` is expected to stay small (pinned-release wallet files); this just guards
-/// against an unbounded walk if something unexpected lands there.
+/// `tests/wallet_file/data/` is expected to stay small (pinned-release wallet files). The run
+/// fails if something unexpected lands there.
 const MAX_VECTOR_FILES: usize = 10_000;
 /// Bounds the recursive walk of `tests/wallet_file/data/` so a symlink loop can't spin forever.
 const MAX_WALK_DEPTH: usize = 16;

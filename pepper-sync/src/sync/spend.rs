@@ -183,7 +183,6 @@ where
         let block_height = scan_target.block_height;
         let txid = scan_target.txid;
 
-        // skip if confirmed transaction already exists in the wallet
         if confirmed_wallet_txids.contains(&txid) {
             continue;
         }
@@ -227,7 +226,6 @@ where
         .map_err(SyncError::WalletError)
 }
 
-/// Collects the derived nullifiers from each note in the wallet
 pub(super) fn collect_derived_nullifiers(
     wallet_transactions: &HashMap<TxId, WalletTransaction>,
 ) -> (
@@ -412,7 +410,6 @@ where
     Ok(())
 }
 
-/// Collects the output ids from each coin in the wallet
 pub(super) fn collect_transparent_output_ids(
     wallet_transactions: &HashMap<TxId, WalletTransaction>,
 ) -> Vec<OutputId> {

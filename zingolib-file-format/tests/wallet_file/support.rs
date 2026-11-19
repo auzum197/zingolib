@@ -1,8 +1,5 @@
 //! Shared helpers for the `zingolib-file-format` integration tests: building a fresh wallet
 //! deterministically, serializing it, and running a corrupted-byte read sweep against it.
-//!
-//! Shared by every module of the `wallet_file` test binary
-//! by every binary.
 
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::panic;

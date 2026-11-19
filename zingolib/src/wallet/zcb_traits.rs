@@ -1471,7 +1471,7 @@ impl InputSource for LightWallet {
                         zcash_client_backend::data_api::MaxSpendMode::Everything
                     );
                     (
-                        // FIXME: note filters implemented in `spendable_notes_by_pool` have been missed here such as filtering dust
+                        // FIXME: note filters implemented in `select_spendable_notes_by_pool` have been missed here such as filtering dust
                         self.spendable_notes::<SaplingNote>(
                             anchor_height,
                             &exclude_sapling,
@@ -1502,38 +1502,6 @@ impl InputSource for LightWallet {
                     )
                 }
             };
-
-        /* TODO: Priority
-        if selected
-            .iter()
-            .filter(|n| n.0.protocol() == ShieldedPool::Sapling)
-            .count()
-            == 1
-            || selected
-                .iter()
-                .filter(|n| n.0.protocol() == ShieldedPool::Orchard)
-                .count()
-                == 1
-        {
-            // since we maxed out the target value with only one note in at least one Shielded Pool
-            //  we have an option to sweep a dust note into a grace input.
-            // we will sweep the biggest dust note we can
-            if !dust_notes.is_empty() {
-                sweep_dust_into_grace(&mut selected, dust_notes);
-            }
-            // TODO: re-introduce this optimisation, current bug is that we don't select a note from the same pool as the single selected note
-            // (and we don't have information about the pool(s) the outputs are being created for)
-            // this is ok for dust as it is excluded if the dust is from a pool where grace inputs are available. however, this doesn't work for
-            // non-dust
-            //
-            // } else {
-            //     // we have no extra dust, but we can still save a marginal fee by adding the next smallest note to change
-            //     if let Some(smallest_note) = unselected.pop() {
-            //         selected.push(smallest_note);
-            //     };
-            // }
-        }
-        */
 
         Ok(ReceivedNotes::new(
             selected_sapling_notes

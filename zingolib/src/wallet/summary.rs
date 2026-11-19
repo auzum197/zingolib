@@ -1,7 +1,5 @@
 //! Types and impls for conveniently displaying information to the user or converting to JSON for interfacing with a larger stack.
 use std::collections::HashSet;
-/// A "snapshot" of the state of the items in the wallet at the time the summary was constructed.
-/// Not to be used for internal logic in the system.
 use std::{cmp::Ordering, collections::HashMap};
 
 use zcash_protocol::PoolType;
@@ -246,30 +244,6 @@ impl LightWallet {
                 })
         };
 
-        // add price to transaction summary
-        // takes price from the day of transaction's datetime. otherwise, current price.
-        // TODO: historical prices currently unimplemented
-        // let mut price = None;
-        // for daily_price in self.price_list.daily_prices() {
-        //     if daily_price.time > transaction.datetime() {
-        //         assert!(daily_price.time - transaction.datetime() < 24 * 60 * 60);
-        //         price = Some(daily_price.price_usd);
-        //         break;
-        //     }
-        // }
-        // if price.is_none() {
-        //     price = self.price_list.current_price().and_then(|current_price| {
-        //         if transaction.datetime() <= current_price.time
-        //             && transaction.datetime() > current_price.time - 2 * 24 * 60 * 60
-        //         // exchange APIs may start daily prices 2 days back
-        //         {
-        //             Some(current_price.price_usd)
-        //         } else {
-        //             None
-        //         }
-        //     });
-        // }
-
         Ok(TransactionSummary {
             txid: transaction.txid(),
             datetime: transaction.datetime(),
@@ -303,7 +277,7 @@ impl LightWallet {
             match transaction.kind {
                 TransactionKind::Sent(SendType::Send) => {
                     // Create one sent event for each non-self recipient address.
-                    // if recipient_ua is available it overrides recipient_address
+                    // if recipient_unified_address is available it overrides recipient
                     wallet_events.append(&mut self.create_send_wallet_events(&transaction)?);
                     // and 1 per pool for whatever the transaction also sent to the wallet itself
                     wallet_events.append(&mut self.create_self_wallet_events(&transaction)?);
@@ -625,7 +599,6 @@ impl LightWallet {
         Ok(wallet_events)
     }
 
-    /// TODO: Add Doc Comment Here!
     pub async fn do_total_memobytes_to_address(
         &self,
     ) -> Result<TotalMemoBytesToAddress, SummaryError> {
@@ -647,7 +620,6 @@ impl LightWallet {
         Ok(TotalMemoBytesToAddress(memobytes_by_address))
     }
 
-    /// TODO: Add Doc Comment Here!
     pub async fn do_total_spends_to_address(&self) -> Result<TotalSendsToAddress, SummaryError> {
         let values_sent_to_addresses = self.wallet_events_by_to_address().await?;
         let mut by_address_number_sends = HashMap::new();
@@ -659,7 +631,6 @@ impl LightWallet {
         Ok(TotalSendsToAddress(by_address_number_sends))
     }
 
-    /// TODO: Add Doc Comment Here!
     pub async fn do_total_value_to_address(&self) -> Result<TotalValueToAddress, SummaryError> {
         let values_sent_to_addresses = self.wallet_events_by_to_address().await?;
         let mut by_address_total = HashMap::new();
@@ -690,8 +661,6 @@ impl LightWallet {
         Ok(ValuesSentToAddress(amount_by_address))
     }
 
-    /// Creates wallet events for all notes in a transaction sent to another recipient.
-    /// Each event groups notes sent to the same receiver and follows output index order.
     /// Events for what `transaction` sent back to the wallet: one per pool, each carrying
     /// the full value of the outputs it stands for.
     ///
@@ -903,10 +872,6 @@ struct SelfGroup {
     memos: Vec<String>,
 }
 
-/// Groups the outputs a transaction sent to the wallet by pool, keeping those that were the
-/// point of the transaction plus any that carry a memo, so a memo never appears without the
-/// value it arrived with. Plain change is left out: it is the remainder, not a transfer. Every
-/// group carries the full value of its outputs, including zero.
 /// Whether `output` was the point of the transaction rather than change, given all of
 /// `outputs`.
 fn intended(intent: &SelfIntent, outputs: &[SelfOutput], output: &SelfOutput) -> bool {

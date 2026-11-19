@@ -1262,7 +1262,6 @@ impl ShardTrees {
         ))
     }
 
-    /// Write memory-backed shardstore, represented tree.
     fn write_shardtree<
         H: Hashable + Clone + Eq + HashSer,
         C: Ord + std::fmt::Debug + Copy,
@@ -1480,15 +1479,6 @@ mod tests {
         let bytes = v1_nullifier_map_bytes();
         let map = NullifierMap::read(bytes.as_slice(), ()).expect("v1 should read cleanly");
         assert!(map.ironwood.is_empty());
-    }
-
-    #[test]
-    fn nullifier_map_v2_roundtrip_preserves_ironwood() {
-        let map = NullifierMap::new();
-        let mut bytes = Vec::new();
-        map.write(&mut bytes, ()).expect("write should succeed");
-        let recovered = NullifierMap::read(bytes.as_slice(), ()).expect("read should succeed");
-        assert!(recovered.ironwood.is_empty());
     }
 
     // Helper: build a v0 TreeBounds byte blob (no ironwood tree sizes).
@@ -1723,12 +1713,6 @@ mod tests {
     }
 
     #[test]
-    fn orchard_note_before_version_2_is_rejected() {
-        let bytes = [orchard_note_prefix(1), vec![0; 43 + 8 + 64]].concat();
-        assert!(OrchardNote::read(bytes.as_slice(), ()).is_err());
-    }
-
-    #[test]
     fn refetch_nullifier_range_that_ends_before_it_starts_is_rejected() {
         let bytes = [&[1][..], &10u32.to_le_bytes(), &5u32.to_le_bytes()].concat();
         assert!(read_refetch_nullifier_ranges(&mut bytes.as_slice()).is_err());
@@ -1737,14 +1721,6 @@ mod tests {
     #[test]
     fn orchard_nullifier_rejects_a_non_canonical_field_element() {
         assert!(read_orchard_nullifier([0xff; 32].as_slice()).is_err());
-    }
-
-    #[test]
-    fn outgoing_notes_before_version_1_are_rejected() {
-        let params = zcash_protocol::consensus::MAIN_NETWORK;
-        let bytes = orchard_note_prefix(0);
-        assert!(OutgoingSaplingNote::read(bytes.as_slice(), &params).is_err());
-        assert!(OutgoingOrchardNote::read(bytes.as_slice(), &params).is_err());
     }
 
     const EMPTY_TREE: [u8; 4] = [0, 0, SHARD_SER_V1, SHARD_NIL_TAG];

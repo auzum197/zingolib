@@ -1,4 +1,4 @@
-//! tests that can be run either as lib-to-node or darkside.
+//! tests that can be run on any chain conductor, such as the mock indexer or darkside.
 
 //! this mod tests fair weather behavior i.e. the `LightClient` is connected to a server that provides expected responses about the state of the blockchain.
 //! there are many ways to mock the chain. for simplicity, and in order to be usable in multiple contexts, the test fixtures in this mod delegate setup and server management to a `ChainConductor` (anything that implements `ConductChain`)

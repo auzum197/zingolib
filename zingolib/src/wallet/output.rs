@@ -32,7 +32,6 @@ pub struct OutputRef {
 }
 
 impl OutputRef {
-    /// Creates new `OutputRef` from parts.
     #[must_use]
     pub fn new(output_id: OutputId, pool_type: PoolType) -> Self {
         OutputRef {
@@ -41,25 +40,21 @@ impl OutputRef {
         }
     }
 
-    /// Output identifier.
     #[must_use]
     pub fn output_id(&self) -> OutputId {
         self.output_id
     }
 
-    /// Output identifier.
     #[must_use]
     pub fn txid(&self) -> TxId {
         self.output_id.txid()
     }
 
-    /// Output identifier.
     #[must_use]
     pub fn output_index(&self) -> u32 {
         self.output_id.output_index()
     }
 
-    /// Pool type.
     #[must_use]
     pub fn pool_type(&self) -> PoolType {
         self.pool_type
@@ -79,10 +74,8 @@ impl std::fmt::Display for OutputRef {
     }
 }
 
-/// Spend status of an output
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum SpendStatus {
-    /// Output is not spent.
     Unspent,
     /// Output is pending spent.
     /// The transaction consuming this output has been calculated.
@@ -136,7 +129,6 @@ impl LightWallet {
             .expect("transaction should exist in the wallet")
     }
 
-    /// Returns [`self::SpendStatus`] for the given `output`.
     pub fn output_spend_status(&self, output: &impl OutputInterface) -> SpendStatus {
         if let Some(txid) = output.spending_transaction() {
             match self
@@ -329,7 +321,7 @@ impl LightWallet {
             .collect())
     }
 
-    /// Returns all spendable transparent coins for a given `account` confirmed at or below `target_height`.
+    /// Returns all spendable transparent coins confirmed at or below `target_height`.
     ///
     /// Any coins from a coinbase transaction will not be returned without 100 additional confirmations.
     pub(crate) fn spendable_transparent_coins(
@@ -466,8 +458,7 @@ pub(crate) enum RemainingNeeded {
 /// There are two mutually exclusive cases:
 ///    (Change) There's no more needed so we've selected 0 or more change
 ///    (Positive) We need > 0 more value.
-/// This function represents the `NonPositive` case as None, which then serves to signal a break in the note selection
-/// for where this helper is uniquely called.
+/// The (Change) case signals a break in the note selection where this helper is called.
 fn calculate_remaining_needed(target_value: Zatoshis, selected_value: Zatoshis) -> RemainingNeeded {
     if let Some(amount) = target_value - selected_value {
         if amount == Zatoshis::ZERO {
@@ -485,179 +476,3 @@ fn calculate_remaining_needed(target_value: Zatoshis, selected_value: Zatoshis) 
         )
     }
 }
-
-// FIXME: zingo2, update for new output types
-/*
-#[cfg(test)]
-pub mod mocks {
-    //! Mock version of the struct for testing
-    use zcash_client_backend::{wallet::NoteId, ShieldedPool};
-    use zcash_primitives::transaction::TxId;
-
-    use crate::{mocks::default_txid, testutils::build_method};
-
-    /// to build a mock NoteRecordIdentifier
-    pub struct NoteIdBuilder {
-        txid: Option<TxId>,
-        shpool: Option<ShieldedPool>,
-        index: Option<u16>,
-    }
-    impl NoteIdBuilder {
-        /// blank builder
-        pub fn new() -> Self {
-            Self {
-                txid: None,
-                shpool: None,
-                index: None,
-            }
-        }
-        // Methods to set each field
-        build_method!(txid, TxId);
-        build_method!(shpool, ShieldedPool);
-        build_method!(index, u16);
-
-        /// selects a random probablistically unique txid
-        pub fn randomize_txid(&mut self) -> &mut Self {
-            self.txid(crate::mocks::random_txid())
-        }
-
-        /// builds a mock NoteRecordIdentifier after all pieces are supplied
-        pub fn build(self) -> NoteId {
-            NoteId::new(
-                self.txid.unwrap(),
-                self.shpool.unwrap(),
-                self.index.unwrap(),
-            )
-        }
-    }
-
-    impl Default for NoteIdBuilder {
-        fn default() -> Self {
-            let mut builder = Self::new();
-            builder
-                .txid(default_txid())
-                .shpool(zcash_client_backend::ShieldedPool::Orchard)
-                .index(0);
-            builder
-        }
-    }
-}
-
-#[cfg(test)]
-pub mod tests {
-    use zcash_client_backend::PoolType;
-
-    use crate::{
-        mocks::default_txid,
-        wallet::output::{
-            query::OutputQuery, sapling::mocks::SaplingNoteBuilder,
-            transparent::mocks::TransparentOutputBuilder, OldOutputInterface as _,
-        },
-    };
-
-    use super::query::{OutputPoolQuery, OutputSpendStatusQuery};
-
-    use zingolib_common::status::ConfirmationStatus::Confirmed;
-    use zingolib_common::status::ConfirmationStatus::Mempool;
-
-    #[test]
-    fn note_queries() {
-        let confirmed_spend = Some((default_txid(), Confirmed(112358.into())));
-        let pending_spend = Some((default_txid(), Mempool(112357.into())));
-
-        let transparent_unspent_note = TransparentOutputBuilder::default().build();
-        let transparent_pending_spent_note = TransparentOutputBuilder::default()
-            .spending_tx_status(pending_spend)
-            .clone()
-            .build();
-        let transparent_spent_note = TransparentOutputBuilder::default()
-            .spending_tx_status(confirmed_spend)
-            .clone()
-            .build();
-        let sapling_unspent_note = SaplingNoteBuilder::default().build();
-        let sapling_pending_spent_note = SaplingNoteBuilder::default()
-            .spending_tx_status(pending_spend)
-            .clone()
-            .build();
-        let sapling_spent_note = SaplingNoteBuilder::default()
-            .spending_tx_status(confirmed_spend)
-            .clone()
-            .build();
-
-        let unspent_query = OutputSpendStatusQuery::only_unspent();
-        let pending_or_spent_query = OutputSpendStatusQuery::spentish();
-        let spent_query = OutputSpendStatusQuery::only_spent();
-
-        let transparent_query = OutputPoolQuery::one_pool(PoolType::Transparent);
-        let shielded_query = OutputPoolQuery::shielded();
-        let any_pool_query = OutputPoolQuery::any();
-
-        let unspent_transparent_query = OutputQuery {
-            spend_status: unspent_query,
-            pools: transparent_query,
-        };
-        let unspent_any_pool_query = OutputQuery {
-            spend_status: unspent_query,
-            pools: any_pool_query,
-        };
-        let pending_or_spent_transparent_query = OutputQuery {
-            spend_status: pending_or_spent_query,
-            pools: transparent_query,
-        };
-        let pending_or_spent_shielded_query = OutputQuery {
-            spend_status: pending_or_spent_query,
-            pools: shielded_query,
-        };
-        let spent_shielded_query = OutputQuery {
-            spend_status: spent_query,
-            pools: shielded_query,
-        };
-        let spent_any_pool_query = OutputQuery {
-            spend_status: spent_query,
-            pools: any_pool_query,
-        };
-
-        assert!(transparent_unspent_note.query(unspent_transparent_query));
-        assert!(transparent_unspent_note.query(unspent_any_pool_query));
-        assert!(!transparent_unspent_note.query(pending_or_spent_transparent_query));
-        assert!(!transparent_unspent_note.query(pending_or_spent_shielded_query));
-        assert!(!transparent_unspent_note.query(spent_shielded_query));
-        assert!(!transparent_unspent_note.query(spent_any_pool_query));
-
-        assert!(!transparent_pending_spent_note.query(unspent_transparent_query));
-        assert!(!transparent_pending_spent_note.query(unspent_any_pool_query));
-        assert!(transparent_pending_spent_note.query(pending_or_spent_transparent_query));
-        assert!(!transparent_pending_spent_note.query(pending_or_spent_shielded_query));
-        assert!(!transparent_pending_spent_note.query(spent_shielded_query));
-        assert!(!transparent_pending_spent_note.query(spent_any_pool_query));
-
-        assert!(!transparent_spent_note.query(unspent_transparent_query));
-        assert!(!transparent_spent_note.query(unspent_any_pool_query));
-        assert!(transparent_spent_note.query(pending_or_spent_transparent_query));
-        assert!(!transparent_spent_note.query(pending_or_spent_shielded_query));
-        assert!(!transparent_spent_note.query(spent_shielded_query));
-        assert!(transparent_spent_note.query(spent_any_pool_query));
-
-        assert!(!sapling_unspent_note.query(unspent_transparent_query));
-        assert!(sapling_unspent_note.query(unspent_any_pool_query));
-        assert!(!sapling_unspent_note.query(pending_or_spent_transparent_query));
-        assert!(!sapling_unspent_note.query(pending_or_spent_shielded_query));
-        assert!(!sapling_unspent_note.query(spent_shielded_query));
-        assert!(!sapling_unspent_note.query(spent_any_pool_query));
-
-        assert!(!sapling_pending_spent_note.query(unspent_transparent_query));
-        assert!(!sapling_pending_spent_note.query(unspent_any_pool_query));
-        assert!(!sapling_pending_spent_note.query(pending_or_spent_transparent_query));
-        assert!(sapling_pending_spent_note.query(pending_or_spent_shielded_query));
-        assert!(!sapling_pending_spent_note.query(spent_shielded_query));
-        assert!(!sapling_pending_spent_note.query(spent_any_pool_query));
-
-        assert!(!sapling_spent_note.query(unspent_transparent_query));
-        assert!(!sapling_spent_note.query(unspent_any_pool_query));
-        assert!(!sapling_spent_note.query(pending_or_spent_transparent_query));
-        assert!(sapling_spent_note.query(pending_or_spent_shielded_query));
-        assert!(sapling_spent_note.query(spent_shielded_query));
-        assert!(sapling_spent_note.query(spent_any_pool_query));
-    }
-}
-*/

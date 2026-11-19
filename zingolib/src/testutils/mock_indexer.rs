@@ -8,9 +8,8 @@
 //! mempool that [`MockChain::mine_mempool`] turns into the next block.
 //! [`MockIndexerService`] serves that state over the wire protocol
 //! `GrpcIndexer` speaks (the zaino-proto codegen is wire-identical to
-//! the lightwallet-protocol codegen. Zingo-cli's log_file test already
-//! proves the pairing). [`MockNet`] launches the server on an ephemeral
-//! localhost port and builds `LightClient`s pointed at it.
+//! the lightwallet-protocol codegen). [`MockNet`] launches the server on
+//! an ephemeral localhost port and builds `LightClient`s pointed at it.
 //!
 //! Funding: a "faucet" is a [`SyntheticWalletBuilder`] wallet whose
 //! BUILT transactions (via the build-without-transmit seam) are

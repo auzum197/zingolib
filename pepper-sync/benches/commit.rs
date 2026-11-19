@@ -1,9 +1,8 @@
 //! Criterion benchmark of the commit phase (shardtree insert + prune).
 //!
 //! Run with `cargo bench -p pepper-sync`. Uses a modest batch because Criterion re-runs the
-//! routine many times. The full-scale timing is the `commit_full_scale` ignored test in
-//! `bench_support`. Each iteration commits a fresh batch into a shard already partially filled by
-//! a prior batch, the steady-state ChainTip condition.
+//! routine many times. Each iteration commits a fresh batch into a shard already partially filled
+//! by a prior batch, the steady-state ChainTip condition.
 
 use criterion::{BatchSize, Criterion, criterion_group, criterion_main};
 

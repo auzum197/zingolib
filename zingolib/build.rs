@@ -35,7 +35,7 @@ fn git_description() {
 }
 
 /// Checks if zcash params are available and downloads them if not.
-/// Also copies them to an internal location for use by mobile platforms.
+/// Also copies them to `zcash-params` for the testutils prover to embed.
 fn get_zcash_params() {
     println!("Checking if params are available...");
 
@@ -52,7 +52,6 @@ fn get_zcash_params() {
         }
     };
 
-    // Copy the params to the internal location.
     let internal_params_path = Path::new("zcash-params");
     std::fs::create_dir_all(internal_params_path).unwrap();
     std::fs::copy(

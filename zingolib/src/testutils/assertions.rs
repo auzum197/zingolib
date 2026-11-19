@@ -39,7 +39,7 @@ pub fn compare_fee<NoteRef>(
 
 /// currently checks:
 /// 1. len of txids == num steps
-/// 2. the txid is stored in the `records_by_ids` database
+/// 2. the txid is stored in the wallet's `wallet_transactions`
 /// 3. if the fee from the `calculate_transaction_fee` matches the sum of the per-step fees
 ///
 /// if any of these checks fail, rather than panic immediately, this function will include an error enum in its output. make sure to expect this.

@@ -1,5 +1,3 @@
-//! `LightClient` saves internally when it gets to a checkpoint. If has filesystem access, it saves to file at those points. otherwise, it passes the save buffer to the FFI.
-
 use futures::FutureExt as _;
 use log::error;
 
@@ -8,7 +6,6 @@ use std::{borrow::BorrowMut as _, fs::remove_file, sync::atomic};
 use super::LightClient;
 use crate::data::PollReport;
 
-/// Writes `bytes` to file at `wallet_path`.
 fn write_to_path(wallet_path: &std::path::Path, bytes: &[u8]) -> std::io::Result<()> {
     let temp_wallet_path: std::path::PathBuf = wallet_path.with_extension(
         wallet_path
@@ -33,7 +30,7 @@ fn write_to_path(wallet_path: &std::path::Path, bytes: &[u8]) -> std::io::Result
     {
         if let Some(parent) = wallet_path.parent() {
             let wallet_dir = std::fs::File::open(parent)?;
-            let _ignore_error = wallet_dir.sync_all(); // NOTE: error is ignored as syncing dirs on windows OS may return an error
+            let _ignore_error = wallet_dir.sync_all();
         }
     }
 
@@ -118,7 +115,6 @@ impl LightClient {
     /// Only relevant in non-mobile, this function removes the save file.
     // TodO: can we shred it?
     pub async fn do_delete(&self) -> Result<(), String> {
-        // Check if the file exists before attempting to delete
         if self.wallet_path().exists() {
             match remove_file(self.wallet_path()) {
                 Ok(()) => {
