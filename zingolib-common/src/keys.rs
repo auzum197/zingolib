@@ -181,7 +181,7 @@ impl UnifiedKeyStore {
     /// Returns the lowest unified address index, starting at `from`, that every receiver in `receivers` can be
     /// derived at.
     ///
-    /// Roughly half of all diversifier indexes have no sapling address, so indexes are skipped when a sapling
+    /// Roughly half of all diversifier indexes have no sapling address. Those indexes are skipped when a sapling
     /// receiver is selected.
     pub fn next_unified_address_index(
         &self,
