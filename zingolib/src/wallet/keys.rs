@@ -475,13 +475,16 @@ mod test {
                     })
                     .unwrap()
                     .encode(&self.chain_type),
+                // The second UA sits at the first index after 0 that has a sapling address.
                 PoolType::SAPLING => self
                     .unified_addresses()
-                    .get(&UnifiedAddressId {
-                        address_index: 1,
-                        account_id: zip32::AccountId::ZERO,
+                    .iter()
+                    .find(|(address_id, _)| {
+                        address_id.account_id == zip32::AccountId::ZERO
+                            && address_id.address_index > 0
                     })
                     .unwrap()
+                    .1
                     .encode(&self.chain_type),
                 PoolType::Transparent => {
                     self.transparent_addresses.values().next().unwrap().clone()
