@@ -182,17 +182,17 @@ mod fast {
         let network = recipient.chain_type();
 
         // create a range of UAs to be discovered when recipient is reset
-        let orchard_only_addr = recipient
+        let (orchard_only_id, orchard_only_addr) = recipient
             .generate_unified_address(ReceiverSelection::orchard_only(), zip32::AccountId::ZERO)
             .await
-            .map(|(_, ua)| ua.encode(&network))
+            .map(|(id, ua)| (id, ua.encode(&network)))
             .unwrap();
-        let sapling_only_addr = recipient
+        let (sapling_only_id, sapling_only_addr) = recipient
             .generate_unified_address(ReceiverSelection::sapling_only(), zip32::AccountId::ZERO)
             .await
-            .map(|(_, ua)| ua.encode(&network))
+            .map(|(id, ua)| (id, ua.encode(&network)))
             .unwrap();
-        let (_, all_shielded_addr) = recipient
+        let (all_shielded_id, all_shielded_addr) = recipient
             .generate_unified_address(ReceiverSelection::all_shielded(), zip32::AccountId::ZERO)
             .await
             .unwrap();
@@ -235,44 +235,16 @@ mod fast {
                 local_net.activation_heights(),
             )
             .await;
-        if let Some(_ua) =
-            recipient
-                .wallet()
-                .read()
-                .await
-                .unified_addresses()
-                .get(&UnifiedAddressId {
-                    account_id: zip32::AccountId::ZERO,
-                    address_index: 2,
-                })
-        {
-            panic!("ua should not be in fresh wallet yet!");
-        }
-        if let Some(_ua) =
-            recipient
-                .wallet()
-                .read()
-                .await
-                .unified_addresses()
-                .get(&UnifiedAddressId {
-                    account_id: zip32::AccountId::ZERO,
-                    address_index: 3,
-                })
-        {
-            panic!("ua should not be in fresh wallet yet!");
-        }
-        if let Some(_ua) =
-            recipient
-                .wallet()
-                .read()
-                .await
-                .unified_addresses()
-                .get(&UnifiedAddressId {
-                    account_id: zip32::AccountId::ZERO,
-                    address_index: 4,
-                })
-        {
-            panic!("ua should not be in fresh wallet yet!");
+        for address_id in [orchard_only_id, sapling_only_id, all_shielded_id] {
+            assert!(
+                !recipient
+                    .wallet()
+                    .read()
+                    .await
+                    .unified_addresses()
+                    .contains_key(&address_id),
+                "ua should not be in fresh wallet yet!"
+            );
         }
 
         // sync recipient and check the UAs have been discovered
@@ -283,10 +255,7 @@ mod fast {
                 .read()
                 .await
                 .unified_addresses()
-                .get(&UnifiedAddressId {
-                    account_id: zip32::AccountId::ZERO,
-                    address_index: 2,
-                })
+                .get(&orchard_only_id)
                 .unwrap()
                 .encode(&network),
             orchard_only_addr
@@ -297,10 +266,7 @@ mod fast {
                 .read()
                 .await
                 .unified_addresses()
-                .get(&UnifiedAddressId {
-                    account_id: zip32::AccountId::ZERO,
-                    address_index: 3,
-                })
+                .get(&sapling_only_id)
                 .unwrap()
                 .encode(&network),
             sapling_only_addr
@@ -311,10 +277,7 @@ mod fast {
                 .read()
                 .await
                 .unified_addresses()
-                .get(&UnifiedAddressId {
-                    account_id: zip32::AccountId::ZERO,
-                    address_index: 4,
-                })
+                .get(&all_shielded_id)
                 .unwrap()
                 .encode(&network),
             all_shielded_encoded
@@ -913,7 +876,7 @@ mod fast {
             new_address_id,
             UnifiedAddressId {
                 account_id: zip32::AccountId::ZERO,
-                address_index: 2
+                address_index: 5
             }
         );
         assert!(new_address.has_orchard());
@@ -922,8 +885,8 @@ mod fast {
         assert_eq!(
             new_address.encode(&network),
             "\
-uregtest1ds3zxwluuzmcwvdxh4wf8xsger96c5yyzqhwzwu7vt85crj4jyf7nsn258rn89g68lvelsjhkqywz8w70wxdg2cmnul4zadukwu2ywezgjwt36\
-f06qvre5qdlkqp5fksyy9j5dm0fdwxwptkk04gzt84r5qv0wfdlx250n0gdcdd6e00"
+uregtest1d26ca8tv9hun2zt7z8er5ljwr95wqw3hf3f60c2avkapvmxjlfze7zatslhkxf0ddy33halrpmgerczhuw6wgf5akm37zvcax0mz0amg327l09\
+s8ldntck2ku9huggr2wnmfj4uv75lwk3tlwkppqmq0n59d6t33ryla5eaply7dwu45"
         );
 
         let (sapling_address_id, sapling_address) = recipient
@@ -934,7 +897,7 @@ f06qvre5qdlkqp5fksyy9j5dm0fdwxwptkk04gzt84r5qv0wfdlx250n0gdcdd6e00"
             sapling_address_id,
             UnifiedAddressId {
                 account_id: zip32::AccountId::ZERO,
-                address_index: 3
+                address_index: 6
             }
         );
         assert!(!sapling_address.has_orchard());
@@ -943,7 +906,7 @@ f06qvre5qdlkqp5fksyy9j5dm0fdwxwptkk04gzt84r5qv0wfdlx250n0gdcdd6e00"
         assert_eq!(
             sapling_address.encode(&network),
             "\
-uregtest1n22mmna853578fakgx6z6adn24ey5r7wfye8ulhscqc9hvm0rf5czxjuz9te0zzc8j93y35gzw53tdmgz6dtfvlnfmjwl2a84cx5m3fq"
+uregtest1y94pplhf0lkgdy8ae7062h454qv6038rhd6mgw7x74muy8hqcqz02qvg8pal79kel2089t9fk2njr6n4f5xr75ryjvk9zsnmvcwcml74"
         );
 
         let (taddress_id, new_taddress) = recipient

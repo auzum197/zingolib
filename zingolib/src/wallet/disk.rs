@@ -53,7 +53,7 @@ use zip32::AccountId;
 
 use zingolib_common::{
     chain::ChainType,
-    keys::{KeyError, ReceiverSelection},
+    keys::{KeyError, ReceiverSelection, UnifiedAddressId},
 };
 pub use zingolib_file_format::{WalletFile, WalletFileRef};
 
@@ -129,7 +129,22 @@ impl LightWallet {
                 .ok_or(KeyError::NoAccountKeys)
         };
 
-        let unified_addresses = unified_addresses
+        // Files written before unified addresses shared one diversifier index across receivers can hold a sapling
+        // receiver at an index with no sapling address. Those entries move up to the next index that has one,
+        // which keeps a sapling-only first address unchanged.
+        let mut receivers_by_id = BTreeMap::<UnifiedAddressId, ReceiverSelection>::new();
+        for (mut address_id, receivers) in unified_addresses {
+            (address_id.address_index, _) = key_store(address_id.account_id)?
+                .find_unified_address(address_id.address_index, receivers)?;
+            receivers_by_id
+                .entry(address_id)
+                .and_modify(|merged| {
+                    merged.orchard |= receivers.orchard;
+                    merged.sapling |= receivers.sapling;
+                })
+                .or_insert(receivers);
+        }
+        let unified_addresses = receivers_by_id
             .into_iter()
             .map(|(address_id, receivers)| {
                 let address = key_store(address_id.account_id)?

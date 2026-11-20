@@ -15,11 +15,7 @@ use zcash_keys::{address::UnifiedAddress, keys::UnifiedFullViewingKey};
 use zcash_protocol::consensus::BlockHeight;
 use zip32::{AccountId, DiversifierIndex};
 
-use super::{
-    LightWallet,
-    error::{KeyError, WalletError},
-    keys::unified::UnifiedAddressId,
-};
+use super::{LightWallet, error::WalletError, keys::unified::UnifiedAddressId};
 
 impl SyncWallet for LightWallet {
     type Error = WalletError;
@@ -76,29 +72,16 @@ impl SyncWallet for LightWallet {
         Ok(())
     }
 
-    // The unified address index for a given account is equal to the (n-1)th valid sapling diversifier incrementing
-    // from a diversifier index of 0.
-    // For example, if the sapling address is associated with the 10th valid diversifier, this address will be added
-    // to the unified address of index 9.
-    // Unified address discovery for sapling addresses is limited to the 16-bit index space (0..=65535)
-    // as very high indexes become computationally expensive.
+    // The unified address index for a given account is equal to the sapling diversifier index used to derive the sapling address.
     fn add_sapling_address(
         &mut self,
         account_id: zip32::AccountId,
         address: sapling_crypto::PaymentAddress,
         diversifier_index: DiversifierIndex,
     ) -> Result<(), Self::Error> {
-        const SAPLING_DIVERSIFIER_INDEX_LIMIT: u128 = 2u128.pow(16);
-        if u128::from(diversifier_index) >= SAPLING_DIVERSIFIER_INDEX_LIMIT {
+        let Ok(address_index) = u32::try_from(diversifier_index) else {
             return Ok(());
-        }
-
-        let address_index = self
-            .unified_key_store
-            .get(&account_id)
-            .ok_or(KeyError::NoAccountKeys)?
-            .determine_nth_valid_sapling_diversifier(diversifier_index)?
-            - 1;
+        };
         let address_id = UnifiedAddressId {
             account_id,
             address_index,
@@ -208,7 +191,6 @@ mod tests {
     use super::*;
     use crate::{
         config::{ChainType, WalletConfig},
-        mocks::default_zaddr,
         testutils::default_test_wallet_settings,
         wallet::LightWallet,
     };
@@ -230,49 +212,30 @@ mod tests {
         .unwrap()
     }
 
-    /// Index 65 536 (`2u128.pow(16)`, the exclusive upper bound of the 16-bit index space) must
-    /// early-return `Ok(())` without inserting an address.
+    /// A discovered sapling address is stored at the unified address index equal to its
+    /// diversifier index, however high that index is.
     #[test]
-    fn add_sapling_address_at_limit_early_returns() {
+    fn add_sapling_address_uses_its_diversifier_index() {
         let mut wallet = test_wallet();
-        let (_, _, addr) = default_zaddr();
-        let account_id = zip32::AccountId::try_from(0).unwrap();
-
-        let at_limit = DiversifierIndex::from(65536u32);
-        let before = wallet.unified_addresses().len();
-        let result = SyncWallet::add_sapling_address(&mut wallet, account_id, addr, at_limit);
-
-        assert!(result.is_ok());
-        assert_eq!(
-            wallet.unified_addresses().len(),
-            before,
-            "early return must not insert an address"
-        );
-    }
-
-    /// An index below the 16-bit limit must pass the guard and insert the sapling address into
-    /// `unified_addresses`, not silently discard it.
-    #[test]
-    fn add_sapling_address_below_limit_proceeds_past_guard() {
-        let mut wallet = test_wallet();
-        let (_, _, addr) = default_zaddr();
         let account_id = zip32::AccountId::try_from(0).unwrap();
 
         let fvk = DiversifiableFullViewingKey::try_from(
             wallet.unified_key_store.get(&account_id).unwrap(),
         )
         .unwrap();
-        let (first_valid_diversifier, _) = fvk.find_address(DiversifierIndex::new()).unwrap();
+        let (diversifier_index, addr) =
+            fvk.find_address(DiversifierIndex::from(70_000u32)).unwrap();
 
         let result =
-            SyncWallet::add_sapling_address(&mut wallet, account_id, addr, first_valid_diversifier);
+            SyncWallet::add_sapling_address(&mut wallet, account_id, addr, diversifier_index);
         assert!(result.is_ok());
-        assert!(
-            wallet
-                .unified_addresses()
-                .values()
-                .any(|ua| ua.sapling() == Some(&addr)),
-            "sapling address must appear in unified_addresses after proceeding past the guard"
+        let address_id = UnifiedAddressId {
+            account_id,
+            address_index: u32::try_from(diversifier_index).unwrap(),
+        };
+        assert_eq!(
+            wallet.unified_addresses()[&address_id].sapling(),
+            Some(&addr)
         );
     }
 }
