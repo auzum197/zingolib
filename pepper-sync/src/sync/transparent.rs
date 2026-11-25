@@ -11,6 +11,7 @@ use zip32::AccountId;
 
 use crate::client::{self, FetchRequest};
 use crate::config::TransparentAddressDiscovery;
+use crate::engine::SyncStateOps as _;
 use crate::error::SyncError;
 use crate::keys;
 use crate::keys::transparent::{TransparentAddressId, TransparentScope};

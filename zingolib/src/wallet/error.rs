@@ -69,7 +69,7 @@ pub enum WalletError {
 #[derive(Debug, thiserror::Error)]
 pub enum PriceError {
     #[error("price error. {0}")]
-    PriceError(#[from] zingolib_price::PriceError),
+    PriceError(#[from] crate::price::PriceError),
     #[error("price list not initialised. please wait for sync to obtain time of wallet birthday")]
     NotInitialised,
 }

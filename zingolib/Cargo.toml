@@ -38,12 +38,15 @@ orchard = { workspace = true }
 pepper-sync = { workspace = true }
 portpicker = { workspace = true, optional = true }
 rand = { workspace = true }
+reqwest = { workspace = true, features = ["cookies", "rustls-tls", "json"] }
 ring = { workspace = true }
 rust-embed = { workspace = true, features = ["debug-embed"], optional = true }
+rust_decimal = { workspace = true }
 rustls.workspace = true
 sapling-crypto.workspace = true
 secrecy = { workspace = true }
 serde = { workspace = true, features = ["derive"] }
+serde_json = { workspace = true }
 shardtree = { workspace = true, features = ["legacy-api"] }
 tempfile = { workspace = true, optional = true }
 thiserror = { workspace = true }
@@ -64,7 +67,6 @@ zcash_proofs = { workspace = true, features = ["download-params", "local-prover"
 zcash_protocol = { workspace = true }
 zcash_transparent = { workspace = true }
 zingo-netutils = { workspace = true }
-zingolib-price = { workspace = true }
 zingolib-common = { workspace = true }
 zingolib-file-format = { workspace = true }
 zingo_common_components = { workspace = true }
@@ -80,7 +82,6 @@ zcash_proofs = { workspace = true, features = ["download-params", "local-prover"
 zingolib = { path = ".", features = ["testutils"] }
 itertools = { workspace = true }
 proptest = { workspace = true }
-serde_json = { workspace = true }
 test-log = { workspace = true }
 tracing-subscriber = { workspace = true }
 pepper-sync = { workspace = true, features = ["test-features"] }

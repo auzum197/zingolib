@@ -11,11 +11,12 @@ use zcash_protocol::consensus::BlockHeight;
 use zcash_transparent::keys::NonHardenedChildIndex;
 use zip32::AccountId;
 
-use pepper_sync::keys::transparent::TransparentAddressId;
-use pepper_sync::wallet::{NullifierMap, ShardTrees, SyncState};
 use zingolib_common::chain::ChainType;
+use zingolib_common::keys::TransparentAddressId;
 use zingolib_common::keys::{TransparentScope, UnifiedAddressId, UnifiedKeyStore};
-use zingolib_price::PriceList;
+use zingolib_common::price::PriceList;
+use zingolib_common::sync::SyncState;
+use zingolib_common::wallet::{NullifierMap, ShardTrees};
 
 use zingolib_file_format::encryption::{Argon2Params, EncryptionConfig, EncryptionSession};
 use zingolib_file_format::{WalletFile, WalletFileRef, WalletSettings};

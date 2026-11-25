@@ -56,6 +56,31 @@ jobs:
           hack-subcommand: check
           hack-flags: --package zingolib-tui --feature-powerset --bins --tests --target-dir target/hack
 
+  file-format-dependencies:
+    name: Wallet file crates carry no network code
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+
+      - uses: actions-rust-lang/setup-rust-toolchain@v1
+
+      # `cargo tree -i` exits 0 when nothing matches, so the check reads its output.
+      # `rayon` is not in the list: the zakura `orchard`, `sapling-crypto` and `primitives`
+      # crates enable it through their default `multicore` feature, which no crate here controls.
+      - name: Check the dependency trees
+        run: |
+          failed=0
+          for crate in zingolib-file-format zingolib-common; do
+            for dep in tonic tokio hyper reqwest zingo-netutils lightwallet-protocol pepper-sync; do
+              if [ -n "$(cargo tree -p "$crate" -e normal -i "$dep" 2>/dev/null)" ]; then
+                echo "FAIL: $crate depends on $dep"
+                failed=1
+              fi
+            done
+          done
+          exit $failed
+
   run-doc-tests:
     name: Run doc tests
     runs-on: ubuntu-24.04

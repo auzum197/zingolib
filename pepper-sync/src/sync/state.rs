@@ -1,5 +1,5 @@
 //! Sync state updates that need the wallet or the server. Each reads or fetches what it needs and hands the values to
-//! the scan scheduler in [`super::scheduler`].
+//! the scan scheduler, [`SyncState`](crate::wallet::SyncState).
 
 use std::{
     cmp,
@@ -13,6 +13,7 @@ use zcash_protocol::consensus::{self, BlockHeight, NetworkUpgrade};
 
 use crate::{
     client::{self, FetchRequest},
+    engine::SyncStateOps as _,
     error::{ServerError, SyncError},
     keys::transparent::TransparentAddressId,
     scan::task::ScanTask,
@@ -22,7 +23,7 @@ use crate::{
     },
 };
 
-use super::{ScanPriority, scheduler::VerifyEnd};
+use super::{ScanPriority, VerifyEnd};
 
 /// Update scan ranges for scanning.
 /// Returns the block height that reorg detection will start from.
@@ -140,9 +141,9 @@ where
         birthday_ironwood_initial_tree_size,
     ) = if let Ok(block) = wallet.get_wallet_block(birthday) {
         (
-            block.tree_bounds.sapling_initial_tree_size,
-            block.tree_bounds.orchard_initial_tree_size,
-            block.tree_bounds.ironwood_initial_tree_size,
+            block.tree_bounds().sapling_initial_tree_size,
+            block.tree_bounds().orchard_initial_tree_size,
+            block.tree_bounds().ironwood_initial_tree_size,
         )
     } else {
         final_tree_sizes(

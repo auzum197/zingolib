@@ -13,7 +13,7 @@ use pepper_sync::{
     keys::transparent::TransparentAddressId,
     wallet::{NullifierMap, OutputId, SyncState, WalletBlock, WalletTransaction},
 };
-use zingolib_price::PriceList;
+use zingolib_common::price::PriceList;
 
 use crate::config::{ChainType, WalletConfig};
 use error::{PriceError, WalletError};
@@ -395,7 +395,7 @@ impl LightWallet {
     ///
     /// Currently only USD is supported.
     pub async fn update_current_price(&mut self) -> Result<f32, PriceError> {
-        let current_price = self.price_list.update_current_price().await?.price_usd;
+        let current_price = crate::price::get_current_price().await?.price_usd;
         self.save_required = true;
 
         Ok(current_price)

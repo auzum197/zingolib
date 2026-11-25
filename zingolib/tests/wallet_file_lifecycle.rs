@@ -39,9 +39,9 @@ use zingolib::wallet::{
     LightWallet, PerformanceLevel, SyncConfig, TransparentAddressDiscovery,
     TransparentAddressDiscoveryScopes, WalletSettings,
 };
+use zingolib_common::price::PriceList;
 use zingolib_common::serialization::ReadableWriteable;
 use zingolib_file_format::{WalletFile, WalletFileRef};
-use zingolib_price::PriceList;
 
 const SEED: &str = zingo_test_vectors::seeds::HOSPITAL_MUSEUM_SEED;
 /// Ironwood is active from the first block: the Zakura Orchard crate only builds bundles for

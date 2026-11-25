@@ -2420,7 +2420,6 @@ name = "pepper-sync"
 version = "0.6.0"
 dependencies = [
  "bip32",
- "byteorder",
  "criterion",
  "crossbeam-channel",
  "futures",
@@ -2448,7 +2447,6 @@ dependencies = [
  "zakura-protocol",
  "zakura-sapling-crypto",
  "zakura-transparent",
- "zcash_encoding 0.4.0",
  "zingo-netutils",
  "zingolib-common",
  "zip32",
@@ -5594,8 +5592,10 @@ dependencies = [
  "portpicker",
  "proptest",
  "rand 0.10.2",
+ "reqwest",
  "ring",
  "rust-embed",
+ "rust_decimal",
  "rustls 0.23.42",
  "secrecy",
  "serde",
@@ -5626,7 +5626,6 @@ dependencies = [
  "zingolib",
  "zingolib-common",
  "zingolib-file-format",
- "zingolib-price",
  "zip32",
 ]
 
@@ -5637,8 +5636,13 @@ dependencies = [
  "bip0039",
  "bip32",
  "byteorder",
+ "hex",
+ "incrementalmerkletree",
+ "memuse",
+ "proptest",
  "rand 0.10.2",
  "serde",
+ "shardtree",
  "thiserror 2.0.19",
  "tracing",
  "zakura-address",
@@ -5646,6 +5650,7 @@ dependencies = [
  "zakura-jubjub",
  "zakura-keys",
  "zakura-orchard",
+ "zakura-primitives",
  "zakura-protocol",
  "zakura-sapling-crypto",
  "zakura-transparent",
@@ -5682,22 +5687,7 @@ dependencies = [
  "zeroize",
  "zingo_common_components",
  "zingolib-common",
- "zingolib-price",
  "zip32",
-]
-
-[[package]]
-name = "zingolib-price"
-version = "0.1.0"
-dependencies = [
- "byteorder",
- "reqwest",
- "rust_decimal",
- "serde",
- "serde_json",
- "thiserror 2.0.19",
- "zcash_encoding 0.4.0",
- "zingolib-common",
 ]
 
 [[package]]

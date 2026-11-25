@@ -18,6 +18,7 @@ use zip32::AccountId;
 
 use crate::{
     client::{self, FetchRequest},
+    engine::WalletBlockOps as _,
     error::{ContinuityError, ScanError, ServerError},
     keys::{KeyId, ScanningKeyOps, ScanningKeys},
     utils::{
@@ -191,13 +192,13 @@ where
             );
         }
 
-        let wallet_block = WalletBlock {
-            block_height: get_compact_block_height(block),
-            block_hash: get_compact_block_hash(block),
-            prev_hash: get_compact_block_prev_hash(block),
-            time: block.time,
-            txids: block.vtx.iter().map(get_compact_tx_txid).collect(),
-            tree_bounds: TreeBounds {
+        let wallet_block = WalletBlock::from_parts(
+            get_compact_block_height(block),
+            get_compact_block_hash(block),
+            get_compact_block_prev_hash(block),
+            block.time,
+            block.vtx.iter().map(get_compact_tx_txid).collect(),
+            TreeBounds {
                 sapling_initial_tree_size,
                 sapling_final_tree_size,
                 orchard_initial_tree_size,
@@ -205,7 +206,7 @@ where
                 ironwood_initial_tree_size,
                 ironwood_final_tree_size,
             },
-        };
+        );
 
         check_tree_size(block, &wallet_block)?;
 
@@ -604,13 +605,13 @@ mod tests {
     use super::*;
 
     fn wallet_block_with_ironwood_size(size: u32) -> WalletBlock {
-        WalletBlock {
-            block_height: BlockHeight::from_u32(100),
-            block_hash: BlockHash([1; 32]),
-            prev_hash: BlockHash([0; 32]),
-            time: 0,
-            txids: vec![],
-            tree_bounds: TreeBounds {
+        WalletBlock::from_parts(
+            BlockHeight::from_u32(100),
+            BlockHash([1; 32]),
+            BlockHash([0; 32]),
+            0,
+            vec![],
+            TreeBounds {
                 sapling_initial_tree_size: 10,
                 sapling_final_tree_size: 10,
                 orchard_initial_tree_size: 10,
@@ -618,7 +619,7 @@ mod tests {
                 ironwood_initial_tree_size: size,
                 ironwood_final_tree_size: size,
             },
-        }
+        )
     }
 
     fn compact_block_with_ironwood_size(size: u32) -> CompactBlock {

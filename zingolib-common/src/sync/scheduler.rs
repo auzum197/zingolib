@@ -11,17 +11,14 @@ use zcash_protocol::{
     consensus::{self, BlockHeight},
 };
 
-use crate::wallet::{InitialSyncState, ScanTarget, TreeBounds, WalletTransaction};
+use crate::{
+    engine::{SyncStateOps, VerifyEnd},
+    wallet::{ScanTarget, TreeBounds, WalletTransaction},
+};
 
-use super::{ScanPriority, ScanRange, VERIFY_BLOCK_RANGE_SIZE};
+use super::{InitialSyncState, ScanPriority, ScanRange, VERIFY_BLOCK_RANGE_SIZE};
 
 const NARROW_SCAN_AREA: u32 = 10_000;
-
-/// Used to determine which end of the scan range is verified.
-pub(crate) enum VerifyEnd {
-    VerifyHighest,
-    VerifyLowest,
-}
 
 /// Encapsulates the current state of sync
 ///
@@ -66,7 +63,6 @@ impl SyncState {
     }
 
     /// Rebuilds a sync state read from a wallet file. The initial sync state is not persisted.
-    #[cfg(feature = "wallet_essentials")]
     pub(crate) fn from_parts(
         scan_ranges: Vec<ScanRange>,
         sapling_shard_ranges: Vec<Range<BlockHeight>>,
@@ -112,17 +108,6 @@ impl SyncState {
     #[must_use]
     pub fn scan_targets(&self) -> &BTreeSet<ScanTarget> {
         &self.scan_targets
-    }
-
-    pub(crate) fn initial_sync_state(&self) -> &InitialSyncState {
-        &self.initial_sync_state
-    }
-
-    /// Returns true if all scan ranges are scanned.
-    pub(crate) fn scan_complete(&self) -> bool {
-        self.scan_ranges
-            .iter()
-            .all(|scan_range| scan_range.priority() == ScanPriority::Scanned)
     }
 
     /// Returns the block height at which all blocks equal to and below this height are scanned.
@@ -171,161 +156,6 @@ impl SyncState {
             .map(|range| range.block_range().end - 1)
     }
 
-    /// Scan ranges whose blocks have been scanned, including those still waiting on their nullifiers.
-    pub(crate) fn scanned_ranges(&self) -> impl DoubleEndedIterator<Item = &ScanRange> {
-        self.scan_ranges.iter().filter(|scan_range| {
-            scan_range.priority() == ScanPriority::Scanned
-                || scan_range.priority() == ScanPriority::ScannedWithoutMapping
-                || scan_range.priority() == ScanPriority::RefetchingNullifiers
-        })
-    }
-
-    pub(crate) fn calculate_scanned_blocks(&self) -> u32 {
-        self.scanned_ranges()
-            .map(ScanRange::block_range)
-            .fold(0, |acc, block_range| {
-                acc + (block_range.end - block_range.start)
-            })
-    }
-
-    pub(crate) fn find_scan_targets(
-        &self,
-        block_range: &Range<BlockHeight>,
-    ) -> BTreeSet<ScanTarget> {
-        self.scan_targets
-            .range(
-                ScanTarget {
-                    block_height: block_range.start,
-                    txid: TxId::from_bytes([0; 32]),
-                    narrow_scan_area: false,
-                }..ScanTarget {
-                    block_height: block_range.end,
-                    txid: TxId::from_bytes([0; 32]),
-                    narrow_scan_area: false,
-                },
-            )
-            .copied()
-            .collect()
-    }
-
-    pub(crate) fn add_scan_targets(&mut self, scan_targets: impl IntoIterator<Item = ScanTarget>) {
-        self.scan_targets.extend(scan_targets);
-    }
-
-    /// Drops scan targets at or below `fully_scanned_height`, which have all been scanned.
-    pub(crate) fn remove_scanned_scan_targets(&mut self, fully_scanned_height: BlockHeight) {
-        self.scan_targets
-            .retain(|scan_target| scan_target.block_height > fully_scanned_height);
-    }
-
-    /// Plans the scan ranges at the start of a sync session.
-    ///
-    /// Recovers from an interrupted session, extends the ranges to `chain_height`, prioritises scan targets and the
-    /// chain tip, and sets up verification of the lowest unscanned blocks. Returns the block height that reorg
-    /// detection starts from.
-    ///
-    /// If the returned height is above `chain_height` there is nothing left to verify above the scanned blocks. The
-    /// caller should then compare the chain tip block hash with the wallet's and call
-    /// [`Self::set_verify_scan_range`] with [`VerifyEnd::VerifyHighest`] if they differ.
-    pub(crate) fn update_scan_ranges(
-        &mut self,
-        consensus_parameters: &impl consensus::Parameters,
-        last_known_chain_height: BlockHeight,
-        chain_height: BlockHeight,
-    ) -> BlockHeight {
-        self.reset_scan_ranges();
-        self.create_scan_range(last_known_chain_height, chain_height);
-        let scan_targets = self.scan_targets.clone();
-        self.set_found_note_scan_ranges(
-            consensus_parameters,
-            ShieldedPool::Ironwood,
-            scan_targets.into_iter(),
-        );
-        self.set_chain_tip_scan_range(consensus_parameters, chain_height);
-        self.merge_scan_ranges(ScanPriority::ChainTip);
-
-        let reorg_detection_start_height = self
-            .highest_scanned_height()
-            .expect("scan ranges must be non-empty")
-            + 1;
-        if reorg_detection_start_height <= chain_height {
-            self.set_verify_scan_range(reorg_detection_start_height, VerifyEnd::VerifyLowest);
-        }
-
-        reorg_detection_start_height
-    }
-
-    /// Sets the initial sync state at the start of the sync session.
-    ///
-    /// `wallet_tree_bounds` are the tree sizes below the wallet birthday and at `chain_height`.
-    /// `previously_scanned_outputs` are the sapling, orchard and ironwood outputs in the already scanned ranges.
-    pub(crate) fn set_initial_state(
-        &mut self,
-        chain_height: BlockHeight,
-        wallet_tree_bounds: TreeBounds,
-        previously_scanned_outputs: (u32, u32, u32),
-    ) {
-        let fully_scanned_height = self
-            .fully_scanned_height()
-            .expect("scan ranges must be non-empty");
-        let (
-            previously_scanned_sapling_outputs,
-            previously_scanned_orchard_outputs,
-            previously_scanned_ironwood_outputs,
-        ) = previously_scanned_outputs;
-
-        self.initial_sync_state = InitialSyncState {
-            sync_start_height: if chain_height > fully_scanned_height {
-                fully_scanned_height + 1
-            } else {
-                chain_height
-            },
-            wallet_tree_bounds,
-            previously_scanned_blocks: self.calculate_scanned_blocks(),
-            previously_scanned_sapling_outputs,
-            previously_scanned_orchard_outputs,
-            previously_scanned_ironwood_outputs,
-        };
-    }
-
-    /// Merges all adjacent ranges of a given `scan_priority`.
-    pub(crate) fn merge_scan_ranges(&mut self, scan_priority: ScanPriority) {
-        'main: loop {
-            let filtered_ranges = self
-                .scan_ranges
-                .iter()
-                .cloned()
-                .enumerate()
-                .filter(|(_, scan_range)| scan_range.priority() == scan_priority)
-                .collect::<Vec<_>>();
-            if filtered_ranges.is_empty() {
-                break;
-            }
-            let mut peekable_ranges = filtered_ranges.iter().peekable();
-            while let Some((index, range)) = peekable_ranges.next() {
-                if let Some((next_index, next_range)) = peekable_ranges.peek() {
-                    if range.block_range().end == next_range.block_range().start {
-                        assert!(*next_index == *index + 1);
-                        self.scan_ranges.splice(
-                            *index..=*next_index,
-                            vec![ScanRange::from_parts(
-                                Range {
-                                    start: range.block_range().start,
-                                    end: next_range.block_range().end,
-                                },
-                                scan_priority,
-                            )],
-                        );
-                        continue 'main;
-                    }
-                } else {
-                    break 'main;
-                }
-            }
-        }
-        debug_assert_eq!(self.check_invariants(), Ok(()));
-    }
-
     /// Create scan range between the wallet height and the chain height from the server.
     fn create_scan_range(
         &mut self,
@@ -345,38 +175,6 @@ impl SyncState {
         );
         self.scan_ranges.push(new_scan_range);
         debug_assert_eq!(self.check_invariants(), Ok(()));
-    }
-
-    /// Splits the range containing [`truncate_height` + 1] and removes all ranges containing block heights above
-    /// `truncate_height`.
-    /// If `truncate_height` is zero, the sync state will be cleared completely.
-    pub(crate) fn truncate_scan_ranges(&mut self, truncate_height: BlockHeight) {
-        if truncate_height == consensus::H0 {
-            *self = SyncState::new();
-        }
-        let Some((index, range_to_split)) = self
-            .scan_ranges
-            .iter()
-            .enumerate()
-            .find(|(_index, range)| range.block_range().contains(&(truncate_height + 1)))
-        else {
-            return;
-        };
-
-        if let Some((first_segment, second_segment)) = range_to_split.split_at(truncate_height + 1)
-        {
-            self.replace_scan_range(index, vec![first_segment, second_segment]);
-        }
-
-        let truncated_len = self
-            .scan_ranges
-            .partition_point(|range| range.block_range().start <= truncate_height);
-        self.scan_ranges.truncate(truncated_len);
-        assert_eq!(
-            self.check_invariants(),
-            Ok(()),
-            "scan ranges are invalid after truncating to {truncate_height}"
-        );
     }
 
     /// Resets scan ranges to recover from previous sync interruptions.
@@ -406,52 +204,6 @@ impl SyncState {
         debug_assert_eq!(self.check_invariants(), Ok(()));
     }
 
-    /// Splits out the highest or lowest `VERIFY_BLOCK_RANGE_SIZE` blocks from the scan range containing the given `block height`
-    /// and sets it's priority to `Verify`.
-    /// Returns a clone of the scan range to be verified.
-    pub(crate) fn set_verify_scan_range(
-        &mut self,
-        block_height: BlockHeight,
-        verify_end: VerifyEnd,
-    ) -> ScanRange {
-        let (index, scan_range) = self
-            .scan_ranges
-            .iter()
-            .enumerate()
-            .find(|(_, range)| range.block_range().contains(&block_height))
-            .expect("scan range containing given block height should always exist!");
-
-        let block_range_to_verify = match verify_end {
-            VerifyEnd::VerifyHighest => Range {
-                start: scan_range.block_range().end - VERIFY_BLOCK_RANGE_SIZE,
-                end: scan_range.block_range().end,
-            },
-            VerifyEnd::VerifyLowest => Range {
-                start: scan_range.block_range().start,
-                end: scan_range.block_range().start + VERIFY_BLOCK_RANGE_SIZE,
-            },
-        };
-
-        let split_ranges =
-            split_out_scan_range(scan_range, block_range_to_verify, ScanPriority::Verify);
-
-        let scan_range_to_verify = match verify_end {
-            VerifyEnd::VerifyHighest => split_ranges
-                .last()
-                .expect("vec should always be non-empty")
-                .clone(),
-            VerifyEnd::VerifyLowest => split_ranges
-                .first()
-                .expect("vec should always be non-empty")
-                .clone(),
-        };
-
-        self.replace_scan_range(index, split_ranges);
-        debug_assert_eq!(self.check_invariants(), Ok(()));
-
-        scan_range_to_verify
-    }
-
     /// Punches in the chain tip block range with `ScanPriority::ChainTip`.
     ///
     /// Determines the chain tip block range by finding the lowest start height of the latest incomplete shard for each
@@ -474,195 +226,14 @@ impl SyncState {
         self.punch_scan_priority(chain_tip, ScanPriority::ChainTip);
     }
 
-    /// Punches in the `shielded_protocol` shard block ranges surrounding each scan target with `ScanPriority::FoundNote`.
-    ///
-    /// If all `scan_targets` have the `narrow_scan_area` set to `true`, `shielded_protocol` is irrelevant.
-    pub(crate) fn set_found_note_scan_ranges<T: Iterator<Item = ScanTarget>>(
-        &mut self,
-        consensus_parameters: &impl consensus::Parameters,
-        shielded_protocol: ShieldedPool,
-        scan_targets: T,
-    ) {
-        for scan_target in scan_targets {
-            self.set_found_note_scan_range(
-                consensus_parameters,
-                if scan_target.narrow_scan_area {
-                    None
-                } else {
-                    Some(shielded_protocol)
-                },
-                scan_target.block_height,
-            );
-        }
-    }
-
-    /// Punches in the `shielded_protocol` shard block range surrounding the `block_height` with `ScanPriority::FoundNote`.
-    ///
-    /// If `shielded_protocol` is `None`, punch in the surrounding [`self::NARROW_SCAN_AREA`] blocks starting from the
-    /// closest lower multiple of [`self::NARROW_SCAN_AREA`] to `block_height`.
-    pub(crate) fn set_found_note_scan_range(
-        &mut self,
-        consensus_parameters: &impl consensus::Parameters,
-        shielded_protocol: Option<ShieldedPool>,
-        block_height: BlockHeight,
-    ) {
-        let block_range =
-            self.determine_block_range(consensus_parameters, block_height, shielded_protocol);
-        self.punch_scan_priority(block_range, ScanPriority::FoundNote);
-    }
-
-    /// Updates the `shielded_protocol` shard range to `FoundNote` scan priority if the `wallet_transaction` contains
-    /// a note from the corresponding `shielded_protocol`.
-    pub(crate) fn update_found_note_shard_priority(
-        &mut self,
-        consensus_parameters: &impl consensus::Parameters,
-        shielded_protocol: ShieldedPool,
-        wallet_transaction: &WalletTransaction,
-    ) {
-        let found_note = match shielded_protocol {
-            ShieldedPool::Sapling => !wallet_transaction.sapling_notes().is_empty(),
-            ShieldedPool::Orchard => !wallet_transaction.orchard_notes().is_empty(),
-            ShieldedPool::Ironwood => !wallet_transaction.ironwood_notes().is_empty(),
-        };
-        if found_note {
-            self.set_found_note_scan_range(
-                consensus_parameters,
-                Some(shielded_protocol),
-                wallet_transaction.status().get_height(),
-            );
-        }
-    }
-
-    /// Sets `scanned_range` to `Scanned`, or `ScannedWithoutMapping` if its nullifiers were not mapped.
-    ///
-    /// Panics if no single scan range contains `scanned_range`.
-    pub(crate) fn set_scanned_scan_range(
-        &mut self,
-        scanned_range: Range<BlockHeight>,
-        nullifiers_mapped: bool,
-    ) {
-        let index = self.index_containing(&scanned_range).unwrap_or_else(|| {
-            panic!("scan range containing scanned range {scanned_range:?} should exist!")
-        });
-
-        let split_ranges = split_out_scan_range(
-            &self.scan_ranges[index],
-            scanned_range,
-            if nullifiers_mapped {
-                ScanPriority::Scanned
-            } else {
-                ScanPriority::ScannedWithoutMapping
-            },
-        );
-        self.replace_scan_range(index, split_ranges);
-        debug_assert_eq!(self.check_invariants(), Ok(()));
-    }
-
-    /// Sets `invalid_refetch_range` back to `ScannedWithoutMapping` so its nullifiers are fetched again.
-    ///
-    /// Panics if no single scan range contains `invalid_refetch_range`.
-    pub(crate) fn reset_refetching_nullifiers_scan_range(
-        &mut self,
-        invalid_refetch_range: Range<BlockHeight>,
-    ) {
-        let index = self
-            .index_containing(&invalid_refetch_range)
-            .unwrap_or_else(|| {
-                panic!(
-                    "scan range containing invalid refetch range {invalid_refetch_range:?} should exist!"
-                )
-            });
-
-        let split_ranges = split_out_scan_range(
-            &self.scan_ranges[index],
-            invalid_refetch_range,
-            ScanPriority::ScannedWithoutMapping,
-        );
-        self.replace_scan_range(index, split_ranges);
-        debug_assert_eq!(self.check_invariants(), Ok(()));
-    }
-
-    /// Sets the scan range with `block_range` to the given `scan_priority`.
-    ///
-    /// Panics if no scan range is found with a block range of exactly `block_range`.
-    pub(crate) fn set_scan_priority(
-        &mut self,
-        block_range: &Range<BlockHeight>,
-        scan_priority: ScanPriority,
-    ) {
-        let Some(scan_range) = self
-            .scan_ranges
-            .iter_mut()
-            .find(|range| range.block_range() == block_range)
-        else {
-            panic!("scan range with block range {block_range:?} not found!")
-        };
-        *scan_range = ScanRange::from_parts(block_range.clone(), scan_priority);
-        debug_assert_eq!(self.check_invariants(), Ok(()));
-    }
-
-    /// Punches in a `scan_priority` for a given `block_range`.
-    ///
-    /// This function will set all scan ranges with block range bounds contained by `block_range` to the given
-    /// `scan_priority`.
-    /// If any scan ranges are found to overlap with the given `block_range`, they will be split at the boundary and
-    /// the new scan ranges contained by `block_range` will be set to `scan_priority`.
-    /// Any scan ranges that fully contain the `block_range` will be split out with the given `scan_priority`.
-    /// Any scan ranges with `Scanning`, `RefetchingNullifiers`, `Scanned` or `ScannedWithoutMapping` priority or with higher (or equal) priority than
-    /// `scan_priority` will be ignored.
-    pub(crate) fn punch_scan_priority(
-        &mut self,
-        block_range: Range<BlockHeight>,
-        scan_priority: ScanPriority,
-    ) {
-        let mut scan_ranges_contained_by_block_range = Vec::new();
-        let mut scan_ranges_for_splitting = Vec::new();
-
-        for (index, scan_range) in self.scan_ranges.iter().enumerate() {
-            if scan_range.priority() == ScanPriority::Scanned
-                || scan_range.priority() == ScanPriority::ScannedWithoutMapping
-                || scan_range.priority() == ScanPriority::Scanning
-                || scan_range.priority() == ScanPriority::RefetchingNullifiers
-                || scan_range.priority() >= scan_priority
-            {
-                continue;
-            }
-
-            match (
-                block_range.contains(&scan_range.block_range().start),
-                block_range.contains(&(scan_range.block_range().end - 1)),
-                scan_range.block_range().contains(&block_range.start),
-            ) {
-                (true, true, _) => scan_ranges_contained_by_block_range.push(index),
-                (true, false, _) | (false, true, _) | (false, false, true) => {
-                    scan_ranges_for_splitting.push(index);
-                }
-                (false, false, false) => {}
-            }
-        }
-
-        for index in scan_ranges_contained_by_block_range {
-            let scan_range = &mut self.scan_ranges[index];
-            *scan_range = ScanRange::from_parts(scan_range.block_range().clone(), scan_priority);
-        }
-
-        // split out the scan ranges in reverse order to maintain the correct index for lower scan ranges
-        for index in scan_ranges_for_splitting.into_iter().rev() {
-            let split_ranges =
-                split_out_scan_range(&self.scan_ranges[index], block_range.clone(), scan_priority);
-            self.replace_scan_range(index, split_ranges);
-        }
-        debug_assert_eq!(self.check_invariants(), Ok(()));
-    }
-
     /// Determines the block range which contains all the note commitments for the shard of a given `shielded_protocol` surrounding
     /// the specified `block_height`.
     ///
     /// If no shard range exists for the given `block_height`, return the range of the incomplete shard at the chain tip.
     /// If `block_height` contains note commitments from multiple shards, return the block range of all of those shards combined.
     ///
-    /// If `shielded_protocol` is `None`, return the surrounding [`self::NARROW_SCAN_AREA`] blocks starting from the
-    /// closest lower multiple of [`self::NARROW_SCAN_AREA`] to `block_height`.
+    /// If `shielded_protocol` is `None`, return the surrounding `NARROW_SCAN_AREA` blocks starting from the
+    /// closest lower multiple of `NARROW_SCAN_AREA` to `block_height`.
     fn determine_block_range(
         &self,
         consensus_parameters: &impl consensus::Parameters,
@@ -763,17 +334,425 @@ impl SyncState {
         range
     }
 
-    /// Selects and prepares the next scan range for scanning.
-    ///
-    /// Sets the range for scanning to `Scanning` priority but returns the scan range with its initial priority for use
-    /// in scanning and post-scan processing.
-    /// If the selected range is of `ScannedWithoutMapping` priority, the range is set to `RefetchingNullifiers` but
-    /// returns the scan range with priority `ScannedWithoutMapping` for use in scanning and post-scan processing.
-    /// Returns `None` if there are no more ranges to scan.
-    ///
-    /// Set `nullifier_map_limit_exceeded` to `true` if the nullifiers are not going to be mapped to the wallet's main
-    /// nullifier map due to performance constraints.
-    pub(crate) fn select_scan_range(
+    fn shard_ranges(&self, shielded_protocol: ShieldedPool) -> &[Range<BlockHeight>] {
+        match shielded_protocol {
+            ShieldedPool::Sapling => &self.sapling_shard_ranges,
+            ShieldedPool::Orchard => &self.orchard_shard_ranges,
+            ShieldedPool::Ironwood => &self.ironwood_shard_ranges,
+        }
+    }
+
+    /// Index of the scan range that contains every block of `block_range`.
+    fn index_containing(&self, block_range: &Range<BlockHeight>) -> Option<usize> {
+        self.scan_ranges.iter().position(|scan_range| {
+            scan_range.block_range().contains(&block_range.start)
+                && scan_range.block_range().contains(&(block_range.end - 1))
+        })
+    }
+
+    /// Replaces the scan range at `index` with `split_ranges`, which must cover exactly the same blocks.
+    fn replace_scan_range(&mut self, index: usize, split_ranges: Vec<ScanRange>) {
+        debug_assert_eq!(
+            split_ranges
+                .first()
+                .zip(split_ranges.last())
+                .map(|(first, last)| first.block_range().start..last.block_range().end),
+            Some(self.scan_ranges[index].block_range().clone()),
+            "split ranges {split_ranges:?} must cover the scan range they replace"
+        );
+        self.scan_ranges.splice(index..=index, split_ranges);
+    }
+
+    /// Checks that the scan ranges run from the wallet birthday to the last known chain height in block height order
+    /// with no overlaps, gaps or empty ranges.
+    fn check_invariants(&self) -> Result<(), String> {
+        if let Some(empty) = self.scan_ranges.iter().find(|range| range.is_empty()) {
+            return Err(format!("empty scan range {empty}"));
+        }
+        if let Some(pair) = self
+            .scan_ranges
+            .windows(2)
+            .find(|pair| pair[0].block_range().end != pair[1].block_range().start)
+        {
+            return Err(format!(
+                "scan ranges {} and {} overlap or leave a gap",
+                pair[0], pair[1]
+            ));
+        }
+        Ok(())
+    }
+}
+
+impl SyncStateOps for SyncState {
+    fn initial_sync_state(&self) -> &InitialSyncState {
+        &self.initial_sync_state
+    }
+
+    fn scan_complete(&self) -> bool {
+        self.scan_ranges
+            .iter()
+            .all(|scan_range| scan_range.priority() == ScanPriority::Scanned)
+    }
+
+    fn scanned_ranges(&self) -> impl DoubleEndedIterator<Item = &ScanRange> {
+        self.scan_ranges.iter().filter(|scan_range| {
+            scan_range.priority() == ScanPriority::Scanned
+                || scan_range.priority() == ScanPriority::ScannedWithoutMapping
+                || scan_range.priority() == ScanPriority::RefetchingNullifiers
+        })
+    }
+
+    fn calculate_scanned_blocks(&self) -> u32 {
+        self.scanned_ranges()
+            .map(ScanRange::block_range)
+            .fold(0, |acc, block_range| {
+                acc + (block_range.end - block_range.start)
+            })
+    }
+
+    fn find_scan_targets(&self, block_range: &Range<BlockHeight>) -> BTreeSet<ScanTarget> {
+        self.scan_targets
+            .range(
+                ScanTarget {
+                    block_height: block_range.start,
+                    txid: TxId::from_bytes([0; 32]),
+                    narrow_scan_area: false,
+                }..ScanTarget {
+                    block_height: block_range.end,
+                    txid: TxId::from_bytes([0; 32]),
+                    narrow_scan_area: false,
+                },
+            )
+            .copied()
+            .collect()
+    }
+
+    fn add_scan_targets(&mut self, scan_targets: impl IntoIterator<Item = ScanTarget>) {
+        self.scan_targets.extend(scan_targets);
+    }
+
+    fn remove_scanned_scan_targets(&mut self, fully_scanned_height: BlockHeight) {
+        self.scan_targets
+            .retain(|scan_target| scan_target.block_height > fully_scanned_height);
+    }
+
+    fn update_scan_ranges(
+        &mut self,
+        consensus_parameters: &impl consensus::Parameters,
+        last_known_chain_height: BlockHeight,
+        chain_height: BlockHeight,
+    ) -> BlockHeight {
+        self.reset_scan_ranges();
+        self.create_scan_range(last_known_chain_height, chain_height);
+        let scan_targets = self.scan_targets.clone();
+        self.set_found_note_scan_ranges(
+            consensus_parameters,
+            ShieldedPool::Ironwood,
+            scan_targets.into_iter(),
+        );
+        self.set_chain_tip_scan_range(consensus_parameters, chain_height);
+        self.merge_scan_ranges(ScanPriority::ChainTip);
+
+        let reorg_detection_start_height = self
+            .highest_scanned_height()
+            .expect("scan ranges must be non-empty")
+            + 1;
+        if reorg_detection_start_height <= chain_height {
+            self.set_verify_scan_range(reorg_detection_start_height, VerifyEnd::VerifyLowest);
+        }
+
+        reorg_detection_start_height
+    }
+
+    fn set_initial_state(
+        &mut self,
+        chain_height: BlockHeight,
+        wallet_tree_bounds: TreeBounds,
+        previously_scanned_outputs: (u32, u32, u32),
+    ) {
+        let fully_scanned_height = self
+            .fully_scanned_height()
+            .expect("scan ranges must be non-empty");
+        let (
+            previously_scanned_sapling_outputs,
+            previously_scanned_orchard_outputs,
+            previously_scanned_ironwood_outputs,
+        ) = previously_scanned_outputs;
+
+        self.initial_sync_state = InitialSyncState {
+            sync_start_height: if chain_height > fully_scanned_height {
+                fully_scanned_height + 1
+            } else {
+                chain_height
+            },
+            wallet_tree_bounds,
+            previously_scanned_blocks: self.calculate_scanned_blocks(),
+            previously_scanned_sapling_outputs,
+            previously_scanned_orchard_outputs,
+            previously_scanned_ironwood_outputs,
+        };
+    }
+
+    fn merge_scan_ranges(&mut self, scan_priority: ScanPriority) {
+        'main: loop {
+            let filtered_ranges = self
+                .scan_ranges
+                .iter()
+                .cloned()
+                .enumerate()
+                .filter(|(_, scan_range)| scan_range.priority() == scan_priority)
+                .collect::<Vec<_>>();
+            if filtered_ranges.is_empty() {
+                break;
+            }
+            let mut peekable_ranges = filtered_ranges.iter().peekable();
+            while let Some((index, range)) = peekable_ranges.next() {
+                if let Some((next_index, next_range)) = peekable_ranges.peek() {
+                    if range.block_range().end == next_range.block_range().start {
+                        assert!(*next_index == *index + 1);
+                        self.scan_ranges.splice(
+                            *index..=*next_index,
+                            vec![ScanRange::from_parts(
+                                Range {
+                                    start: range.block_range().start,
+                                    end: next_range.block_range().end,
+                                },
+                                scan_priority,
+                            )],
+                        );
+                        continue 'main;
+                    }
+                } else {
+                    break 'main;
+                }
+            }
+        }
+        debug_assert_eq!(self.check_invariants(), Ok(()));
+    }
+
+    fn truncate_scan_ranges(&mut self, truncate_height: BlockHeight) {
+        if truncate_height == consensus::H0 {
+            *self = SyncState::new();
+        }
+        let Some((index, range_to_split)) = self
+            .scan_ranges
+            .iter()
+            .enumerate()
+            .find(|(_index, range)| range.block_range().contains(&(truncate_height + 1)))
+        else {
+            return;
+        };
+
+        if let Some((first_segment, second_segment)) = range_to_split.split_at(truncate_height + 1)
+        {
+            self.replace_scan_range(index, vec![first_segment, second_segment]);
+        }
+
+        let truncated_len = self
+            .scan_ranges
+            .partition_point(|range| range.block_range().start <= truncate_height);
+        self.scan_ranges.truncate(truncated_len);
+        assert_eq!(
+            self.check_invariants(),
+            Ok(()),
+            "scan ranges are invalid after truncating to {truncate_height}"
+        );
+    }
+
+    fn set_verify_scan_range(
+        &mut self,
+        block_height: BlockHeight,
+        verify_end: VerifyEnd,
+    ) -> ScanRange {
+        let (index, scan_range) = self
+            .scan_ranges
+            .iter()
+            .enumerate()
+            .find(|(_, range)| range.block_range().contains(&block_height))
+            .expect("scan range containing given block height should always exist!");
+
+        let block_range_to_verify = match verify_end {
+            VerifyEnd::VerifyHighest => Range {
+                start: scan_range.block_range().end - VERIFY_BLOCK_RANGE_SIZE,
+                end: scan_range.block_range().end,
+            },
+            VerifyEnd::VerifyLowest => Range {
+                start: scan_range.block_range().start,
+                end: scan_range.block_range().start + VERIFY_BLOCK_RANGE_SIZE,
+            },
+        };
+
+        let split_ranges =
+            split_out_scan_range(scan_range, block_range_to_verify, ScanPriority::Verify);
+
+        let scan_range_to_verify = match verify_end {
+            VerifyEnd::VerifyHighest => split_ranges
+                .last()
+                .expect("vec should always be non-empty")
+                .clone(),
+            VerifyEnd::VerifyLowest => split_ranges
+                .first()
+                .expect("vec should always be non-empty")
+                .clone(),
+        };
+
+        self.replace_scan_range(index, split_ranges);
+        debug_assert_eq!(self.check_invariants(), Ok(()));
+
+        scan_range_to_verify
+    }
+
+    fn set_found_note_scan_ranges<T: Iterator<Item = ScanTarget>>(
+        &mut self,
+        consensus_parameters: &impl consensus::Parameters,
+        shielded_protocol: ShieldedPool,
+        scan_targets: T,
+    ) {
+        for scan_target in scan_targets {
+            self.set_found_note_scan_range(
+                consensus_parameters,
+                if scan_target.narrow_scan_area {
+                    None
+                } else {
+                    Some(shielded_protocol)
+                },
+                scan_target.block_height,
+            );
+        }
+    }
+
+    fn set_found_note_scan_range(
+        &mut self,
+        consensus_parameters: &impl consensus::Parameters,
+        shielded_protocol: Option<ShieldedPool>,
+        block_height: BlockHeight,
+    ) {
+        let block_range =
+            self.determine_block_range(consensus_parameters, block_height, shielded_protocol);
+        self.punch_scan_priority(block_range, ScanPriority::FoundNote);
+    }
+
+    fn update_found_note_shard_priority(
+        &mut self,
+        consensus_parameters: &impl consensus::Parameters,
+        shielded_protocol: ShieldedPool,
+        wallet_transaction: &WalletTransaction,
+    ) {
+        let found_note = match shielded_protocol {
+            ShieldedPool::Sapling => !wallet_transaction.sapling_notes().is_empty(),
+            ShieldedPool::Orchard => !wallet_transaction.orchard_notes().is_empty(),
+            ShieldedPool::Ironwood => !wallet_transaction.ironwood_notes().is_empty(),
+        };
+        if found_note {
+            self.set_found_note_scan_range(
+                consensus_parameters,
+                Some(shielded_protocol),
+                wallet_transaction.status().get_height(),
+            );
+        }
+    }
+
+    fn set_scanned_scan_range(
+        &mut self,
+        scanned_range: Range<BlockHeight>,
+        nullifiers_mapped: bool,
+    ) {
+        let index = self.index_containing(&scanned_range).unwrap_or_else(|| {
+            panic!("scan range containing scanned range {scanned_range:?} should exist!")
+        });
+
+        let split_ranges = split_out_scan_range(
+            &self.scan_ranges[index],
+            scanned_range,
+            if nullifiers_mapped {
+                ScanPriority::Scanned
+            } else {
+                ScanPriority::ScannedWithoutMapping
+            },
+        );
+        self.replace_scan_range(index, split_ranges);
+        debug_assert_eq!(self.check_invariants(), Ok(()));
+    }
+
+    fn reset_refetching_nullifiers_scan_range(
+        &mut self,
+        invalid_refetch_range: Range<BlockHeight>,
+    ) {
+        let index = self
+            .index_containing(&invalid_refetch_range)
+            .unwrap_or_else(|| {
+                panic!(
+                    "scan range containing invalid refetch range {invalid_refetch_range:?} should exist!"
+                )
+            });
+
+        let split_ranges = split_out_scan_range(
+            &self.scan_ranges[index],
+            invalid_refetch_range,
+            ScanPriority::ScannedWithoutMapping,
+        );
+        self.replace_scan_range(index, split_ranges);
+        debug_assert_eq!(self.check_invariants(), Ok(()));
+    }
+
+    fn set_scan_priority(&mut self, block_range: &Range<BlockHeight>, scan_priority: ScanPriority) {
+        let Some(scan_range) = self
+            .scan_ranges
+            .iter_mut()
+            .find(|range| range.block_range() == block_range)
+        else {
+            panic!("scan range with block range {block_range:?} not found!")
+        };
+        *scan_range = ScanRange::from_parts(block_range.clone(), scan_priority);
+        debug_assert_eq!(self.check_invariants(), Ok(()));
+    }
+
+    fn punch_scan_priority(
+        &mut self,
+        block_range: Range<BlockHeight>,
+        scan_priority: ScanPriority,
+    ) {
+        let mut scan_ranges_contained_by_block_range = Vec::new();
+        let mut scan_ranges_for_splitting = Vec::new();
+
+        for (index, scan_range) in self.scan_ranges.iter().enumerate() {
+            if scan_range.priority() == ScanPriority::Scanned
+                || scan_range.priority() == ScanPriority::ScannedWithoutMapping
+                || scan_range.priority() == ScanPriority::Scanning
+                || scan_range.priority() == ScanPriority::RefetchingNullifiers
+                || scan_range.priority() >= scan_priority
+            {
+                continue;
+            }
+
+            match (
+                block_range.contains(&scan_range.block_range().start),
+                block_range.contains(&(scan_range.block_range().end - 1)),
+                scan_range.block_range().contains(&block_range.start),
+            ) {
+                (true, true, _) => scan_ranges_contained_by_block_range.push(index),
+                (true, false, _) | (false, true, _) | (false, false, true) => {
+                    scan_ranges_for_splitting.push(index);
+                }
+                (false, false, false) => {}
+            }
+        }
+
+        for index in scan_ranges_contained_by_block_range {
+            let scan_range = &mut self.scan_ranges[index];
+            *scan_range = ScanRange::from_parts(scan_range.block_range().clone(), scan_priority);
+        }
+
+        // split out the scan ranges in reverse order to maintain the correct index for lower scan ranges
+        for index in scan_ranges_for_splitting.into_iter().rev() {
+            let split_ranges =
+                split_out_scan_range(&self.scan_ranges[index], block_range.clone(), scan_priority);
+            self.replace_scan_range(index, split_ranges);
+        }
+        debug_assert_eq!(self.check_invariants(), Ok(()));
+    }
+
+    fn select_scan_range(
         &mut self,
         consensus_parameters: &impl consensus::Parameters,
         nullifier_map_limit_exceeded: bool,
@@ -901,13 +880,7 @@ impl SyncState {
         ))
     }
 
-    /// Creates block ranges that contain all outputs for the shards completed at `subtree_completing_heights` and adds
-    /// them to the `shielded_protocol` shard ranges.
-    ///
-    /// The network upgrade activation height for the `shielded_protocol` is the first shard start height for the case
-    /// where the shard ranges are empty.
-    #[cfg_attr(feature = "darkside_test", allow(dead_code))]
-    pub(crate) fn add_shard_ranges(
+    fn add_shard_ranges(
         &mut self,
         consensus_parameters: &impl consensus::Parameters,
         shielded_protocol: ShieldedPool,
@@ -951,54 +924,6 @@ impl SyncState {
                 subtree_completing_height
             },
         );
-    }
-
-    fn shard_ranges(&self, shielded_protocol: ShieldedPool) -> &[Range<BlockHeight>] {
-        match shielded_protocol {
-            ShieldedPool::Sapling => &self.sapling_shard_ranges,
-            ShieldedPool::Orchard => &self.orchard_shard_ranges,
-            ShieldedPool::Ironwood => &self.ironwood_shard_ranges,
-        }
-    }
-
-    /// Index of the scan range that contains every block of `block_range`.
-    fn index_containing(&self, block_range: &Range<BlockHeight>) -> Option<usize> {
-        self.scan_ranges.iter().position(|scan_range| {
-            scan_range.block_range().contains(&block_range.start)
-                && scan_range.block_range().contains(&(block_range.end - 1))
-        })
-    }
-
-    /// Replaces the scan range at `index` with `split_ranges`, which must cover exactly the same blocks.
-    fn replace_scan_range(&mut self, index: usize, split_ranges: Vec<ScanRange>) {
-        debug_assert_eq!(
-            split_ranges
-                .first()
-                .zip(split_ranges.last())
-                .map(|(first, last)| first.block_range().start..last.block_range().end),
-            Some(self.scan_ranges[index].block_range().clone()),
-            "split ranges {split_ranges:?} must cover the scan range they replace"
-        );
-        self.scan_ranges.splice(index..=index, split_ranges);
-    }
-
-    /// Checks that the scan ranges run from the wallet birthday to the last known chain height in block height order
-    /// with no overlaps, gaps or empty ranges.
-    fn check_invariants(&self) -> Result<(), String> {
-        if let Some(empty) = self.scan_ranges.iter().find(|range| range.is_empty()) {
-            return Err(format!("empty scan range {empty}"));
-        }
-        if let Some(pair) = self
-            .scan_ranges
-            .windows(2)
-            .find(|pair| pair[0].block_range().end != pair[1].block_range().start)
-        {
-            return Err(format!(
-                "scan ranges {} and {} overlap or leave a gap",
-                pair[0], pair[1]
-            ));
-        }
-        Ok(())
     }
 }
 

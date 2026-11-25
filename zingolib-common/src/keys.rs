@@ -7,12 +7,11 @@ use bip0039::Mnemonic;
 use byteorder::{LittleEndian, ReadBytesExt, WriteBytesExt};
 
 use zcash_address::unified::{Container as _, Encoding as _, Fvk, Ufvk};
-use zcash_client_backend::address::UnifiedAddress;
-use zcash_client_backend::keys::{Era, UnifiedSpendingKey};
 use zcash_encoding::CompactSize;
+use zcash_keys::address::UnifiedAddress;
 use zcash_keys::keys::{
-    AddressGenerationError, DerivationError, ReceiverRequirement, UnifiedAddressRequest,
-    UnifiedFullViewingKey,
+    AddressGenerationError, DerivationError, Era, ReceiverRequirement, UnifiedAddressRequest,
+    UnifiedFullViewingKey, UnifiedSpendingKey,
 };
 use zcash_protocol::consensus::{NetworkConstants, Parameters};
 use zcash_transparent::address::TransparentAddress;
@@ -21,6 +20,7 @@ use zip32::{AccountId, DiversifierIndex};
 
 use crate::chain::ChainType;
 use crate::serialization::ReadableWriteable;
+use crate::wallet::KeyIdInterface;
 
 /// Wallet-file tag for a key store without keys.
 pub const KEY_TYPE_EMPTY: u8 = 0;
@@ -729,5 +729,114 @@ pub enum KeyError {
 impl From<bip32::Error> for KeyError {
     fn from(value: bip32::Error) -> Self {
         Self::KeyDerivationError(DerivationError::Transparent(value))
+    }
+}
+
+/// Child index for the `address_index` path level in the BIP44 hierarchy.
+pub type AddressIndex = u32;
+
+/// Unique ID for shielded keys.
+#[derive(Debug, Clone, Copy, Hash, PartialEq, Eq)]
+pub struct KeyId {
+    /// Account ID
+    pub account_id: zip32::AccountId,
+    /// Scope
+    pub scope: zip32::Scope,
+}
+
+impl KeyIdInterface for KeyId {
+    fn account_id(&self) -> zip32::AccountId {
+        self.account_id
+    }
+}
+
+impl memuse::DynamicUsage for KeyId {
+    fn dynamic_usage(&self) -> usize {
+        self.scope.dynamic_usage()
+    }
+
+    fn dynamic_usage_bounds(&self) -> (usize, Option<usize>) {
+        self.scope.dynamic_usage_bounds()
+    }
+}
+
+/// Decode string to unified address.
+// TODO: return custom error type
+pub fn decode_unified_address(
+    consensus_parameters: &impl Parameters,
+    encoded_address: &str,
+) -> std::io::Result<UnifiedAddress> {
+    if let zcash_keys::address::Address::Unified(unified_address) =
+        decode_address(consensus_parameters, encoded_address)?
+    {
+        Ok(unified_address)
+    } else {
+        Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            "failed to decode unified address. incorrect address type.".to_string(),
+        ))
+    }
+}
+
+/// Decode string to [`zcash_keys::address::Address`] enum.
+pub fn decode_address(
+    consensus_parameters: &impl Parameters,
+    encoded_address: &str,
+) -> std::io::Result<zcash_keys::address::Address> {
+    zcash_address::ZcashAddress::try_from_encoded(encoded_address)
+        .map_err(|e| {
+            std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                format!("failed to decode address. {e}"),
+            )
+        })?
+        .convert_if_network::<zcash_keys::address::Address>(consensus_parameters.network_type())
+        .map_err(|e| {
+            std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                format!("failed to decode address. {e}"),
+            )
+        })
+}
+
+/// Unique ID for transparent addresses.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub struct TransparentAddressId {
+    account_id: zip32::AccountId,
+    scope: TransparentScope,
+    address_index: NonHardenedChildIndex,
+}
+
+impl TransparentAddressId {
+    /// Construct from parts
+    #[must_use]
+    pub fn new(
+        account_id: zip32::AccountId,
+        scope: TransparentScope,
+        address_index: NonHardenedChildIndex,
+    ) -> Self {
+        Self {
+            account_id,
+            scope,
+            address_index,
+        }
+    }
+
+    /// Gets address index
+    #[must_use]
+    pub fn address_index(&self) -> NonHardenedChildIndex {
+        self.address_index
+    }
+
+    /// Gets address scope
+    #[must_use]
+    pub fn scope(&self) -> TransparentScope {
+        self.scope
+    }
+}
+
+impl KeyIdInterface for TransparentAddressId {
+    fn account_id(&self) -> zip32::AccountId {
+        self.account_id
     }
 }

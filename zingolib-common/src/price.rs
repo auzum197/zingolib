@@ -1,8 +1,4 @@
-#![warn(missing_docs)]
-
-//! Crate for fetching ZEC prices.
-//!
-//! Currently only supports USD.
+//! ZEC price data stored in the wallet file. The fetch that fills it is in `zingolib::price`.
 
 use std::{
     collections::HashSet,
@@ -10,40 +6,9 @@ use std::{
 };
 
 use byteorder::{LittleEndian, ReadBytesExt, WriteBytesExt};
-
-use serde::Deserialize;
 use zcash_encoding::{Optional, Vector};
-use zingolib_common::serialization::ReadableWriteable;
 
-/// Errors with price requests and parsing.
-// TODO: remove unused when historical data is implemented
-#[derive(Debug, thiserror::Error)]
-pub enum PriceError {
-    /// Request failed.
-    #[error("request failed. {0}")]
-    RequestFailed(#[from] reqwest::Error),
-    /// Deserialization failed.
-    #[error("deserialization failed. {0}")]
-    DeserializationFailed(#[from] serde_json::Error),
-    /// Parse error.
-    #[error("parse error. {0}")]
-    ParseError(#[from] std::num::ParseFloatError),
-    /// Price list start time not set. Call `PriceList::set_start_time`.
-    #[error("price list start time has not been set.")]
-    PriceListNotInitialized,
-    /// Decimal conversion error.
-    #[error("decimal conversion error. {0}")]
-    DecimalError(#[from] rust_decimal::Error),
-    /// Invalid price.
-    #[error("invalid price.")]
-    InvalidPrice,
-}
-
-#[derive(Debug, Deserialize)]
-struct CurrentPriceResponse {
-    price: String,
-    timestamp: u32,
-}
+use crate::serialization::ReadableWriteable;
 
 /// Price of ZEC in USD at a given point in time.
 #[derive(Debug, Clone, Copy)]
@@ -106,13 +71,6 @@ impl PriceList {
     /// Recommended start time is the time the wallet's birthday block height was mined.
     pub fn set_start_time(&mut self, time_of_birthday: u32) {
         self.time_historical_prices_last_updated = Some(time_of_birthday);
-    }
-
-    /// Fetch and return current price of ZEC.
-    ///
-    /// Currently only USD is supported.
-    pub async fn update_current_price(&mut self) -> Result<Price, PriceError> {
-        get_current_price().await
     }
 
     /// Prunes historical price list to only retain prices for the days containing `transaction_times`.
@@ -188,34 +146,6 @@ impl ReadableWriteable for PriceList {
             w.write_f32::<LittleEndian>(price.price_usd)
         })
     }
-}
-
-async fn get_current_price() -> Result<Price, PriceError> {
-    let httpget = reqwest::get("https://api.gemini.com/v1/trades/zecusd?limit_trades=11").await?;
-    let mut trades = httpget
-        .json::<Vec<CurrentPriceResponse>>()
-        .await?
-        .iter()
-        .map(|response| {
-            let price_usd: f32 = response.price.parse()?;
-            if !price_usd.is_finite() {
-                return Err(PriceError::InvalidPrice);
-            }
-
-            Ok(Price {
-                price_usd,
-                time: response.timestamp,
-            })
-        })
-        .collect::<Result<Vec<Price>, PriceError>>()?;
-
-    trades.sort_by(|a, b| {
-        a.price_usd
-            .partial_cmp(&b.price_usd)
-            .expect("trades are checked to be finite and comparable")
-    });
-
-    Ok(trades[5])
 }
 
 #[cfg(test)]

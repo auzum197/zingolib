@@ -1,12 +1,9 @@
 //! Sync configuration.
 
-#[cfg(feature = "wallet_essentials")]
 use std::io::{Read, Write};
 
-#[cfg(feature = "wallet_essentials")]
+use crate::serialization::ReadableWriteable;
 use byteorder::{LittleEndian, ReadBytesExt, WriteBytesExt};
-#[cfg(feature = "wallet_essentials")]
-use zingolib_common::serialization::ReadableWriteable;
 
 /// Default capacity of the sync event broadcast channel.
 ///
@@ -37,7 +34,6 @@ pub enum PerformanceLevel {
     Maximum,
 }
 
-#[cfg(feature = "wallet_essentials")]
 impl ReadableWriteable for PerformanceLevel {
     const VERSION: u8 = 0;
 
@@ -90,7 +86,7 @@ pub struct SyncConfig {
     pub transparent_address_discovery: TransparentAddressDiscovery,
     /// Performance level
     pub performance_level: PerformanceLevel,
-    /// Capacity of the sync event broadcast channel. See [`crate::events`].
+    /// Capacity of the sync event broadcast channel. See `pepper_sync::events`.
     pub event_channel_capacity: usize,
 }
 
@@ -104,7 +100,6 @@ impl Default for SyncConfig {
     }
 }
 
-#[cfg(feature = "wallet_essentials")]
 impl ReadableWriteable for SyncConfig {
     const VERSION: u8 = 2;
 
@@ -257,7 +252,7 @@ impl TransparentAddressDiscoveryScopes {
     }
 }
 
-#[cfg(all(test, feature = "wallet_essentials"))]
+#[cfg(test)]
 mod tests {
     use super::*;
 

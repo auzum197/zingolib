@@ -1,59 +1,13 @@
-//! Transparent keys and addresses
+//! Transparent address derivation and encoding.
 
 use zcash_address::{ToAddress as _, ZcashAddress};
 use zcash_protocol::consensus;
 use zcash_transparent::address::TransparentAddress;
-use zcash_transparent::keys::NonHardenedChildIndex;
-use zip32::AccountId;
 
 #[cfg(not(feature = "darkside_test"))]
-use zcash_transparent::keys::{AccountPubKey, IncomingViewingKey as _};
+use zcash_transparent::keys::{AccountPubKey, IncomingViewingKey as _, NonHardenedChildIndex};
 
-use crate::wallet::KeyIdInterface;
-
-/// Unique ID for transparent addresses.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
-pub struct TransparentAddressId {
-    account_id: AccountId,
-    scope: TransparentScope,
-    address_index: NonHardenedChildIndex,
-}
-
-impl TransparentAddressId {
-    /// Construct from parts
-    #[must_use]
-    pub fn new(
-        account_id: zip32::AccountId,
-        scope: TransparentScope,
-        address_index: NonHardenedChildIndex,
-    ) -> Self {
-        Self {
-            account_id,
-            scope,
-            address_index,
-        }
-    }
-
-    /// Gets address index
-    #[must_use]
-    pub fn address_index(&self) -> NonHardenedChildIndex {
-        self.address_index
-    }
-
-    /// Gets address scope
-    #[must_use]
-    pub fn scope(&self) -> TransparentScope {
-        self.scope
-    }
-}
-
-impl KeyIdInterface for TransparentAddressId {
-    fn account_id(&self) -> AccountId {
-        self.account_id
-    }
-}
-
-pub use zingolib_common::keys::TransparentScope;
+pub use zingolib_common::keys::{TransparentAddressId, TransparentScope};
 
 #[cfg(not(feature = "darkside_test"))]
 pub(crate) fn derive_address(

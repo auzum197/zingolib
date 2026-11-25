@@ -18,12 +18,14 @@ use zip32::AccountId;
 use crate::{
     Ironwood, Orchard, Sapling, SyncDomain,
     client::{self, FetchRequest},
+    engine::SyncStateOps as _,
     error::SyncError,
     scan::{DecryptedNoteData, transactions::scan_transactions},
     wallet::{
         NoteInterface, NullifierMap, OutputId, OutputInterface, ScanTarget, WalletBlock,
         WalletTransaction,
         traits::{SyncBlocks, SyncNullifiers, SyncOutPoints, SyncShardTrees, SyncTransactions},
+        wallet_block_from_compact_block,
     },
     witness::SHARD_HEIGHT,
 };
@@ -194,7 +196,7 @@ where
             Err(_) => match scanned_blocks.get(&block_height) {
                 Some(block) => block.clone(),
                 None => {
-                    WalletBlock::from_compact_block(
+                    wallet_block_from_compact_block(
                         consensus_parameters,
                         fetch_request_sender.clone(),
                         &client::get_compact_block(fetch_request_sender.clone(), block_height)
@@ -236,17 +238,17 @@ pub(super) fn collect_derived_nullifiers(
     let sapling_nullifiers = wallet_transactions
         .values()
         .flat_map(super::super::wallet::WalletTransaction::sapling_notes)
-        .filter_map(|note| note.nullifier)
+        .filter_map(|note| note.nullifier())
         .collect::<Vec<_>>();
     let orchard_nullifiers = wallet_transactions
         .values()
         .flat_map(super::super::wallet::WalletTransaction::orchard_notes)
-        .filter_map(|note| note.nullifier)
+        .filter_map(|note| note.nullifier())
         .collect::<Vec<_>>();
     let ironwood_nullifiers = wallet_transactions
         .values()
         .flat_map(super::super::wallet::WalletTransaction::ironwood_notes)
-        .filter_map(|note| note.nullifier)
+        .filter_map(|note| note.nullifier())
         .collect::<Vec<_>>();
 
     (sapling_nullifiers, orchard_nullifiers, ironwood_nullifiers)
@@ -416,7 +418,7 @@ pub(super) fn collect_transparent_output_ids(
     wallet_transactions
         .values()
         .flat_map(super::super::wallet::WalletTransaction::transparent_coins)
-        .map(|coin| coin.output_id)
+        .map(|coin| coin.output_id())
         .collect()
 }
 
@@ -441,8 +443,8 @@ pub(super) fn update_spent_coins(
         .values_mut()
         .flat_map(|tx| tx.transparent_coins_mut())
         .for_each(|coin| {
-            if let Some(scan_target) = transparent_spend_scan_targets.get(&coin.output_id) {
-                coin.spending_transaction = Some(scan_target.txid);
+            if let Some(scan_target) = transparent_spend_scan_targets.get(&coin.output_id()) {
+                coin.set_spending_transaction(Some(scan_target.txid));
             }
         });
 }
