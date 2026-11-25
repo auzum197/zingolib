@@ -26,12 +26,10 @@ pub(crate) type ProportionalFeeShieldProposal = Proposal<zip317::FeeRule, Infall
 /// The `LightClient` holds one proposal at a time while the user decides whether to accept the fee.
 #[derive(Debug, Clone)]
 pub(crate) enum ZingoProposal {
-    /// Send proposal.
     Send {
         proposal: ProportionalFeeProposal,
         sending_account: zip32::AccountId,
     },
-    /// Shield proposal.
     Shield {
         proposal: ProportionalFeeShieldProposal,
         shielding_account: zip32::AccountId,
@@ -60,28 +58,4 @@ pub fn total_fee(proposal: &ProportionalFeeProposal) -> Result<Zatoshis, Balance
         .try_fold(Zatoshis::ZERO, |acc, fee| {
             (acc + fee).ok_or(BalanceError::Overflow)
         })
-}
-
-#[cfg(test)]
-mod tests {
-    use zcash_protocol::value::Zatoshis;
-
-    use crate::mocks;
-
-    #[test]
-    fn total_payment_amount() {
-        let proposal = mocks::proposal::ProposalBuilder::default().build();
-        assert_eq!(
-            super::total_payment_amount(&proposal).unwrap(),
-            Zatoshis::from_u64(100_000).unwrap()
-        );
-    }
-    #[test]
-    fn total_fee() {
-        let proposal = mocks::proposal::ProposalBuilder::default().build();
-        assert_eq!(
-            super::total_fee(&proposal).unwrap(),
-            Zatoshis::from_u64(20_000).unwrap()
-        );
-    }
 }

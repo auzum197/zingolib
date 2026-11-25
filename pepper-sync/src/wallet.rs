@@ -41,7 +41,7 @@ pub enum SyncMode {
 impl SyncMode {
     /// Constructor from u8.
     ///
-    /// Returns `None` if `mode` is not a valid enum variant.
+    /// Returns an error if `mode` is not a valid enum variant.
     pub fn from_u8(mode: u8) -> Result<Self, SyncModeError> {
         match mode {
             0 => Ok(Self::NotRunning),

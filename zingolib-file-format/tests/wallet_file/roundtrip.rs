@@ -4,7 +4,7 @@
 //! One property varies the parts that have no chain dependency: unified and transparent
 //! address ids, wallet settings, the price list, sync state and the outpoint map. The other
 //! varies the scanned data: wallet blocks, transactions with notes in every pool, outgoing
-//! notes, coins, spends, nullifiers, and shard trees past the checkpoint cap.
+//! notes, coins, spends, nullifiers, and shard trees.
 //!
 //! `SyncState`, `PriceList`, `WalletBlock` and the outgoing notes have no public constructor that
 //! takes arbitrary field values, so they are built the same way a real reader builds them:
@@ -63,8 +63,8 @@ const PASSPHRASE: &str = "conformance";
 /// so the wallets stay realistic.
 const MAX_MONEY: u64 = 21_000_000 * 100_000_000;
 
-/// Above pepper-sync's `MAX_REORG_ALLOWANCE` of 100, so a tree with a checkpoint on every leaf
-/// exercises the writer's checkpoint pruning.
+/// Upper bound on the leaves appended to each tree. It stays below pepper-sync's checkpoint
+/// window, so the writer prunes no checkpoints.
 const MAX_TREE_LEAVES: usize = 130;
 
 /// Fixed mnemonic seed for the chain-dependent parts of the wallet (keys, address, mnemonic).
@@ -180,8 +180,8 @@ fn performance_level_strategy() -> impl Strategy<Value = PerformanceLevel> {
     ]
 }
 
-/// `SyncConfig::read` rejects a capacity outside this range (the channel allocates every slot
-/// up front and panics on zero, so both ends are checked on read).
+/// `SyncConfig::read` rejects a capacity of zero. The upper end only keeps the generated
+/// values small.
 const EVENT_CHANNEL_CAPACITY_RANGE: std::ops::RangeInclusive<u64> = 1..=65_536;
 
 fn wallet_settings_strategy() -> impl Strategy<Value = WalletSettings> {
@@ -731,8 +731,8 @@ struct Receivers {
 }
 
 fn receivers(keys: &UnifiedKeyStore, chain_type: &ChainType) -> Receivers {
-    let own = keys
-        .generate_unified_address(0, ReceiverSelection::all_shielded())
+    let (_, own) = keys
+        .find_unified_address(0, ReceiverSelection::all_shielded())
         .unwrap();
     Receivers {
         sapling: *own.sapling().unwrap(),

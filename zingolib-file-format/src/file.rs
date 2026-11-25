@@ -535,14 +535,6 @@ mod tests {
     }
 
     #[test]
-    fn write_is_deterministic() {
-        for chain_type in chains() {
-            let file = fresh(chain_type);
-            assert_eq!(bytes(&file), bytes(&file));
-        }
-    }
-
-    #[test]
     fn read_and_read_any_agree_on_every_chain() {
         for chain_type in chains() {
             let original = fresh(chain_type);

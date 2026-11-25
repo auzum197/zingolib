@@ -75,7 +75,7 @@ impl ConfirmationStatus {
         matches!(self, Self::Confirmed(self_height) if self_height >= comparison_height)
     }
 
-    /// To return true, the status must be confirmed and no earlier than specified height.
+    /// To return true, the status must be confirmed later than specified height.
     /// # Examples
     ///
     /// ```

@@ -189,7 +189,6 @@ async fn run(cli: Cli) -> Result<(), String> {
     let (act_tx, mut act_rx) = mpsc::unbounded_channel();
     let backend = backend::spawn(config, cmd_rx, act_tx.clone());
 
-    // terminal
     let default_hook = std::panic::take_hook();
     std::panic::set_hook(Box::new(move |info| {
         let _ = crossterm::execute!(std::io::stdout(), DisableBracketedPaste);
@@ -202,7 +201,6 @@ async fn run(cli: Cli) -> Result<(), String> {
         state.size = (size.width, size.height);
     }
 
-    // input thread
     let input_tx = act_tx.clone();
     std::thread::spawn(move || {
         loop {

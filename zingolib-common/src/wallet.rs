@@ -43,8 +43,7 @@ pub const SHARD_HEIGHT: u8 = 16;
 
 /// Decodes a 512-byte memo field, preserving the raw bytes as `Memo::Future` on an
 /// interpretation failure (e.g. non-UTF-8 text) instead of aborting. Only a memo
-/// that is not a valid length still errors. Mirrors the fallback in zingolib
-/// `wallet/legacy.rs`.
+/// that is not a valid length still errors.
 ///
 /// Rationale: the strict `Memo::from_bytes` runs UTF-8 validation on any text-range
 /// leading byte (`0x00..=0xF4`) and returns `InvalidUtf8` for non-UTF-8 bodies. Used
@@ -61,7 +60,7 @@ pub fn decode_memo_relaxed(memo_bytes: &[u8]) -> Result<Memo, zcash_protocol::me
 /// Block height and txid of relevant transactions that have yet to be scanned. These may be added due to transparent
 /// output/spend discovery or for targetted rescan.
 ///
-/// `narrow_scan_area` is used to narrow the surrounding area scanned around the target from a shard to 100 blocks.
+/// `narrow_scan_area` is used to narrow the surrounding area scanned around the target from a shard to 10,000 blocks.
 /// For example, this is useful when targetting transparent outputs as scanning the whole shard will not affect the
 /// spendability of the scan target but will significantly reduce memory usage and/or storage as well as prioritise
 /// creating spendable notes.
@@ -742,15 +741,12 @@ pub trait NoteInterface: OutputInterface {
 ///  Transparent coin (output) with metadata relevant to the wallet.
 #[derive(Debug, Clone)]
 pub struct TransparentCoin {
-    /// Output ID.
     pub(crate) output_id: OutputId,
     /// Identifier for key used to derive address.
     pub(crate) key_id: TransparentAddressId,
     /// Encoded transparent address.
     pub(crate) address: String,
-    /// Script.
     pub(crate) script: Script,
-    /// Coin value.
     pub(crate) value: Zatoshis,
     /// Transaction ID of transaction this output was spent.
     /// If `None`, output is not spent.
@@ -854,7 +850,6 @@ pub struct Ironwood;
 /// the pool marker ([`Sapling`], [`Orchard`] or [`Ironwood`]).
 #[derive(Debug, Clone)]
 pub struct WalletNote<N, Nf: Copy, P> {
-    /// Output ID.
     pub(crate) output_id: OutputId,
     /// Identifier for key used to decrypt output.
     pub(crate) key_id: KeyId,
@@ -864,7 +859,6 @@ pub struct WalletNote<N, Nf: Copy, P> {
     pub(crate) nullifier: Option<Nf>, //TODO: syncing without nullifier deriving key
     /// Commitment tree leaf position.
     pub(crate) position: Option<Position>,
-    /// Memo.
     pub(crate) memo: Memo,
     /// Transaction ID of transaction this output was spent.
     /// If `None`, output is not spent.
@@ -874,7 +868,6 @@ pub struct WalletNote<N, Nf: Copy, P> {
     /// scanned, meaning the nullifiers were discarded due to memory constraints and will be re-fetched later in the
     /// sync process.
     pub(crate) refetch_nullifier_ranges: Vec<Range<BlockHeight>>,
-    /// Pool marker.
     pub(crate) marker: PhantomData<P>,
 }
 
@@ -1137,17 +1130,14 @@ pub trait OutgoingNoteInterface: Sized {
 /// ([`Sapling`], [`Orchard`] or [`Ironwood`]).
 #[derive(Debug, Clone, PartialEq)]
 pub struct OutgoingNote<N, P> {
-    /// Output ID.
     pub(crate) output_id: OutputId,
     /// Identifier for key used to decrypt output.
     pub(crate) key_id: KeyId,
     /// Decrypted note with recipient and value.
     pub(crate) note: N,
-    /// Memo.
     pub(crate) memo: Memo,
     /// Recipient's full unified address from encoded memo.
     pub(crate) recipient_full_unified_address: Option<UnifiedAddress>,
-    /// Pool marker.
     pub(crate) marker: PhantomData<P>,
 }
 
@@ -1571,8 +1561,6 @@ impl Default for ShardTrees {
 mod tests {
     use super::{Memo, decode_memo_relaxed};
 
-    /// Builds a 512-byte memo field with `leading` as the first byte and `body`
-    /// filling the remainder.
     fn memo_field(leading: u8, body: u8) -> [u8; 512] {
         let mut bytes = [body; 512];
         bytes[0] = leading;

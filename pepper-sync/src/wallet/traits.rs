@@ -103,7 +103,7 @@ pub trait SyncBlocks: SyncWallet {
         Ok(())
     }
 
-    /// Removes all wallet blocks above the given `block_height`.
+    /// Removes all wallet blocks above the given `truncate_height`.
     fn truncate_wallet_blocks(&mut self, truncate_height: BlockHeight) -> Result<(), Self::Error> {
         self.get_wallet_blocks_mut()?
             .retain(|block_height, _| *block_height <= truncate_height);
@@ -144,7 +144,7 @@ pub trait SyncTransactions: SyncWallet {
         Ok(())
     }
 
-    /// Sets all confirmed wallet transactions above the given `block_height` to `Failed` status.
+    /// Sets all confirmed wallet transactions above the given `truncate_height` to `Failed` status.
     /// Also sets any output's `spending_transaction` field to `None` if it's spending transaction was set to `Failed`
     /// status.
     fn truncate_wallet_transactions(
@@ -187,7 +187,7 @@ pub trait SyncNullifiers: SyncWallet {
         Ok(())
     }
 
-    /// Removes all mapped nullifiers above the given `block_height`.
+    /// Removes all mapped nullifiers above the given `truncate_height`.
     fn truncate_nullifiers(&mut self, truncate_height: BlockHeight) -> Result<(), Self::Error> {
         let nullifier_map = self.get_nullifiers_mut()?;
         nullifier_map
@@ -222,7 +222,7 @@ pub trait SyncOutPoints: SyncWallet {
         Ok(())
     }
 
-    /// Removes all mapped outpoints above the given `block_height`.
+    /// Removes all mapped outpoints above the given `truncate_height`.
     fn truncate_outpoints(&mut self, truncate_height: BlockHeight) -> Result<(), Self::Error> {
         self.get_outpoints_mut()?
             .retain(|_, scan_target| scan_target.block_height <= truncate_height);
@@ -334,7 +334,7 @@ pub trait SyncShardTrees: SyncWallet {
         }
     }
 
-    /// Removes all shard tree data above the given `block_height`.
+    /// Removes all shard tree data above the given `truncate_height`.
     ///
     /// A `truncate_height` of zero should replace the shard trees with empty trees.
     fn truncate_shard_trees(
@@ -399,7 +399,6 @@ pub trait SyncShardTrees: SyncWallet {
     }
 }
 
-// TODO: move into `update_shard_trees` trait method
 /// Merges a batch's located trees into a commitment tree, pruning excess checkpoints per
 /// `insert_tree` call. This is the commit-phase insert shared by `update_shard_trees`, the
 /// benchmarks, and the tests, so all three exercise the same code and any change to the commit

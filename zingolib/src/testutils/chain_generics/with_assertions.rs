@@ -46,7 +46,6 @@ pub async fn to_clients_proposal(
 /// NOTICE this function bumps the chain and syncs the client
 /// `test_mempool` can be enabled when the test harness supports it
 /// returns `Ok(total_fee`, `total_received`, `total_change`)
-/// transparent address discovery is disabled due to generic test framework needing to be darkside compatible
 pub async fn assure_propose_send_bump_sync_all_recipients<CC>(
     environment: &mut CC,
     sender: &mut LightClient,

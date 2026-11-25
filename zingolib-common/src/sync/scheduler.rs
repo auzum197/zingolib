@@ -814,7 +814,6 @@ impl SyncStateOps for SyncState {
                                     .clone()
                             }
                         } else {
-                            // select the last range in the list
                             (*index, highest_priority_range.clone())
                         }
                     })?

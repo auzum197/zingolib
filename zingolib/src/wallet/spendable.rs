@@ -13,7 +13,7 @@ use super::LightWallet;
 impl LightWallet {
     /// Returns the block height at which all blocks equal to and above this height are scanned (scan ranges set to
     /// `Scanned`, `ScannedWithoutMapping` or `RefetchingNullifiers` priority).
-    /// Returns `None` if `self.scan_ranges` is empty.
+    /// Returns `None` if the wallet has no scan ranges.
     ///
     /// Useful for determining which height all the nullifiers have been mapped from for guaranteeing if a note is
     /// unspent.

@@ -483,10 +483,6 @@ async fn synced() {
     assert_reload_invisible("synced", &net, &mut client, &mut restored).await;
 }
 
-/// The plaintext layout carries no checksum, so a flipped byte inside a value (seed entropy,
-/// an amount, a memo) decodes to a different but well-formed wallet. Kept to run on demand
-/// with `--ignored` until the layout gains an integrity check.
-
 #[tokio::test]
 async fn reorg() {
     let net = launch().await;

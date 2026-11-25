@@ -1,14 +1,10 @@
 //! Reorg-semantics protections migrated from darkside-tests onto the
 //! stateful mock indexer.
 //!
-//! The darkside-tests crate froze on two darkside-mode bugs in the
-//! legacy indexer ("invalid block hash length in tree states",
-//! post-reorg prev-hash continuity), leaving all nine of its tests
-//! ignored. The protections they held (a wallet's behavior when the
-//! chain changes its mind) port here onto
+//! The protections the darkside tests held (a wallet's behavior when
+//! the chain changes its mind) port here onto
 //! [`crate::testutils::mock_indexer`], whose [`MockChain::reorg_to`]
-//! primitive plays the darksidewalletd role without the legacy stack
-//! or either of its bugs.
+//! primitive plays the darksidewalletd role.
 //!
 //! Ported: receipt removed by reorg (`reorg_receipt_sync_generic`),
 //! receipt moved to a new height (`reorg_changes_incoming_tx_height`),

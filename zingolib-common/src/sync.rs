@@ -154,7 +154,7 @@ pub struct InitialSyncState {
     /// If chain height is not larger than fully scanned height when sync is called, this value will be set to chain
     /// height instead.
     pub(crate) sync_start_height: BlockHeight,
-    /// The tree sizes of the fully scanned height and chain tip at start of sync session.
+    /// The tree sizes below the wallet birthday and at the chain tip at start of sync session.
     pub(crate) wallet_tree_bounds: TreeBounds,
     /// Total number of blocks scanned in previous sync sessions.
     pub(crate) previously_scanned_blocks: u32,

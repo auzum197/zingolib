@@ -7,8 +7,8 @@ use tracing::{Level, event, instrument};
 
 /// Binary encoding with a leading version byte.
 ///
-/// Implementors write `VERSION` first and branch on the byte read back so older
-/// layouts stay readable. `ReadInput` and `WriteInput` carry context such as
+/// Implementors that version their layout write `VERSION` first and check the byte
+/// read back with `get_version`. `ReadInput` and `WriteInput` carry context such as
 /// consensus parameters or the chain type.
 pub trait ReadableWriteable<ReadInput = (), WriteInput = ()>: Sized {
     /// Layout version written by `write` and the newest one `read` accepts.

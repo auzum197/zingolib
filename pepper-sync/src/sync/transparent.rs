@@ -20,8 +20,8 @@ use crate::wallet::{KeyIdInterface, ScanTarget};
 
 use super::MAX_REORG_ALLOWANCE;
 
-/// Discovers all addresses in use by the wallet and returns `scan_targets` for any new relevant transactions to scan transparent
-/// bundles.
+/// Discovers all addresses in use by the wallet and adds `scan_targets` to the sync state for any new relevant transactions to scan
+/// transparent bundles.
 /// `last_known_chain_height` should be the value before updating to latest chain height.
 pub(crate) async fn update_addresses_and_scan_targets<W: SyncWallet>(
     consensus_parameters: &impl consensus::Parameters,

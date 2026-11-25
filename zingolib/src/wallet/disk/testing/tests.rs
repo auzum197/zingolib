@@ -211,3 +211,55 @@ fn construction_encryption_records_custom_memory_and_round_trips() {
         LightWallet::read_encrypted(bytes.as_slice(), network, Some("wrong".to_string())).is_err()
     );
 }
+
+#[test]
+fn sapling_receivers_without_an_address_move_up_on_load() {
+    use std::collections::BTreeMap;
+
+    use crate::wallet::{
+        disk::WalletFile,
+        keys::unified::{ReceiverSelection, UnifiedAddressId},
+    };
+
+    let chain_type = ChainType::Testnet;
+    let wallet = LightWallet::new(
+        chain_type,
+        WalletConfig::MnemonicPhrase {
+            mnemonic_phrase: CHIMNEY_BETTER_SEED.to_string(),
+            no_of_accounts: 1.try_into().unwrap(),
+            birthday: 2_000_000,
+            wallet_settings: default_test_wallet_settings(),
+        },
+        None,
+    )
+    .unwrap();
+    let mut bytes = Vec::new();
+    wallet.write(&mut bytes, &chain_type).unwrap();
+    let mut file = WalletFile::read(bytes.as_slice(), chain_type).unwrap();
+
+    let keys = &file.unified_key_store[&zip32::AccountId::ZERO];
+    let next_sapling = |from| {
+        keys.find_unified_address(from, ReceiverSelection::sapling_only())
+            .unwrap()
+            .0
+    };
+    let without_sapling = (0..).find(|&index| next_sapling(index) != index).unwrap();
+    let with_sapling = next_sapling(without_sapling);
+    let id = |address_index| UnifiedAddressId {
+        account_id: zip32::AccountId::ZERO,
+        address_index,
+    };
+    file.unified_addresses = BTreeMap::from([
+        (id(without_sapling), ReceiverSelection::sapling_only()),
+        (id(with_sapling), ReceiverSelection::orchard_only()),
+    ]);
+
+    let wallet = LightWallet::from_file(file).unwrap();
+    assert_eq!(
+        wallet.unified_addresses().keys().collect::<Vec<_>>(),
+        [&id(with_sapling)]
+    );
+    let address = &wallet.unified_addresses()[&id(with_sapling)];
+    assert!(address.has_orchard());
+    assert!(address.has_sapling());
+}

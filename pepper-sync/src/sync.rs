@@ -171,7 +171,6 @@ where
 
     tracing::info!("Starting sync...");
 
-    // create channel for sending fetch requests and launch fetcher task
     let (fetch_request_sender, fetch_request_receiver) = mpsc::unbounded_channel();
     let client_clone = client.clone();
     let fetcher_handle =
@@ -179,7 +178,6 @@ where
             async move { client::fetch::fetch(fetch_request_receiver, client_clone).await },
         );
 
-    // create channel for receiving mempool transactions and launch mempool monitor
     let (mempool_transaction_sender, mut mempool_transaction_receiver) = mpsc::channel(100);
     let shutdown_mempool = CancellationToken::new();
     let mempool_shutdown = shutdown_mempool.clone();
@@ -198,7 +196,6 @@ where
         .await
     });
 
-    // pre-scan initialisation
     let mut wallet_guard = wallet.write().await;
 
     let chain_height = client::get_chain_height(fetch_request_sender.clone()).await?;
@@ -289,7 +286,6 @@ where
 
     drop(wallet_guard);
 
-    // create channel for receiving scan results and launch scanner
     let (scan_results_sender, mut scan_results_receiver) = mpsc::unbounded_channel();
     let mut scanner = Scanner::new(
         consensus_parameters.clone(),
@@ -496,16 +492,16 @@ fn build_sync_result(sync_status: SyncStatus, initial_sync_state: &InitialSyncSt
 }
 
 /// This ensures that the wallet height used to calculate the lower bound for scan range creation is valid.
-/// The comparison takes two input heights and uses several constants to select the correct height.
+/// The comparison takes two heights and uses two bounds to select the correct height.
 ///
-/// The input parameter heights are:
+/// The heights are:
 ///
 ///   (1) chain_height:
 ///       * the best block-height reported by the proxy (zainod or lwd)
 ///   (2) last_known_chain_height
-///       * the last max height the wallet recorded from earlier scans
+///       * the last max height the wallet recorded from earlier scans, read from the wallet's sync state
 ///
-/// The constants are:
+/// The bounds are:
 ///   (1) MAX_REORG_ALLOWANCE:
 ///       * the maximum number of blocks the wallet can truncate during re-org detection
 ///   (2) Sapling Activation Height:
@@ -699,8 +695,10 @@ where
 ///
 /// Allows `scan_targets` to be added externally to the wallet's `sync_state` and be prioritised for scanning. Each
 /// scan target must include the block height which will be used to prioritise the block range containing the note
-/// commitments to the surrounding orchard shard(s). If the block height is pre-orchard then the surrounding sapling
-/// shard(s) will be prioritised instead. The txid in each scan target may be omitted and set to [0u8; 32] in order to
+/// commitments to the surrounding ironwood shard(s). If the block height is pre-ironwood or the wallet holds no ironwood
+/// shard ranges then the surrounding orchard shard(s) will be prioritised instead, or the sapling shard(s) if the block
+/// height is pre-orchard. A scan target with `narrow_scan_area` set prioritises the 10,000 block window containing it
+/// in place of a shard. The txid in each scan target may be omitted and set to [0u8; 32] in order to
 /// prioritise the surrounding blocks for scanning but be ignored when fetching specific relevant transactions to the
 /// wallet. However, in the case where a relevant spending transaction at a given height contains no decryptable
 /// incoming notes (change), only the nullifier will be mapped and this transaction will be scanned when the
@@ -1365,7 +1363,7 @@ where
     Ok(())
 }
 
-/// Updates the wallet with data from `scan_results`
+/// Updates the wallet with data from the scan results
 #[allow(clippy::too_many_arguments)]
 async fn update_wallet_data<W>(
     consensus_parameters: &impl consensus::Parameters,
@@ -2304,9 +2302,6 @@ mod test {
             }
             #[tokio::test]
             async fn above_chain_height_below_allowance() {
-                // The hain_height is received from the proxy
-                // truncate uses the wallet scan start height
-                // as a
                 let lkch = vec![ScanRange::from_parts(
                     BlockHeight::from_u32(6)..BlockHeight::from_u32(10),
                     crate::sync::ScanPriority::Scanned,
@@ -2317,50 +2312,14 @@ mod test {
                 let chain_height = BlockHeight::from_u32(4);
                 // This will trigger a call to truncate_wallet_data with
                 // chain_height and start_height inferred from the wallet.
-                // chain must be greater than by this time which hits the Greater cmp
+                // chain_height is below the wallet birthday which hits the Less cmp
                 // match
                 let res = checked_wallet_height(&mut test_wallet, chain_height, &LOCAL_NETWORK);
                 assert_eq!(res.unwrap(), BlockHeight::from_u32(4));
             }
-            #[ignore = "in progress"]
-            #[tokio::test]
-            async fn equal_or_below_chain_height_and_above_sapling() {
-                let lkch = vec![ScanRange::from_parts(
-                    BlockHeight::from_u32(1)..BlockHeight::from_u32(10),
-                    crate::sync::ScanPriority::Scanned,
-                )];
-                let state = SyncState::new_for_test(lkch);
-                let builder = crate::mocks::MockWalletBuilder::new();
-                let mut _test_wallet = builder.sync_state(state).create_mock_wallet();
-            }
-            #[ignore = "in progress"]
-            #[tokio::test]
-            async fn equal_or_below_chain_height_and_below_sapling() {
-                // This case requires that the wallet have a scan_start_below sapling
-                // which is an unexpected state.
-                let lkch = vec![ScanRange::from_parts(
-                    BlockHeight::from_u32(1)..BlockHeight::from_u32(10),
-                    crate::sync::ScanPriority::Scanned,
-                )];
-                let state = SyncState::new_for_test(lkch);
-                let builder = crate::mocks::MockWalletBuilder::new();
-                let mut _test_wallet = builder.sync_state(state).create_mock_wallet();
-            }
-            #[ignore = "in progress"]
-            #[tokio::test]
-            async fn below_sapling() {
-                let lkch = vec![ScanRange::from_parts(
-                    BlockHeight::from_u32(1)..BlockHeight::from_u32(10),
-                    crate::sync::ScanPriority::Scanned,
-                )];
-                let state = SyncState::new_for_test(lkch);
-                let builder = crate::mocks::MockWalletBuilder::new();
-                let mut _test_wallet = builder.sync_state(state).create_mock_wallet();
-            }
         }
         mod no_last_known_chain_height {
             use super::*;
-            // If there are know scan_ranges in the SyncState
             #[tokio::test]
             async fn get_bday_error() {
                 let test_error = "get_bday_error";
@@ -2383,30 +2342,6 @@ mod test {
                         crate::mocks::MockWalletError::AnErrorVariant(ref s)
                     )) if s == test_error
                 ));
-            }
-            #[ignore = "in progress"]
-            #[tokio::test]
-            async fn raw_bday_above_chain_height() {
-                let builder = crate::mocks::MockWalletBuilder::new();
-                let mut test_wallet = builder
-                    .birthday(BlockHeight::from_u32(15))
-                    .create_mock_wallet();
-                let res = checked_wallet_height(
-                    &mut test_wallet,
-                    BlockHeight::from_u32(1),
-                    &LOCAL_NETWORK,
-                );
-                if let Err(e) = res {
-                    assert_eq!(
-                        e.to_string(),
-                        format!(
-                            "wallet height is more than {} blocks ahead of best chain height",
-                            15 - 1
-                        )
-                    );
-                } else {
-                    panic!()
-                }
             }
             mod sapling_height {
                 use super::*;

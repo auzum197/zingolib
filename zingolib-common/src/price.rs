@@ -22,7 +22,6 @@ pub struct Price {
 /// Price list for wallets to maintain an updated list of daily ZEC prices.
 #[derive(Debug)]
 pub struct PriceList {
-    /// Current price.
     current_price: Option<Price>,
     /// Historical price data by day.
     // TODO: currently unused
@@ -39,7 +38,7 @@ impl Default for PriceList {
 }
 
 impl PriceList {
-    /// Constructs a new price list from the time of wallet creation.
+    /// Constructs an empty price list.
     #[must_use]
     pub fn new() -> Self {
         PriceList {
@@ -67,7 +66,7 @@ impl PriceList {
         self.time_historical_prices_last_updated
     }
 
-    /// Price list requires a start time before it can be updated.
+    /// Sets the time historical prices were last updated.
     ///
     /// Recommended start time is the time the wallet's birthday block height was mined.
     pub fn set_start_time(&mut self, time_of_birthday: u32) {

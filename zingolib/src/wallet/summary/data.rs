@@ -38,12 +38,9 @@ impl From<zip32::Scope> for Scope {
     }
 }
 
-/// Transaction kind.
 #[derive(Clone, Copy, PartialEq, Debug)]
 pub enum TransactionKind {
-    /// Sent transaction.
     Sent(SendType),
-    /// Received transaction.
     Received,
 }
 
@@ -59,7 +56,6 @@ impl std::fmt::Display for TransactionKind {
     }
 }
 
-/// Send type.
 #[derive(Clone, Copy, PartialEq, Debug)]
 pub enum SendType {
     /// Transaction is sending funds to recipient other than the creator.
@@ -78,16 +74,12 @@ pub enum SendType {
     },
 }
 
-/// Wallet event kind.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum WalletEventKind {
-    /// Sent wallet event.
     Sent(SentWalletEvent),
-    /// Received wallet event.
     Received,
 }
 
-/// Sent wallet event kind.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum SentWalletEvent {
     /// Transferring funds to an address that is not derived by the wallet.
@@ -96,7 +88,6 @@ pub enum SentWalletEvent {
     SendToSelf(SelfSendWalletEvent),
 }
 
-/// Send-to-self wallet event kind.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum SelfSendWalletEvent {
     /// Sending funds to one of the wallet's own addresses, without a memo.
@@ -130,7 +121,6 @@ impl std::fmt::Display for WalletEventKind {
     }
 }
 
-/// Transaction summary.
 #[derive(Clone, PartialEq, Debug)]
 pub struct TransactionSummary {
     pub txid: TxId,
@@ -164,7 +154,6 @@ impl TransactionSummary {
             TransactionKind::Received => Some(self.value as i64),
         }
     }
-    /// Prepares the fields in the summary for display
     #[must_use]
     pub fn prepare_for_display(
         &self,
@@ -282,7 +271,6 @@ impl std::fmt::Display for TransactionSummary {
 pub struct TransactionSummaries(pub Vec<TransactionSummary>);
 
 impl TransactionSummaries {
-    /// Creates a new `TransactionSummaries` struct
     #[must_use]
     pub fn new(transaction_summaries: Vec<TransactionSummary>) -> Self {
         TransactionSummaries(transaction_summaries)
@@ -305,7 +293,6 @@ impl TransactionSummaries {
             })
             .sum()
     }
-    /// A Vec of the txids
     #[must_use]
     pub fn txids(&self) -> Vec<TxId> {
         self.iter().map(|summary| summary.txid).collect()
@@ -322,7 +309,6 @@ impl std::fmt::Display for TransactionSummaries {
 }
 
 /// A wallet event is a user-facing interpretation of transaction activity.
-/// A group of all notes sent to a specific address in a transaction.
 #[derive(Clone, PartialEq)]
 pub struct WalletEvent {
     pub txid: TxId,
@@ -440,17 +426,15 @@ impl std::ops::DerefMut for WalletEvents {
         &mut self.0
     }
 }
-// Implement the Index trait
 impl std::ops::Index<usize> for WalletEvents {
-    type Output = WalletEvent; // The type of the value returned by the index
+    type Output = WalletEvent;
 
     fn index(&self, index: usize) -> &Self::Output {
-        &self.0[index] // Forward the indexing operation to the underlying data structure
+        &self.0[index]
     }
 }
 
 impl WalletEvents {
-    /// Creates a new `WalletEvents` collection.
     #[must_use]
     pub fn new(wallet_events: Vec<WalletEvent>) -> Self {
         WalletEvents(wallet_events)
@@ -525,7 +509,6 @@ impl std::fmt::Display for NoteSummary {
 pub struct NoteSummaries(Vec<NoteSummary>);
 
 impl NoteSummaries {
-    /// Creates a new `NoteSummaries`
     #[must_use]
     pub fn new(note_summaries: Vec<NoteSummary>) -> Self {
         NoteSummaries(note_summaries)
@@ -556,10 +539,10 @@ impl std::ops::DerefMut for NoteSummaries {
 }
 
 impl std::ops::Index<usize> for NoteSummaries {
-    type Output = NoteSummary; // The type of the value returned by the index
+    type Output = NoteSummary;
 
     fn index(&self, index: usize) -> &Self::Output {
-        &self.0[index] // Forward the indexing operation to the underlying data structure
+        &self.0[index]
     }
 }
 
@@ -575,7 +558,7 @@ impl std::fmt::Display for NoteSummaries {
 /// Basic note summary.
 ///
 /// Intended in the context of a transaction summary to provide the most useful data to user without cluttering up
-/// the interface. See [`crate::wallet::summary::``NoteSummary`] for a note summary that is intended for use independently.
+/// the interface. See [`NoteSummary`] for a note summary that is intended for use independently.
 #[derive(Clone, PartialEq, Debug)]
 pub struct BasicNoteSummary {
     pub value: u64,
@@ -586,7 +569,6 @@ pub struct BasicNoteSummary {
 }
 
 impl BasicNoteSummary {
-    /// Creates a `BasicNoteSummary` from parts
     #[must_use]
     pub fn from_parts(
         value: u64,
@@ -694,7 +676,6 @@ pub struct BasicCoinSummary {
 }
 
 impl BasicCoinSummary {
-    /// Creates a `BasicCoinSummary` from parts
     #[must_use]
     pub fn from_parts(value: u64, spend_status: SpendStatus, output_index: u32) -> Self {
         BasicCoinSummary {
@@ -730,7 +711,6 @@ impl std::fmt::Display for BasicCoinSummaries {
     }
 }
 
-/// Outgoing note summary.
 #[derive(Clone, PartialEq, Debug)]
 pub struct OutgoingNoteSummary {
     pub value: u64,
@@ -772,7 +752,7 @@ impl std::fmt::Display for OutgoingNoteSummary {
     }
 }
 
-/// Wraps a vec of orchard note summaries for the implementation of `std::fmt::Display`
+/// Wraps a vec of outgoing note summaries for the implementation of `std::fmt::Display`
 pub struct OutgoingNoteSummaries(Vec<OutgoingNoteSummary>);
 
 impl std::fmt::Display for OutgoingNoteSummaries {
@@ -784,7 +764,6 @@ impl std::fmt::Display for OutgoingNoteSummaries {
     }
 }
 
-/// Outgoing coin summary.
 #[derive(Clone, PartialEq, Debug)]
 pub struct OutgoingCoinSummary {
     pub value: u64,
@@ -806,7 +785,7 @@ impl std::fmt::Display for OutgoingCoinSummary {
     }
 }
 
-/// Wraps a vec of orchard note summaries for the implementation of `std::fmt::Display`
+/// Wraps a vec of outgoing coin summaries for the implementation of `std::fmt::Display`
 pub struct OutgoingCoinSummaries(Vec<OutgoingCoinSummary>);
 
 impl std::fmt::Display for OutgoingCoinSummaries {
@@ -820,13 +799,9 @@ impl std::fmt::Display for OutgoingCoinSummaries {
 
 /// Summary types specifically for providing financial insight (a.k.a finsight).
 pub mod finsight {
-    /// TODO: Add Doc Comment Here!
     pub struct ValuesSentToAddress(pub std::collections::HashMap<String, Vec<u64>>);
-    /// TODO: Add Doc Comment Here!
     pub struct TotalValueToAddress(pub std::collections::HashMap<String, u64>);
-    /// TODO: Add Doc Comment Here!
     pub struct TotalSendsToAddress(pub std::collections::HashMap<String, u64>);
-    /// TODO: Add Doc Comment Here!
     #[derive(Debug)]
     pub struct TotalMemoBytesToAddress(pub std::collections::HashMap<String, usize>);
 }

@@ -292,7 +292,7 @@ pub trait InitialSyncStateOps: sealed::Sealed {
     #[must_use]
     fn sync_start_height(&self) -> BlockHeight;
 
-    /// The tree sizes of the fully scanned height and chain tip at start of sync session.
+    /// The tree sizes below the wallet birthday and at the chain tip at start of sync session.
     #[must_use]
     fn wallet_tree_bounds(&self) -> &TreeBounds;
 
@@ -465,7 +465,7 @@ pub trait SyncStateOps: sealed::Sealed {
     /// If any scan ranges are found to overlap with the given `block_range`, they will be split at the boundary and
     /// the new scan ranges contained by `block_range` will be set to `scan_priority`.
     /// Any scan ranges that fully contain the `block_range` will be split out with the given `scan_priority`.
-    /// Any scan ranges with `Scanning`, `RefetchingNullifiers` or `Scanned` priority or with higher (or equal) priority than
+    /// Any scan ranges with `Scanning`, `RefetchingNullifiers`, `Scanned` or `ScannedWithoutMapping` priority or with higher (or equal) priority than
     /// `scan_priority` will be ignored.
     fn punch_scan_priority(&mut self, block_range: Range<BlockHeight>, scan_priority: ScanPriority);
 

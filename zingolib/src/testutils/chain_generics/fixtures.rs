@@ -329,7 +329,6 @@ where
         + expected_orchard_contribution_for_transaction_2)
         as i64;
     loop {
-        // add an input
         expected_inputs_for_transaction_2 += 1;
         max_unselected_value_for_transaction_2 += MARGINAL_FEE.into_u64() as i64;
         max_unselected_value_for_transaction_2 -= expected_highest_unselected;
@@ -450,7 +449,7 @@ pub async fn shpool_to_pool_insufficient_error<CC>(
     );
 }
 
-/// the simplest test that sends from a specific shielded pool to another specific pool. also known as simpool.
+/// proposes a send to a specific pool from an unfunded client and expects an insufficient balance error.
 pub async fn to_pool_unfunded_error<CC>(pool: PoolType, try_amount: u64)
 where
     CC: ConductChain,

@@ -260,7 +260,7 @@ where
 
 /// Gets the initial and final tree sizes of a `scanned_range`.
 ///
-/// Panics if `scanned_range` wallet block bounds are not found in the wallet.
+/// Returns an error if `scanned_range` wallet block bounds are not found in the wallet.
 fn scanned_range_tree_bounds<W>(
     wallet: &W,
     scanned_range: Range<BlockHeight>,
