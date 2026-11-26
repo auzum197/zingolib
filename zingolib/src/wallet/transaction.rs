@@ -317,7 +317,7 @@ mod tests {
     use zingolib_common::status::ConfirmationStatus;
 
     use crate::{
-        config::{ChainType, WalletConfig},
+        config::{Birthday, ChainType, WalletConfig},
         testutils::default_test_wallet_settings,
         wallet::{LightWallet, error::WalletError},
     };
@@ -328,7 +328,7 @@ mod tests {
             WalletConfig::MnemonicPhrase {
                 mnemonic_phrase: HOSPITAL_MUSEUM_SEED.to_string(),
                 no_of_accounts: 1.try_into().unwrap(),
-                birthday: 419_200,
+                birthday: Birthday::Height(419_200),
                 wallet_settings: default_test_wallet_settings(),
             },
             None,

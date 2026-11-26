@@ -28,6 +28,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `moved_to` in the JSON of a transaction summary: the destination pool of a pool move, or null.
 
 ### Changed
+- `config::Birthday` is the birthday type of every `WalletConfig` variant: `ChainTip`,
+  `Height(u32)` or `SaplingActivation`. `LightClient::create` resolves `ChainTip` to 100 blocks
+  below the chain tip of the indexer and fails with `CreateError::ChainTip` if it cannot get
+  the tip. `LightWallet::new` has no indexer and fails with `WalletError::ChainTipUnknown`.
+- `WalletConfig::NewSeed` takes `birthday` in place of `chain_height`. A `Birthday::Height` is
+  used as given. The 100 blocks are only subtracted for `Birthday::ChainTip`.
 - A `LightClient` saves its wallet without being asked. `create` writes the wallet to the store
   before it returns, and a task saves every later change, at most once a second. A failed save is
   retried. `LightClient::flush` waits for the store to hold every change and returns a

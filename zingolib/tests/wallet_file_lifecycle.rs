@@ -22,7 +22,7 @@ use zcash_protocol::value::Zatoshis;
 use zip32::AccountId;
 
 use zingolib::ActivationHeights;
-use zingolib::config::WalletConfig;
+use zingolib::config::{Birthday, WalletConfig};
 use zingolib::lightclient::LightClient;
 use zingolib::lightclient::store::{FileStore, WalletStore as _};
 use zingolib::lightclient::{Encryption, Unlock};
@@ -84,7 +84,7 @@ fn from_seed(accounts: u32, wallet_settings: WalletSettings) -> WalletConfig {
     WalletConfig::MnemonicPhrase {
         mnemonic_phrase: SEED.to_string(),
         no_of_accounts: NonZeroU32::new(accounts).expect("at least one account"),
-        birthday: 1,
+        birthday: Birthday::Height(1),
         wallet_settings,
     }
 }

@@ -27,7 +27,9 @@ use pepper_sync::events::{ScanTiming, SequencedSyncEvent, SyncEvent};
 use pepper_sync::sync::ScanPriority;
 use tokio::sync::broadcast::error::RecvError;
 
-use zingolib::config::{ChainType, DEFAULT_INDEXER_URI, DEFAULT_INDEXER_URI_TESTNET, WalletConfig};
+use zingolib::config::{
+    Birthday, ChainType, DEFAULT_INDEXER_URI, DEFAULT_INDEXER_URI_TESTNET, WalletConfig,
+};
 use zingolib::data::PollReport;
 use zingolib::lightclient::store::MemoryStore;
 use zingolib::lightclient::{Encryption, LightClient};
@@ -688,7 +690,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         args.server,
         WalletConfig::Ufvk {
             ufvk: args.ufvk,
-            birthday: args.birthday,
+            birthday: Birthday::Height(args.birthday),
             wallet_settings: WalletSettings {
                 sync_config: SyncConfig {
                     performance_level: PerformanceLevel::Maximum,

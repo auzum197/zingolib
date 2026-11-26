@@ -16,7 +16,7 @@ use zingo_test_vectors::{
     REG_O_ADDR_FROM_ABANDONART, REG_T_ADDR_FROM_ABANDONART, REG_Z_ADDR_FROM_ABANDONART, seeds,
 };
 
-use crate::config::{ChainType, WalletConfig};
+use crate::config::{Birthday, ChainType, WalletConfig};
 use crate::get_base_address_macro;
 use crate::lightclient::error::LightClientError;
 use crate::lightclient::store::FileStore;
@@ -96,7 +96,7 @@ impl ClientBuilder {
             WalletConfig::MnemonicPhrase {
                 mnemonic_phrase: seeds::ABANDON_ART_SEED.to_string(),
                 no_of_accounts: 1.try_into().unwrap(),
-                birthday: 1,
+                birthday: Birthday::Height(1),
                 wallet_settings: default_test_wallet_settings(),
             },
             configured_activation_heights,
@@ -349,7 +349,7 @@ fn hospital_museum_config() -> WalletConfig {
     WalletConfig::MnemonicPhrase {
         mnemonic_phrase: seeds::HOSPITAL_MUSEUM_SEED.to_string(),
         no_of_accounts: 1.try_into().unwrap(),
-        birthday: 1,
+        birthday: Birthday::Height(1),
         wallet_settings: default_test_wallet_settings(),
     }
 }

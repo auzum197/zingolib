@@ -57,6 +57,8 @@ pub enum WalletError {
         "birthday {0} below sapling activation height {1}. pre-sapling wallets are not supported!"
     )]
     BirthdayBelowSapling(u32, u32),
+    #[error("The birthday is the chain tip, which only a lightclient can get from its indexer.")]
+    ChainTipUnknown,
     #[error("Wallet file error. {0}")]
     File(#[from] zingolib_file_format::WalletFileError),
     /// At-rest encryption setup failed (e.g. key derivation).

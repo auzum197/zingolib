@@ -15,6 +15,7 @@ use zcash_protocol::consensus::BlockHeight;
 use zcash_protocol::value::Zatoshis;
 
 use crate::check_client_balances;
+use crate::testutils::chain_generics::conduct_chain::ConductChain as _;
 use crate::testutils::lightclient::{from_inputs, get_base_address};
 use crate::testutils::mock_indexer::{MockNet, faucet_funding_transaction};
 use crate::testutils::send::error::ProposeSendError;
@@ -1179,4 +1180,15 @@ mod strict_chain {
     async fn send_shield_cycle_on_the_mock_chain() {
         fixtures::send_shield_cycle::<MockNet>(1).await;
     }
+}
+
+#[tokio::test]
+async fn chain_tip_birthday_is_100_blocks_below_the_tip() {
+    let mut net = MockNet::launch().await;
+    net.generate_blocks(150).await;
+
+    let mut client = net.create_client().await;
+
+    let chain_tip = client.server_info().await.unwrap().block_height;
+    assert_eq!(u64::from(client.birthday()), chain_tip - 100);
 }
