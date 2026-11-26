@@ -7,7 +7,7 @@
 use tokio::sync::mpsc;
 use zcash_protocol::consensus;
 
-use zingo_netutils::lightwallet_protocol::CompactBlock;
+use wallet_api::chain::CompactBlock;
 
 use crate::{
     client::FetchRequest,
@@ -68,7 +68,7 @@ pub(crate) async fn wallet_block_from_compact_block(
         get_compact_block_hash(block),
         get_compact_block_prev_hash(block),
         block.time,
-        block.vtx.iter().map(get_compact_tx_txid).collect(),
+        block.transactions.iter().map(get_compact_tx_txid).collect(),
         tree_bounds,
     ))
 }
