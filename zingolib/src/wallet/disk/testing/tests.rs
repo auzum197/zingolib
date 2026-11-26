@@ -16,7 +16,7 @@ async fn reload_wallet_from_file() {
 
     let store = FileStore::new(wallet_dir.path().join("wallet.dat"));
     let indexer_uri: http::Uri = DEFAULT_INDEXER_URI_TESTNET.parse().unwrap();
-    let mut mid_client = LightClient::create(
+    let mid_client = LightClient::create(
         store.clone(),
         chain_type,
         indexer_uri.clone(),
@@ -31,9 +31,7 @@ async fn reload_wallet_from_file() {
     .await
     .unwrap();
 
-    mid_client.save_task().await;
-    mid_client.wait_for_save().await;
-    mid_client.shutdown_save_task().await.unwrap();
+    mid_client.close().await.unwrap();
 
     let loaded_client = LightClient::open(store, chain_type, indexer_uri, Unlock::Plaintext)
         .await

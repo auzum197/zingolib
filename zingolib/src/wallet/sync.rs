@@ -116,7 +116,7 @@ impl SyncWallet for LightWallet {
     }
 
     fn set_save_flag(&mut self) -> Result<(), Self::Error> {
-        self.save_required = true;
+        self.mark_dirty();
         Ok(())
     }
 }

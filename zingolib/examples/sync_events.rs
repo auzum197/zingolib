@@ -29,7 +29,7 @@ use tokio::sync::broadcast::error::RecvError;
 
 use zingolib::config::{ChainType, DEFAULT_INDEXER_URI, DEFAULT_INDEXER_URI_TESTNET, WalletConfig};
 use zingolib::data::PollReport;
-use zingolib::lightclient::store::FileStore;
+use zingolib::lightclient::store::MemoryStore;
 use zingolib::lightclient::{Encryption, LightClient};
 use zingolib::wallet::WalletSettings;
 
@@ -681,14 +681,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     };
 
-    // throwaway store: nothing is saved since the save task is never started
-    let store = FileStore::new(
-        std::env::temp_dir().join(format!("zingo-sync-events-{}.dat", std::process::id())),
-    );
-
     println!("connecting to {}", args.server);
     let mut lc = LightClient::create(
-        store,
+        MemoryStore::default(),
         args.chain,
         args.server,
         WalletConfig::Ufvk {

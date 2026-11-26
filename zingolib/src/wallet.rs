@@ -2,6 +2,8 @@
 
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 
+use tokio::sync::watch;
+
 use bip0039::Mnemonic;
 
 use zcash_keys::address::UnifiedAddress;
@@ -114,10 +116,9 @@ pub(crate) struct WalletBase {
 /// As no relevant transactions related to this wallet will exist below the wallet's birthday, sync will start from
 /// `birthday` block height.
 ///
-/// When wallet state is changed due to sync, send or creating addresses, `save_required` will be set to `true`
-/// automatically. Calling [`crate::wallet::LightWallet::save`] will serialize the wallet and reset `save_required`
-/// to false, returning the bytes to be persisted. Also see [`crate::lightclient::LightClient::save_task`] and related
-/// methods for a save task implementation.
+/// Every change to wallet state due to sync, send or creating addresses is counted.
+/// [`crate::wallet::LightWallet::save`] returns the bytes to be persisted when the count has moved since the last
+/// save. A [`crate::lightclient::LightClient`] saves its wallet this way without being asked.
 #[derive(Debug)]
 pub struct LightWallet {
     current_version: u64,
@@ -147,8 +148,10 @@ pub struct LightWallet {
     pub(crate) send_proposal: Option<crate::testutils::send::proposal::ZingoProposal>,
     /// Advisory output locks held by in-flight proposals. Not persisted.
     output_locks: OutputLocks,
-    /// Boolean for tracking whether the wallet state has changed since last save.
-    pub save_required: bool,
+    /// Counts changes to the wallet state.
+    changes: watch::Sender<u64>,
+    /// The value of `changes` at the last save.
+    saved: u64,
     /// At-rest encryption session. When `Some`, the serialized wallet is wrapped in a
     /// passphrase-derived AEAD envelope on every save (see [`crate::wallet::encryption`]).
     /// `None` means the wallet is persisted in the clear (legacy / opt-out). The expensive
@@ -224,7 +227,7 @@ impl LightWallet {
             wallet_settings,
             price_list: PriceList::new(),
         })?;
-        wallet.save_required = true;
+        wallet.mark_dirty();
         wallet.encryption = encryption;
 
         Ok(wallet)
@@ -301,14 +304,22 @@ impl LightWallet {
         Ok(())
     }
 
+    /// Records a change to the wallet state, so the next [`Self::save`] returns bytes.
+    pub fn mark_dirty(&mut self) {
+        self.changes.send_modify(|count| *count += 1);
+    }
+
+    /// The change count. It moves on every change to the wallet state.
+    pub fn subscribe_changes(&self) -> watch::Receiver<u64> {
+        self.changes.subscribe()
+    }
+
     /// If the wallet state has changed since last save, serializes the wallet and returns the wallet bytes.
     /// Returns `Ok(None)` if the wallet state has not changed and save is not required.
     /// Returns error if serialization fails.
-    ///
-    /// Intended to be called from a save task which calls `save` in a loop, awaiting the wallet lock and checking
-    /// `self.save_required` status, writing the returned wallet bytes to persistance.
     pub fn save(&mut self) -> std::io::Result<Option<Vec<u8>>> {
-        if self.save_required {
+        let changes = *self.changes.borrow();
+        if changes != self.saved {
             let chain_type = self.chain_type;
             // Serialize into a buffer that is zeroized on drop, since while a passphrase is
             // set this plaintext (containing the seed and spending keys) must never touch
@@ -321,10 +332,10 @@ impl LightWallet {
                     .map_err(|e| std::io::Error::other(e.to_string()))?,
                 None => wallet_bytes.to_vec(),
             };
-            // Only clear the flag once the bytes are successfully produced. If serialization
-            // or encryption above fails, `save_required` stays set so the save is retried
-            // rather than silently dropped.
-            self.save_required = false;
+            // Only record the save once the bytes are successfully produced. If serialization
+            // or encryption above fails, the save stays due so it is retried rather than
+            // silently dropped.
+            self.saved = changes;
             Ok(Some(out))
         } else {
             Ok(None)
@@ -355,7 +366,7 @@ impl LightWallet {
     ///
     /// Runs the (intentionally slow) key derivation once and caches the resulting key.
     /// Subsequent saves only run the fast AEAD step. A fresh random salt is generated, so
-    /// calling this to rotate a passphrase fully rekeys the file. Flips `save_required` so the
+    /// calling this to rotate a passphrase fully rekeys the file. Marks the wallet dirty so the
     /// change is persisted on the next save.
     pub fn set_passphrase_with_params(
         &mut self,
@@ -364,7 +375,7 @@ impl LightWallet {
     ) -> Result<(), encryption::WalletEncryptionError> {
         self.encryption =
             Some(encryption::EncryptionConfig::with_params(passphrase, params).derive()?);
-        self.save_required = true;
+        self.mark_dirty();
         Ok(())
     }
 
@@ -381,7 +392,7 @@ impl LightWallet {
     /// wallet in the clear. This is an explicit opt-out, so use with care.
     pub fn remove_passphrase(&mut self) {
         if self.encryption.take().is_some() {
-            self.save_required = true;
+            self.mark_dirty();
         }
     }
 
@@ -390,7 +401,7 @@ impl LightWallet {
     /// Currently only USD is supported.
     pub async fn update_current_price(&mut self) -> Result<f32, PriceError> {
         let current_price = crate::price::get_current_price().await?.price_usd;
-        self.save_required = true;
+        self.mark_dirty();
 
         Ok(current_price)
     }
@@ -454,6 +465,6 @@ impl LightWallet {
         self.shard_trees = ShardTrees::new();
         self.price_list = PriceList::new();
 
-        self.save_required = true;
+        self.mark_dirty();
     }
 }

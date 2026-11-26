@@ -106,7 +106,7 @@ impl LightWallet {
         {
             Some(true) => {
                 self.wallet_transactions.remove(&txid);
-                self.save_required = true;
+                self.mark_dirty();
                 Ok(())
             }
             Some(false) => Err(WalletError::RemovalError),
@@ -374,6 +374,6 @@ mod tests {
 
         assert!(result.is_ok());
         assert!(!wallet.wallet_transactions.contains_key(&txid));
-        assert!(wallet.save_required);
+        assert!(wallet.save().unwrap().is_some());
     }
 }

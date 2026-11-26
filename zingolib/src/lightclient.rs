@@ -1,8 +1,4 @@
-use std::{
-    collections::BTreeMap,
-    sync::{Arc, atomic::AtomicBool},
-    time::Duration,
-};
+use std::{collections::BTreeMap, sync::Arc, time::Duration};
 
 use tokio::{
     sync::{RwLock, watch},
@@ -36,6 +32,7 @@ use crate::{
     },
 };
 use error::{CreateError, OpenError};
+use save::SaveState;
 use store::WalletStore;
 use zingolib_file_format::WalletFileError;
 
@@ -49,7 +46,6 @@ pub const DEFAULT_REQUEST_TIMEOUT: Duration = Duration::from_secs(10);
 /// Wallet struct owned by a [`crate::lightclient::LightClient`], with metadata and immutable wallet data stored outside
 /// the read/write lock.
 struct WalletMeta {
-    store: Arc<dyn WalletStore>,
     /// The chain type, extracted at construction for lock-free access.
     chain_type: ChainType,
     birthday: BlockHeight,
@@ -72,9 +68,8 @@ impl std::fmt::Debug for WalletMeta {
 impl WalletMeta {
     /// Creates a new `WalletMeta` by wrapping a [`crate::wallet::LightWallet`] in a lock alongside metadata and
     /// immutable wallet data.
-    fn new(store: Arc<dyn WalletStore>, wallet: LightWallet) -> Self {
+    fn new(wallet: LightWallet) -> Self {
         Self {
-            store,
             chain_type: wallet.chain_type(),
             birthday: wallet.birthday(),
             mnemonic: wallet.mnemonic().cloned(),
@@ -105,8 +100,8 @@ pub struct LightClient {
     sync_mode: watch::Sender<SyncMode>,
     sync_handle: Option<JoinHandle<Result<SyncResult, SyncError<WalletError>>>>,
     sync_events: SyncEmitter,
-    save_active: Arc<AtomicBool>,
-    save_handle: Option<JoinHandle<std::io::Result<()>>>,
+    changes: watch::Receiver<u64>,
+    save_state: watch::Receiver<SaveState>,
 }
 
 impl LightClient {
@@ -126,7 +121,10 @@ impl LightClient {
             Encryption::None => None,
             Encryption::Passphrase(config) => Some(config),
         };
-        let wallet = LightWallet::new(chain_type, wallet_config, encryption)?;
+        let mut wallet = LightWallet::new(chain_type, wallet_config, encryption)?;
+        if let Some(bytes) = wallet.save()? {
+            store.write(&bytes)?;
+        }
 
         Ok(Self::assemble(store, indexer_uri, wallet).await?)
     }
@@ -171,14 +169,22 @@ impl LightClient {
         let (sync_events, _root_receiver) =
             SyncEmitter::new(wallet.wallet_settings.sync_config.event_channel_capacity);
 
+        let changes = wallet.subscribe_changes();
+        let wallet = WalletMeta::new(wallet);
+        let save_state = save::spawn(
+            Arc::downgrade(&wallet.wallet_data),
+            changes.clone(),
+            Arc::new(store),
+        );
+
         Ok(LightClient {
             indexer,
-            wallet: WalletMeta::new(Arc::new(store), wallet),
+            wallet,
             sync_mode: watch::Sender::new(SyncMode::NotRunning),
             sync_handle: None,
             sync_events,
-            save_active: Arc::new(AtomicBool::new(false)),
-            save_handle: None,
+            changes,
+            save_state,
         })
     }
 
@@ -340,10 +346,7 @@ impl std::fmt::Debug for LightClient {
             .field("indexer", &self.indexer)
             .field("wallet_meta", &self.wallet)
             .field("sync_mode", &self.sync_mode())
-            .field(
-                "save_active",
-                &self.save_active.load(std::sync::atomic::Ordering::Acquire),
-            )
+            .field("save_state", &*self.save_state.borrow())
             .finish()
     }
 }
@@ -360,13 +363,57 @@ mod tests {
         lightclient::{
             Encryption, LightClient, Unlock,
             error::{CreateError, OpenError},
-            store::FileStore,
+            store::{FileStore, MemoryStore, WalletStore},
         },
         testutils::default_test_wallet_settings,
+        wallet::keys::unified::ReceiverSelection,
     };
     use tempfile::TempDir;
     use zingo_common_components::protocol::ActivationHeights;
     use zingo_test_vectors::seeds::CHIMNEY_BETTER_SEED;
+
+    struct WriteOnce(MemoryStore);
+
+    impl WalletStore for WriteOnce {
+        fn load(&self) -> std::io::Result<Option<Vec<u8>>> {
+            self.0.load()
+        }
+
+        fn write(&self, bytes: &[u8]) -> std::io::Result<()> {
+            if self.0.load()?.is_some() {
+                return Err(std::io::Error::other("store is full"));
+            }
+            self.0.write(bytes)
+        }
+
+        fn delete(&self) -> std::io::Result<()> {
+            self.0.delete()
+        }
+    }
+
+    #[tokio::test]
+    async fn flush_reports_a_failed_save() {
+        let mut lc = LightClient::create(
+            WriteOnce(MemoryStore::default()),
+            ChainType::Regtest(ActivationHeights::default()),
+            DEFAULT_INDEXER_URI.parse().unwrap(),
+            WalletConfig::MnemonicPhrase {
+                mnemonic_phrase: CHIMNEY_BETTER_SEED.to_string(),
+                no_of_accounts: 1.try_into().unwrap(),
+                birthday: 1,
+                wallet_settings: default_test_wallet_settings(),
+            },
+            Encryption::None,
+        )
+        .await
+        .unwrap();
+        lc.flush().await.unwrap();
+
+        lc.generate_unified_address(ReceiverSelection::all_shielded(), zip32::AccountId::ZERO)
+            .await
+            .unwrap();
+        lc.flush().await.unwrap_err();
+    }
 
     #[tokio::test]
     async fn create_then_open() {
@@ -396,9 +443,7 @@ mod tests {
             Err(OpenError::NotFound)
         ));
 
-        let mut lc = create().await.unwrap();
-        lc.save_task().await;
-        lc.wait_for_save().await;
+        let lc = create().await.unwrap();
 
         assert!(matches!(create().await, Err(CreateError::AlreadyExists)));
         assert!(matches!(
