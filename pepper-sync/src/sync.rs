@@ -21,7 +21,7 @@ use zip32::AccountId;
 
 use zingolib_common::status::ConfirmationStatus;
 
-use crate::client::{self, FetchRequest};
+use crate::client::{self, FetchRequest, Policy};
 use crate::config::{PerformanceLevel, SyncConfig};
 use crate::engine::{InitialSyncStateOps as _, SyncStateOps as _, WalletNoteOps as _};
 use crate::error::{
@@ -162,6 +162,37 @@ where
         + SyncShardTrees
         + Send,
 {
+    sync_with_policy(
+        sources,
+        consensus_parameters,
+        wallet,
+        sync_mode,
+        config,
+        events,
+        Policy::Auto,
+    )
+    .await
+}
+
+pub(crate) async fn sync_with_policy<P, W>(
+    sources: Arc<SourceSet>,
+    consensus_parameters: &P,
+    wallet: Arc<RwLock<W>>,
+    sync_mode: watch::Sender<SyncMode>,
+    config: SyncConfig,
+    events: SyncEmitter,
+    policy: Policy,
+) -> Result<SyncResult, SyncError<W::Error>>
+where
+    P: consensus::Parameters + Sync + Send + 'static,
+    W: SyncWallet
+        + SyncBlocks
+        + SyncTransactions
+        + SyncNullifiers
+        + SyncOutPoints
+        + SyncShardTrees
+        + Send,
+{
     if *sync_mode.borrow() != SyncMode::NotRunning {
         return Err(SyncModeError::SyncAlreadyRunning.into());
     }
@@ -174,6 +205,7 @@ where
     let fetcher_handle = tokio::spawn(client::fetch::fetch(
         fetch_request_receiver,
         sources.clone(),
+        policy,
     ));
 
     let (mempool_transaction_sender, mut mempool_transaction_receiver) = mpsc::channel(100);
@@ -186,6 +218,7 @@ where
     let mempool_handle = tokio::spawn(async move {
         mempool_monitor(
             sources,
+            policy,
             mempool_transaction_sender,
             mempool_shutdown,
             mempool_events,
@@ -1833,6 +1866,7 @@ where
 /// returns without opening another stream.
 async fn mempool_monitor(
     sources: Arc<SourceSet>,
+    policy: Policy,
     mempool_transaction_sender: mpsc::Sender<RawTransaction>,
     shutdown: CancellationToken,
     events: SyncEmitter,
@@ -1842,7 +1876,7 @@ async fn mempool_monitor(
         if shutdown.is_cancelled() {
             break;
         }
-        let response = client::get_mempool_transaction_stream(&sources, &shutdown).await;
+        let response = client::get_mempool_transaction_stream(&sources, policy, &shutdown).await;
 
         match response {
             Ok(mut mempool_stream) => loop {
