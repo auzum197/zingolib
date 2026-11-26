@@ -526,8 +526,8 @@ mod tests {
         ]
     }
 
-    fn error_text<T>(outcome: Result<T, WalletFileError>) -> String {
-        outcome.err().expect("expected an error").to_string()
+    fn error_text<T>(read: Result<T, WalletFileError>) -> String {
+        read.err().expect("expected an error").to_string()
     }
 
     #[test]
@@ -600,12 +600,12 @@ mod tests {
         for version in [40u64, 42] {
             let mut patched = written.clone();
             patched[..8].copy_from_slice(&version.to_le_bytes());
-            for outcome in [
+            for read in [
                 WalletFile::read_any(patched.as_slice()),
                 WalletFile::read(patched.as_slice(), ChainType::Mainnet),
             ] {
                 assert!(
-                    matches!(outcome, Err(WalletFileError::UnsupportedVersion(v)) if v == version)
+                    matches!(read, Err(WalletFileError::UnsupportedVersion(v)) if v == version)
                 );
             }
         }
@@ -624,12 +624,12 @@ mod tests {
         let envelope = fast_session(PASSPHRASE)
             .encrypt(&bytes(&fresh(ChainType::Mainnet)))
             .unwrap();
-        for outcome in [
+        for read in [
             WalletFile::read_any(envelope.as_slice()),
             WalletFile::read(envelope.as_slice(), ChainType::Mainnet),
         ] {
             assert!(matches!(
-                outcome,
+                read,
                 Err(WalletFileError::Encryption(
                     WalletEncryptionError::PassphraseRequired
                 ))
