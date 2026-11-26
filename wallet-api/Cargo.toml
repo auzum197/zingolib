@@ -1,0 +1,17 @@
+[package]
+name = "wallet-api"
+description = "Traits and types for replaceable chain sources, transports and source routing."
+version = "0.1.0"
+edition = "2024"
+repository = "https://github.com/auzum197/zingolib"
+license = "MIT"
+readme = "README.md"
+
+[dependencies]
+futures.workspace = true
+thiserror.workspace = true
+tokio.workspace = true
+zcash_protocol.workspace = true
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["macros", "rt"] }

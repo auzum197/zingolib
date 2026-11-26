@@ -1,0 +1,165 @@
+//! Source selection for each request.
+
+use std::{collections::HashMap, sync::Mutex};
+
+use crate::{Disclosure, Request, SourceError, SourceExposure, SourceId, SourceInfo, TrustLevel};
+
+/// The sources for one request.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum Route {
+    /// One source after the other, until a request succeeds.
+    Failover(Vec<SourceId>),
+    /// All the sources. `need` responses must be equal.
+    Quorum {
+        /// Sources that receive the request.
+        of: Vec<SourceId>,
+        /// Number of equal responses that are necessary.
+        need: usize,
+    },
+}
+
+/// Selects the sources for each request.
+pub trait Router: Send + Sync {
+    /// Selects the route for `request`. A [`SourceId`] is an index into `sources`.
+    fn select_route(&self, request: &Request, sources: &[SourceInfo]) -> Route;
+
+    /// A request to `source` succeeded.
+    fn on_success(&self, _source: SourceId) {}
+
+    /// A request to `source` failed, or data from `source` failed a check.
+    fn on_failure(&self, _source: SourceId, _error: &SourceError) {}
+}
+
+#[derive(Debug, Clone, Copy)]
+enum Health {
+    Failing(u32),
+    Dropped,
+}
+
+#[derive(Debug, Default)]
+struct HealthLog(Mutex<HashMap<SourceId, Health>>);
+
+impl HealthLog {
+    fn on_success(&self, source: SourceId) {
+        let mut log = self.0.lock().unwrap_or_else(|e| e.into_inner());
+        if let Some(Health::Failing(_)) = log.get(&source) {
+            log.remove(&source);
+        }
+    }
+
+    fn on_failure(&self, source: SourceId, error: &SourceError) {
+        let mut log = self.0.lock().unwrap_or_else(|e| e.into_inner());
+        let failures = match log.get(&source) {
+            Some(Health::Dropped) => return,
+            Some(Health::Failing(n)) => *n,
+            None => 0,
+        };
+        match error {
+            SourceError::FailedVerification => {
+                log.insert(source, Health::Dropped);
+            }
+            SourceError::Timeout(_)
+            | SourceError::Unavailable(_)
+            | SourceError::Interrupted(_)
+            | SourceError::InvalidData(_)
+            | SourceError::Other(_) => {
+                log.insert(source, Health::Failing(failures.saturating_add(1)));
+            }
+            _ => {}
+        }
+    }
+
+    /// Sources that can serve `request`: fewest failures first, then by trust and privacy.
+    fn candidates(&self, request: &Request, sources: &[SourceInfo]) -> Vec<SourceId> {
+        let log = self.0.lock().unwrap_or_else(|e| e.into_inner());
+        let disclosing = request.disclosure() != Disclosure::None;
+        let mut ranked: Vec<_> = sources
+            .iter()
+            .enumerate()
+            .filter(|(_, info)| info.capabilities.supports(request))
+            .filter_map(|(index, info)| {
+                let id = SourceId(index);
+                let failures = match log.get(&id) {
+                    Some(Health::Dropped) => return None,
+                    Some(Health::Failing(n)) => *n,
+                    None => 0,
+                };
+                let preference = match (info.trust, disclosing, info.transport.exposed_to_source) {
+                    (TrustLevel::Trusted, ..) => 0,
+                    (TrustLevel::Untrusted, true, SourceExposure::Nothing) => 1,
+                    (TrustLevel::Untrusted, true, SourceExposure::Pseudonym) => 2,
+                    (TrustLevel::Untrusted, ..) => 3,
+                };
+                Some((failures, preference, id))
+            })
+            .collect();
+        ranked.sort();
+        ranked.into_iter().map(|(_, _, id)| id).collect()
+    }
+}
+
+/// One source for each request. Trusted sources are first.
+#[derive(Debug, Default)]
+pub struct Failover(HealthLog);
+
+impl Router for Failover {
+    fn select_route(&self, request: &Request, sources: &[SourceInfo]) -> Route {
+        Route::Failover(self.0.candidates(request, sources))
+    }
+
+    fn on_success(&self, source: SourceId) {
+        self.0.on_success(source);
+    }
+
+    fn on_failure(&self, source: SourceId, error: &SourceError) {
+        self.0.on_failure(source, error);
+    }
+}
+
+/// Small responses need a quorum, unless a trusted source is available.
+/// Block ranges and transactions use one source.
+#[derive(Debug)]
+pub struct Quorum {
+    need: usize,
+    health: HealthLog,
+}
+
+impl Quorum {
+    /// `need` responses must be equal.
+    pub fn new(need: usize) -> Self {
+        Self {
+            need,
+            health: HealthLog::default(),
+        }
+    }
+}
+
+impl Router for Quorum {
+    fn select_route(&self, request: &Request, sources: &[SourceInfo]) -> Route {
+        let candidates = self.health.candidates(request, sources);
+        let comparable = matches!(
+            request,
+            Request::Tip | Request::Block(_) | Request::TreeState(_) | Request::SubtreeRoots { .. }
+        );
+        let trusted_first = candidates
+            .first()
+            .is_some_and(|id| sources[id.0].trust == TrustLevel::Trusted);
+        if comparable && !trusted_first {
+            Route::Quorum {
+                of: candidates,
+                need: self.need,
+            }
+        } else {
+            Route::Failover(candidates)
+        }
+    }
+
+    fn on_success(&self, source: SourceId) {
+        self.health.on_success(source);
+    }
+
+    fn on_failure(&self, source: SourceId, error: &SourceError) {
+        self.health.on_failure(source, error);
+    }
+}
