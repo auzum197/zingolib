@@ -62,10 +62,6 @@ pub enum WalletError {
     /// At-rest encryption setup failed (e.g. key derivation).
     #[error("Wallet encryption error. {0}")]
     Encryption(#[from] crate::wallet::encryption::WalletEncryptionError),
-    #[error(
-        "Cannot create a new wallet with a wallet base of `Read` variant as the wallet is already created and stored as bytes."
-    )]
-    WalletAlreadyCreated,
 }
 
 #[derive(Debug, thiserror::Error)]

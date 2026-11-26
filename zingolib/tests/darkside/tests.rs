@@ -2,10 +2,8 @@
 
 use zingo_test_vectors::seeds::DARKSIDE_SEED;
 use zingolib::config::ChainType;
-use zingolib::config::ClientConfig;
-use zingolib::config::WalletConfig;
 use zingolib::get_base_address_macro;
-use zingolib::lightclient::LightClient;
+use zingolib::lightclient::{LightClient, Unlock};
 use zingolib::testutils::lightclient::from_inputs;
 use zingolib::testutils::scenarios::ClientBuilder;
 use zingolib::testutils::tempfile::TempDir;
@@ -194,13 +192,14 @@ async fn sent_transaction_reorged_into_mempool() {
     light_client.wait_for_save().await;
     light_client.shutdown_save_task().await.unwrap();
 
-    let config = ClientConfig::builder()
-        .set_indexer_uri(client_manager.server_id.clone())
-        .set_chain_type(ChainType::Regtest(activation_heights))
-        .set_wallet_dir(light_client.wallet_dir().unwrap())
-        .set_wallet_config(WalletConfig::Read)
-        .build();
-    let mut loaded_client = LightClient::new(config, true, None).await.unwrap();
+    let mut loaded_client = LightClient::open(
+        client_manager.store_of(1),
+        ChainType::Regtest(activation_heights),
+        client_manager.server_id.clone(),
+        Unlock::Plaintext,
+    )
+    .await
+    .unwrap();
 
     loaded_client.sync_and_await().await.unwrap();
     assert_eq!(

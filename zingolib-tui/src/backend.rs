@@ -13,9 +13,11 @@ use tokio::sync::broadcast::error::RecvError;
 use tokio::sync::mpsc;
 use zcash_protocol::{PoolType, ShieldedPool};
 use zingo_common_components::protocol::ActivationHeights;
-use zingolib::config::{ChainType, ClientConfig, WalletConfig, construct_lightwalletd_uri};
+use zingolib::config::{ChainType, WalletConfig, construct_lightwalletd_uri};
 use zingolib::data::PollReport;
-use zingolib::lightclient::LightClient;
+use zingolib::lightclient::error::OpenError;
+use zingolib::lightclient::store::FileStore;
+use zingolib::lightclient::{Encryption, LightClient, Unlock};
 use zingolib::wallet::WalletSettings;
 use zingolib::wallet::encryption::{Argon2Params, EncryptionConfig};
 use zingolib::wallet::keys::unified::ReceiverSelection;
@@ -51,14 +53,24 @@ pub struct BackendConfig {
 }
 
 impl BackendConfig {
-    /// The wallet directory for `network`: the flag if given, else zingolib's default.
+    /// The wallet directory for `network`: the flag if given, else the zcash data directory.
     pub fn wallet_dir(&self, network: Network) -> PathBuf {
         match &self.data_dir {
             Some(dir) => dir.clone(),
-            None => ClientConfig::builder()
-                .set_chain_type(chain_type(network))
-                .build()
-                .wallet_dir(),
+            None => {
+                let mut dir = dirs::data_dir().unwrap_or_default();
+                dir.push(if cfg!(any(target_os = "macos", target_os = "windows")) {
+                    "Zcash"
+                } else {
+                    ".zcash"
+                });
+                match network {
+                    Network::Mainnet => {}
+                    Network::Testnet => dir.push("testnet3"),
+                    Network::Regtest => dir.push("regtest"),
+                }
+                dir
+            }
         }
     }
 
@@ -294,17 +306,21 @@ impl Backend {
     }
 
     async fn open(&mut self, spec: OpenSpec) -> Result<(LightClient, WalletInfo), String> {
-        let (config, encryption, network) = match spec {
+        let (opened, network) = match spec {
             OpenSpec::Read { passphrase } => {
                 let network = self.config.network;
-                let config = ClientConfig::builder()
-                    .set_chain_type(chain_type(network))
-                    .set_indexer_uri(self.config.server_uri(network, None)?)
-                    .set_wallet_dir(self.config.wallet_dir(network))
-                    .set_wallet_name(self.config.wallet_name.clone())
-                    .set_wallet_config(WalletConfig::Read)
-                    .build();
-                (config, passphrase.map(EncryptionConfig::new), network)
+                let opened = LightClient::open(
+                    FileStore::new(self.config.wallet_path(network)),
+                    chain_type(network),
+                    self.config.server_uri(network, None)?,
+                    passphrase.map_or(Unlock::Plaintext, Unlock::Passphrase),
+                )
+                .await
+                .map_err(|e| match e {
+                    OpenError::DecryptionFailed => "wrong passphrase or corrupt wallet file".into(),
+                    e => e.to_string(),
+                });
+                (opened, network)
             }
             OpenSpec::Create {
                 network,
@@ -313,37 +329,30 @@ impl Backend {
                 birthday,
                 passphrase,
             } => {
-                let path = self.config.wallet_path(network);
-                if path.exists() {
-                    return Err(format!(
-                        "a wallet file already exists at {}",
-                        path.display()
-                    ));
-                }
-                let config = ClientConfig::builder()
-                    .set_chain_type(chain_type(network))
-                    .set_indexer_uri(self.config.server_uri(network, Some(&server))?)
-                    .set_wallet_dir(self.config.wallet_dir(network))
-                    .set_wallet_name(self.config.wallet_name.clone())
-                    .set_wallet_config(WalletConfig::Ufvk {
+                let encryption = passphrase.map_or(Encryption::None, |p| {
+                    Encryption::Passphrase(EncryptionConfig::with_params(
+                        p,
+                        Argon2Params::with_memory_mib(self.config.kdf_memory_mib),
+                    ))
+                });
+                let opened = LightClient::create(
+                    FileStore::new(self.config.wallet_path(network)),
+                    chain_type(network),
+                    self.config.server_uri(network, Some(&server))?,
+                    WalletConfig::Ufvk {
                         ufvk,
                         birthday,
                         wallet_settings: wallet_settings(),
-                    })
-                    .build();
-                let encryption = passphrase.map(|p| {
-                    EncryptionConfig::with_params(
-                        p,
-                        Argon2Params::with_memory_mib(self.config.kdf_memory_mib),
-                    )
-                });
-                (config, encryption, network)
+                    },
+                    encryption,
+                )
+                .await
+                .map_err(|e| e.to_string());
+                (opened, network)
             }
         };
-        let wallet_path = config.get_wallet_path().to_path_buf();
-        let lc = LightClient::new(config, false, encryption)
-            .await
-            .map_err(|e| friendly_open_error(&e.to_string()))?;
+        let lc = opened?;
+        let wallet_path = self.config.wallet_path(network);
         let has_orchard = {
             let wallet = lc.wallet().read().await;
             if wallet
@@ -600,14 +609,6 @@ async fn recv_event(
     match events {
         Some(rx) => rx.recv().await,
         None => std::future::pending().await,
-    }
-}
-
-fn friendly_open_error(raw: &str) -> String {
-    if raw.contains("decryption failed") {
-        "wrong passphrase or corrupt wallet file".into()
-    } else {
-        raw.to_string()
     }
 }
 

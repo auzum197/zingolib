@@ -22,8 +22,10 @@ use zcash_protocol::value::Zatoshis;
 use zip32::AccountId;
 
 use zingolib::ActivationHeights;
-use zingolib::config::{ClientConfig, DEFAULT_WALLET_NAME, WalletConfig};
+use zingolib::config::WalletConfig;
 use zingolib::lightclient::LightClient;
+use zingolib::lightclient::store::{FileStore, WalletStore as _};
+use zingolib::lightclient::{Encryption, Unlock};
 use zingolib::testutils::default_test_wallet_settings;
 use zingolib::testutils::lightclient::from_inputs;
 use zingolib::testutils::mock_indexer::{
@@ -87,31 +89,32 @@ fn from_seed(accounts: u32, wallet_settings: WalletSettings) -> WalletConfig {
     }
 }
 
-async fn open(
-    net: &MockNet,
-    wallet_config: WalletConfig,
-    file: Option<&[u8]>,
-    encryption: Option<EncryptionConfig>,
-) -> LightClient {
+fn store() -> FileStore {
     let dir = tempfile::tempdir().expect("a tempdir is creatable");
-    if let Some(file) = file {
-        std::fs::write(dir.path().join(DEFAULT_WALLET_NAME), file)
-            .expect("the tempdir is writable");
-    }
-    let config = ClientConfig::builder()
-        .set_chain_type(net.chain_type())
-        .set_indexer_uri(net.indexer_uri())
-        .set_wallet_dir(dir.path().to_path_buf())
-        .set_wallet_config(wallet_config)
-        .build();
-    LightClient::new(config, false, encryption)
-        .await
-        .expect("a mock-net client builds")
+    FileStore::new(dir.path().join("wallet.dat"))
+}
+
+async fn create(net: &MockNet, wallet_config: WalletConfig, encryption: Encryption) -> LightClient {
+    LightClient::create(
+        store(),
+        net.chain_type(),
+        net.indexer_uri(),
+        wallet_config,
+        encryption,
+    )
+    .await
+    .expect("a mock-net client builds")
 }
 
 async fn restore(net: &MockNet, file: &[u8], passphrase: Option<&str>) -> LightClient {
-    let encryption = passphrase.map(|passphrase| EncryptionConfig::new(passphrase.to_string()));
-    open(net, WalletConfig::Read, Some(file), encryption).await
+    let store = store();
+    store.write(file).expect("the tempdir is writable");
+    let unlock = passphrase.map_or(Unlock::Plaintext, |passphrase| {
+        Unlock::Passphrase(passphrase.to_string())
+    });
+    LightClient::open(store, net.chain_type(), net.indexer_uri(), unlock)
+        .await
+        .expect("a mock-net client opens")
 }
 
 async fn coinbase(net: &MockNet, recipient: CoinbaseRecipient, zats: u64) {
@@ -455,15 +458,10 @@ fn read_encrypted_any(file: &[u8]) -> Result<(), WalletFileError> {
     WalletFile::read_encrypted_any(file, Some(PASSPHRASE.to_string())).map(drop)
 }
 
-async fn funded(
-    scenario: &str,
-    net: &MockNet,
-    encryption: Option<EncryptionConfig>,
-) -> LightClient {
-    let mut client = open(
+async fn funded(scenario: &str, net: &MockNet, encryption: Encryption) -> LightClient {
+    let mut client = create(
         net,
         from_seed(1, default_test_wallet_settings()),
-        None,
         encryption,
     )
     .await;
@@ -474,7 +472,7 @@ async fn funded(
 #[tokio::test]
 async fn synced() {
     let net = launch().await;
-    let mut client = funded("synced", &net, None).await;
+    let mut client = funded("synced", &net, Encryption::None).await;
 
     let file = assert_round_trips("synced", &client).await;
     assert_rejected("synced", &file, truncations(file.len()), read_any);
@@ -485,7 +483,7 @@ async fn synced() {
 #[tokio::test]
 async fn reorg() {
     let net = launch().await;
-    let mut client = funded("reorg", &net, None).await;
+    let mut client = funded("reorg", &net, Encryption::None).await;
     let status_of = |summaries: &TransactionSummaries| {
         summaries
             .0
@@ -520,11 +518,10 @@ async fn reorg() {
 #[tokio::test]
 async fn multi() {
     let net = launch().await;
-    let mut client = open(
+    let mut client = create(
         &net,
         from_seed(2, default_test_wallet_settings()),
-        None,
-        None,
+        Encryption::None,
     )
     .await;
     let second = AccountId::try_from(1).expect("1 is a valid account index");
@@ -704,7 +701,7 @@ async fn assert_sealed(scenario: &str, client: &LightClient, plaintext: &[u8], e
 async fn encrypted() {
     let net = launch().await;
     let encryption = EncryptionConfig::with_params(PASSPHRASE.to_string(), KDF);
-    let mut client = funded("encrypted", &net, Some(encryption)).await;
+    let mut client = funded("encrypted", &net, Encryption::Passphrase(encryption)).await;
 
     let file = assert_round_trips("encrypted", &client).await;
     let envelope = seal(&client).await;
@@ -783,7 +780,7 @@ fn encode_prices(prices: &PriceList) -> Vec<u8> {
 #[tokio::test]
 async fn settings() {
     let net = launch().await;
-    let mut client = open(&net, from_seed(1, custom_settings()), None, None).await;
+    let mut client = create(&net, from_seed(1, custom_settings()), Encryption::None).await;
     client.wallet().write().await.price_list = prices();
     fund_pools("settings", &net, &mut client).await;
 
@@ -825,11 +822,10 @@ fn external_orchard_address() -> String {
 #[tokio::test]
 async fn spent_slow() {
     let net = launch().await;
-    let mut client = open(
+    let mut client = create(
         &net,
         from_seed(1, default_test_wallet_settings()),
-        None,
-        None,
+        Encryption::None,
     )
     .await;
     let address = fund_pools("spent", &net, &mut client).await;

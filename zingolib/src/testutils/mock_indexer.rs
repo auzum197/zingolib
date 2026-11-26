@@ -56,8 +56,9 @@ use zcash_transparent::bundle::{
 };
 use zingo_common_components::protocol::ActivationHeights;
 
-use crate::config::{ChainType, ClientConfig, ClientConfigBuilder, WalletConfig};
-use crate::lightclient::LightClient;
+use crate::config::{ChainType, WalletConfig};
+use crate::lightclient::store::FileStore;
+use crate::lightclient::{Encryption, LightClient};
 use crate::testutils::chain_generics::conduct_chain::ConductChain;
 use crate::testutils::default_test_wallet_settings;
 use crate::testutils::lightclient::{from_inputs, get_base_address};
@@ -2273,32 +2274,31 @@ impl MockNet {
         }
     }
 
-    fn config_builder(&mut self) -> ClientConfigBuilder {
+    fn store(&mut self) -> FileStore {
         let wallet_dir = tempfile::tempdir().expect("a tempdir is creatable");
-        let builder = ClientConfig::builder()
-            .set_chain_type(self.chain_type)
-            .set_indexer_uri(self.indexer_uri.clone())
-            .set_wallet_dir(wallet_dir.path().to_path_buf());
+        let store = FileStore::new(wallet_dir.path().join("wallet.dat"));
         self.wallet_dirs.push(wallet_dir);
-        builder
+        store
     }
 
     /// Builds a `LightClient` for `mnemonic` (birthday 1) dialed at the
     /// mock, with its wallet directory in a tempdir this net keeps
     /// alive.
     pub async fn client(&mut self, mnemonic: &str) -> LightClient {
-        let config = self
-            .config_builder()
-            .set_wallet_config(WalletConfig::MnemonicPhrase {
+        let mut lightclient = LightClient::create(
+            self.store(),
+            self.chain_type,
+            self.indexer_uri.clone(),
+            WalletConfig::MnemonicPhrase {
                 mnemonic_phrase: mnemonic.to_string(),
                 no_of_accounts: 1.try_into().expect("hard-coded non-zero"),
                 birthday: 1,
                 wallet_settings: default_test_wallet_settings(),
-            })
-            .build();
-        let mut lightclient = LightClient::new(config, true, None)
-            .await
-            .expect("mock-net client construction succeeds");
+            },
+            Encryption::None,
+        )
+        .await
+        .expect("mock-net client construction succeeds");
         // Mirror the live scenarios' build_client: a sapling-only UA at
         // index 1, which get_base_address's sapling arm pins.
         lightclient
@@ -2309,23 +2309,6 @@ impl MockNet {
             .await
             .expect("sapling-only address generation succeeds");
         lightclient
-    }
-
-    /// Builds a `LightClient` from wallet file saved in wallet directory at position `client_index` in `self.wallet_dirs`.
-    pub async fn client_from_file(&mut self, client_index: usize) -> LightClient {
-        let wallet_dir = self
-            .wallet_dirs
-            .get(client_index)
-            .expect("client at given index should exist");
-        let config = ClientConfig::builder()
-            .set_chain_type(self.chain_type)
-            .set_indexer_uri(self.indexer_uri.clone())
-            .set_wallet_dir(wallet_dir.path().to_path_buf())
-            .set_wallet_config(WalletConfig::Read)
-            .build();
-        LightClient::new(config, true, None)
-            .await
-            .expect("mock-net client construction succeeds")
     }
 }
 
@@ -2355,14 +2338,8 @@ impl ConductChain for MockNet {
         faucet
     }
 
-    async fn zingo_config(&mut self) -> ClientConfig {
-        self.config_builder()
-            .set_wallet_config(WalletConfig::NewSeed {
-                no_of_accounts: 1.try_into().expect("hard-coded non-zero"),
-                chain_height: 1,
-                wallet_settings: default_test_wallet_settings(),
-            })
-            .build()
+    fn client_target(&mut self) -> (FileStore, ChainType, http::Uri) {
+        (self.store(), self.chain_type, self.indexer_uri.clone())
     }
 
     async fn increase_chain_height(&mut self) {

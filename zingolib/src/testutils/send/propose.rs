@@ -356,21 +356,26 @@ mod tests {
 
     use super::super::error::ProposeShieldError;
     use crate::{
-        config::{ClientConfig, WalletConfig},
-        lightclient::LightClient,
+        config::{ChainType, DEFAULT_INDEXER_URI, WalletConfig},
+        lightclient::{Encryption, LightClient, store::FileStore},
         testutils::default_test_wallet_settings,
     };
 
     async fn create_basic_client() -> LightClient {
-        let config = ClientConfig::builder()
-            .set_wallet_config(WalletConfig::MnemonicPhrase {
+        LightClient::create(
+            FileStore::new(tempfile::tempdir().unwrap().path().join("wallet.dat")),
+            ChainType::Mainnet,
+            DEFAULT_INDEXER_URI.parse().unwrap(),
+            WalletConfig::MnemonicPhrase {
                 mnemonic_phrase: seeds::HOSPITAL_MUSEUM_SEED.to_string(),
                 no_of_accounts: 1.try_into().unwrap(),
                 birthday: 419200,
                 wallet_settings: default_test_wallet_settings(),
-            })
-            .build();
-        LightClient::new(config, true, None).await.unwrap()
+            },
+            Encryption::None,
+        )
+        .await
+        .unwrap()
     }
 
     #[tokio::test]

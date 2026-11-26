@@ -1,8 +1,5 @@
 use std::{
     collections::BTreeMap,
-    fs::File,
-    io::BufReader,
-    path::{Path, PathBuf},
     sync::{Arc, atomic::AtomicBool},
     time::Duration,
 };
@@ -22,14 +19,14 @@ use pepper_sync::{
     error::SyncError, events::SyncEmitter, keys::transparent::TransparentAddressId,
     sync::SyncResult, wallet::SyncMode,
 };
-use zingo_netutils::Indexer as _;
+use zingo_netutils::{Indexer as _, lightwallet_protocol::LightdInfo};
 
 use crate::{
-    config::{ChainType, ClientConfig, WalletConfig},
-    utils::now,
+    config::{ChainType, WalletConfig},
     wallet::{
         LightWallet,
         balance::AccountBalance,
+        encryption::{self, EncryptionConfig, WalletEncryptionError},
         error::{BalanceError, KeyError, SummaryError, WalletError},
         keys::unified::{ReceiverSelection, UnifiedAddressId},
         summary::data::{
@@ -38,10 +35,13 @@ use crate::{
         },
     },
 };
-use error::LightClientError;
+use error::{CreateError, OpenError};
+use store::WalletStore;
+use zingolib_file_format::WalletFileError;
 
 pub mod error;
 pub mod save;
+pub mod store;
 pub mod sync;
 
 pub const DEFAULT_REQUEST_TIMEOUT: Duration = Duration::from_secs(10);
@@ -49,8 +49,7 @@ pub const DEFAULT_REQUEST_TIMEOUT: Duration = Duration::from_secs(10);
 /// Wallet struct owned by a [`crate::lightclient::LightClient`], with metadata and immutable wallet data stored outside
 /// the read/write lock.
 struct WalletMeta {
-    /// Full path to wallet file.
-    wallet_path: PathBuf,
+    store: Arc<dyn WalletStore>,
     /// The chain type, extracted at construction for lock-free access.
     chain_type: ChainType,
     birthday: BlockHeight,
@@ -63,7 +62,6 @@ struct WalletMeta {
 impl std::fmt::Debug for WalletMeta {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("WalletMeta")
-            .field("wallet_path", &self.wallet_path)
             .field("chain_type", &self.chain_type)
             .field("birthday", &self.birthday)
             .field("mnemonic", &self.mnemonic)
@@ -74,15 +72,27 @@ impl std::fmt::Debug for WalletMeta {
 impl WalletMeta {
     /// Creates a new `WalletMeta` by wrapping a [`crate::wallet::LightWallet`] in a lock alongside metadata and
     /// immutable wallet data.
-    fn new(wallet_path: PathBuf, wallet: LightWallet) -> Self {
+    fn new(store: Arc<dyn WalletStore>, wallet: LightWallet) -> Self {
         Self {
-            wallet_path,
+            store,
             chain_type: wallet.chain_type(),
             birthday: wallet.birthday(),
             mnemonic: wallet.mnemonic().cloned(),
             wallet_data: Arc::new(RwLock::new(wallet)),
         }
     }
+}
+
+/// How [`LightClient::create`] stores the new wallet.
+pub enum Encryption {
+    None,
+    Passphrase(EncryptionConfig),
+}
+
+/// How [`LightClient::open`] reads the stored wallet.
+pub enum Unlock {
+    Plaintext,
+    Passphrase(String),
 }
 
 /// Struct which owns and manages the [`crate::wallet::LightWallet`]. Responsible for network operations such as
@@ -100,67 +110,70 @@ pub struct LightClient {
 }
 
 impl LightClient {
-    /// Creates a `LightClient` from [`crate::config::ClientConfig`].
-    ///
-    /// `encryption` either encrypts a newly created wallet at rest (for the create variants of
-    /// [`crate::config::WalletConfig`]) or supplies the passphrase to decrypt an encrypted
-    /// wallet file (for the `Read` variant). Pass `None` for an unencrypted wallet.
-    ///
-    /// Will fail if a wallet file already exists in the given data directory unless `overwrite` is `true` or the
-    /// [`crate::config::WalletConfig`] is of `Read` variant.
-    /// `overwrite` has no effect if a wallet is being read from file.
+    /// Creates a wallet and its client. Fails if `store` already holds a wallet.
     #[allow(clippy::result_large_err)]
-    pub async fn new(
-        config: ClientConfig,
-        overwrite: bool,
-        encryption: Option<crate::wallet::encryption::EncryptionConfig>,
-    ) -> Result<Self, LightClientError> {
-        // GrpcIndexer::new pre-builds a TLS endpoint, which requires a rustls CryptoProvider.
-        // install_default is idempotent: Ok(()) on first call, Err on subsequent (ignored).
-        let _ = rustls::crypto::ring::default_provider().install_default();
-
-        let wallet = match config.wallet_config() {
-            WalletConfig::Read => {
-                let buffer = BufReader::new(
-                    File::open(config.get_wallet_path()).map_err(LightClientError::FileError)?,
-                );
-
-                // If the file is encrypted, `encryption` carries the passphrase to decrypt it
-                // (its KDF params are ignored here, since those are read from the file header).
-                let passphrase = encryption.map(|encryption| encryption.into_passphrase());
-                LightWallet::read_encrypted(buffer, config.chain_type(), passphrase)?
-            }
-            _ => {
-                #[cfg(not(any(target_os = "ios", target_os = "android")))]
-                {
-                    if !overwrite && config.get_wallet_path().exists() {
-                        return Err(LightClientError::FileError(std::io::Error::new(
-                            std::io::ErrorKind::AlreadyExists,
-                            format!(
-                                "Cannot save to given data directory as a wallet file already exists at:\n{}",
-                                config.get_wallet_path().display()
-                            ),
-                        )));
-                    }
-                }
-
-                LightWallet::new(config.chain_type(), config.wallet_config(), encryption)?
-            }
+    pub async fn create(
+        store: impl WalletStore,
+        chain_type: ChainType,
+        indexer_uri: http::Uri,
+        wallet_config: WalletConfig,
+        encryption: Encryption,
+    ) -> Result<Self, CreateError> {
+        if store.load()?.is_some() {
+            return Err(CreateError::AlreadyExists);
+        }
+        let encryption = match encryption {
+            Encryption::None => None,
+            Encryption::Passphrase(config) => Some(config),
         };
+        let wallet = LightWallet::new(chain_type, wallet_config, encryption)?;
 
-        // Install the ring crypto provider for rustls. Required because both
-        // `ring` and `aws-lc-rs` features are unified in via transitive deps,
-        // preventing rustls from auto-selecting a provider.
+        Ok(Self::assemble(store, indexer_uri, wallet).await?)
+    }
+
+    /// Opens the wallet held by `store`. `unlock` must match how the wallet was stored.
+    #[allow(clippy::result_large_err)]
+    pub async fn open(
+        store: impl WalletStore,
+        chain_type: ChainType,
+        indexer_uri: http::Uri,
+        unlock: Unlock,
+    ) -> Result<Self, OpenError> {
+        let bytes = store.load()?.ok_or(OpenError::NotFound)?;
+        let passphrase = match (unlock, encryption::is_encrypted(&bytes)) {
+            (Unlock::Plaintext, false) => None,
+            (Unlock::Passphrase(passphrase), true) => Some(passphrase),
+            (Unlock::Plaintext, true) => return Err(OpenError::PassphraseRequired),
+            (Unlock::Passphrase(_), false) => return Err(OpenError::NotEncrypted),
+        };
+        let wallet = LightWallet::read_encrypted(bytes.as_slice(), chain_type, passphrase)
+            .map_err(|e| match e {
+                WalletError::File(WalletFileError::Encryption(
+                    WalletEncryptionError::DecryptionFailed,
+                )) => OpenError::DecryptionFailed,
+                e => OpenError::Wallet(e),
+            })?;
+
+        Ok(Self::assemble(store, indexer_uri, wallet).await?)
+    }
+
+    async fn assemble(
+        store: impl WalletStore,
+        indexer_uri: http::Uri,
+        wallet: LightWallet,
+    ) -> Result<Self, zingo_netutils::GetClientError> {
+        // Both `ring` and `aws-lc-rs` are enabled through transitive dependencies, so rustls
+        // cannot select a provider itself.
         let _ = rustls::crypto::ring::default_provider().install_default();
 
-        let indexer = zingo_netutils::GrpcIndexer::new(config.indexer_uri()).await?;
+        let indexer = zingo_netutils::GrpcIndexer::new(indexer_uri).await?;
 
         let (sync_events, _root_receiver) =
             SyncEmitter::new(wallet.wallet_settings.sync_config.event_channel_capacity);
 
         Ok(LightClient {
             indexer,
-            wallet: WalletMeta::new(config.get_wallet_path().to_path_buf(), wallet),
+            wallet: WalletMeta::new(Arc::new(store), wallet),
             sync_mode: watch::Sender::new(SyncMode::NotRunning),
             sync_handle: None,
             sync_events,
@@ -186,21 +199,6 @@ impl LightClient {
             .map(|m| m.phrase().to_string())
     }
 
-    pub fn wallet_path(&self) -> PathBuf {
-        self.wallet.wallet_path.clone()
-    }
-
-    /// Returns path to the directory which holds the wallet file.
-    pub fn wallet_dir(&self) -> Result<PathBuf, LightClientError> {
-        self.wallet
-            .wallet_path
-            .parent()
-            .map(Path::to_path_buf)
-            .ok_or_else(|| {
-                LightClientError::FileError(std::io::Error::other("wallet directory not found!"))
-            })
-    }
-
     /// Returns a reference to the locked mutable wallet state.
     // TODO: remove this from public API and replace with APIs to pass through all wallet methods without the consumer having access to the rwlock
     pub fn wallet(&self) -> &Arc<RwLock<LightWallet>> {
@@ -224,22 +222,8 @@ impl LightClient {
     }
 
     /// Returns server information.
-    pub async fn do_info(&mut self) -> String {
-        match self.indexer.get_lightd_info(DEFAULT_REQUEST_TIMEOUT).await {
-            Ok(i) => format!(
-                "version: {}\ngit commit: {}\nserver URI: {}\nvendor: {}\ntransparent address support: {}\nchain: {}\nSapling activation height: {}\nconsensus branch ID: {}\nlatest block height: {}",
-                i.version,
-                i.git_commit,
-                self.indexer.uri(),
-                i.vendor,
-                i.taddr_support,
-                i.chain_name,
-                i.sapling_activation_height,
-                i.consensus_branch_id,
-                i.block_height,
-            ),
-            Err(e) => format!("{e:?}"),
-        }
+    pub async fn server_info(&mut self) -> Result<LightdInfo, zingo_netutils::Status> {
+        self.indexer.get_lightd_info(DEFAULT_REQUEST_TIMEOUT).await
     }
 
     /// Wrapper for [`crate::wallet::LightWallet::generate_unified_address`].
@@ -348,22 +332,6 @@ impl LightClient {
     pub async fn do_total_value_to_address(&self) -> Result<TotalValueToAddress, SummaryError> {
         self.wallet().read().await.do_total_value_to_address().await
     }
-
-    /// Creates a backup file of the current wallet file in the wallet directory.
-    pub fn backup_wallet_file(&self) -> Result<(), LightClientError> {
-        let backup_time = now();
-        let backup_wallet_path = self.wallet_path().with_extension(
-            self.wallet_path()
-                .extension()
-                .map(|e| format!("backup.{}.{}", backup_time, e.to_string_lossy()))
-                .unwrap_or_else(|| format!("backup.{}.dat", backup_time)),
-        );
-
-        std::fs::copy(self.wallet_path(), backup_wallet_path)
-            .map_err(LightClientError::FileError)?;
-
-        Ok(())
-    }
 }
 
 impl std::fmt::Debug for LightClient {
@@ -388,8 +356,12 @@ mod mock_chain_tests;
 #[cfg(test)]
 mod tests {
     use crate::{
-        config::{ChainType, ClientConfig, WalletConfig},
-        lightclient::{LightClient, error::LightClientError},
+        config::{ChainType, DEFAULT_INDEXER_URI, WalletConfig},
+        lightclient::{
+            Encryption, LightClient, Unlock,
+            error::{CreateError, OpenError},
+            store::FileStore,
+        },
         testutils::default_test_wallet_settings,
     };
     use tempfile::TempDir;
@@ -397,30 +369,44 @@ mod tests {
     use zingo_test_vectors::seeds::CHIMNEY_BETTER_SEED;
 
     #[tokio::test]
-    async fn new_wallet_from_phrase() {
+    async fn create_then_open() {
         let temp_dir = TempDir::new().unwrap();
-        let config = ClientConfig::builder()
-            .set_chain_type(ChainType::Regtest(ActivationHeights::default()))
-            .set_wallet_dir(temp_dir.path().to_path_buf())
-            .set_wallet_config(WalletConfig::MnemonicPhrase {
-                mnemonic_phrase: CHIMNEY_BETTER_SEED.to_string(),
-                no_of_accounts: 1.try_into().unwrap(),
-                birthday: 1,
-                wallet_settings: default_test_wallet_settings(),
-            })
-            .build();
+        let store = FileStore::new(temp_dir.path().join("wallet.dat"));
+        let chain_type = ChainType::Regtest(ActivationHeights::default());
+        let indexer_uri: http::Uri = DEFAULT_INDEXER_URI.parse().unwrap();
+        let open =
+            |unlock| LightClient::open(store.clone(), chain_type, indexer_uri.clone(), unlock);
+        let create = || {
+            LightClient::create(
+                store.clone(),
+                chain_type,
+                indexer_uri.clone(),
+                WalletConfig::MnemonicPhrase {
+                    mnemonic_phrase: CHIMNEY_BETTER_SEED.to_string(),
+                    no_of_accounts: 1.try_into().unwrap(),
+                    birthday: 1,
+                    wallet_settings: default_test_wallet_settings(),
+                },
+                Encryption::None,
+            )
+        };
 
-        let mut lc = LightClient::new(config.clone(), false, None).await.unwrap();
+        assert!(matches!(
+            open(Unlock::Plaintext).await,
+            Err(OpenError::NotFound)
+        ));
 
+        let mut lc = create().await.unwrap();
         lc.save_task().await;
         lc.wait_for_save().await;
 
-        let lc_file_exists_error = LightClient::new(config, false, None).await.unwrap_err();
-
+        assert!(matches!(create().await, Err(CreateError::AlreadyExists)));
         assert!(matches!(
-            lc_file_exists_error,
-            LightClientError::FileError(_)
+            open(Unlock::Passphrase("unused".to_string())).await,
+            Err(OpenError::NotEncrypted)
         ));
+        let reopened = open(Unlock::Plaintext).await.unwrap();
+        assert_eq!(reopened.mnemonic_phrase(), lc.mnemonic_phrase());
 
         // The first transparent address and unified address should be derived
         let transparent_addresses = lc.transparent_addresses().await;
