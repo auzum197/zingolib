@@ -4,9 +4,11 @@
 //! `NetworkedTestEnvironment`, which follows a live testnet indexer
 //! darkside, a mode for the lightserver which mocks zcashd. search 'impl ConductChain for DarksideEnvironment
 
-use crate::config::{ClientConfig, WalletConfig};
+use crate::config::{ChainType, WalletConfig};
 use crate::get_base_address_macro;
-use crate::lightclient::LightClient;
+use crate::lightclient::store::FileStore;
+use crate::lightclient::{Encryption, LightClient};
+use crate::testutils::default_test_wallet_settings;
 use crate::testutils::lightclient::from_inputs;
 use crate::wallet::keys::unified::ReceiverSelection;
 
@@ -25,28 +27,31 @@ pub trait ConductChain {
     /// builds a faucet (funded from mining)
     async fn create_faucet(&mut self) -> LightClient;
 
-    /// the server communicates some parameters (asyncronously)
-    /// that are here compiled into an appropriate wallet configuration
-    // super awful that this function has to exist, because the wallet should be able to communicate without 'test-only helpers'
-    async fn zingo_config(&mut self) -> crate::config::ClientConfig;
+    /// a fresh store, the chain and the indexer that a new client of this server uses
+    fn client_target(&mut self) -> (FileStore, ChainType, http::Uri);
 
     /// builds an empty client
     async fn create_client(&mut self) -> LightClient {
-        let config = self.zingo_config().await;
-        assert!(!matches!(config.wallet_config(), WalletConfig::Read));
-        let mut lightclient = LightClient::new(config, false, None).await.unwrap();
+        let (store, chain_type, indexer_uri) = self.client_target();
+        let mut lightclient = LightClient::create(
+            store,
+            chain_type,
+            indexer_uri,
+            WalletConfig::NewSeed {
+                no_of_accounts: 1.try_into().unwrap(),
+                chain_height: 1,
+                wallet_settings: default_test_wallet_settings(),
+            },
+            Encryption::None,
+        )
+        .await
+        .unwrap();
         lightclient
             .generate_unified_address(ReceiverSelection::sapling_only(), zip32::AccountId::ZERO)
             .await
             .unwrap();
 
         lightclient
-    }
-
-    /// loads a client from its wallet file
-    async fn load_client(&mut self, config: ClientConfig) -> LightClient {
-        assert!(matches!(config.wallet_config(), WalletConfig::Read));
-        LightClient::new(config, false, None).await.unwrap()
     }
 
     /// moves the chain tip forward, creating 1 new block

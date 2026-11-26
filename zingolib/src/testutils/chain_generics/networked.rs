@@ -48,7 +48,13 @@ impl ConductChain for NetworkedTestEnvironment {
         unimplemented!()
     }
 
-    async fn zingo_config(&mut self) -> crate::config::ClientConfig {
+    fn client_target(
+        &mut self,
+    ) -> (
+        crate::lightclient::store::FileStore,
+        crate::config::ChainType,
+        http::Uri,
+    ) {
         unimplemented!()
     }
 

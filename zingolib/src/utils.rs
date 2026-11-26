@@ -5,6 +5,7 @@ pub mod conversion;
 pub mod error;
 
 /// Returns number of seconds since unix epoch.
+#[cfg(any(test, feature = "testutils"))]
 pub(crate) fn now() -> u32 {
     SystemTime::now()
         .duration_since(SystemTime::UNIX_EPOCH)

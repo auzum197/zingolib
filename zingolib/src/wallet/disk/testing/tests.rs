@@ -3,8 +3,8 @@ use zcash_keys::keys::Era;
 use zingo_test_vectors::seeds::CHIMNEY_BETTER_SEED;
 
 use crate::{
-    config::{ChainType, ClientConfig, WalletConfig},
-    lightclient::LightClient,
+    config::{ChainType, DEFAULT_INDEXER_URI_TESTNET, WalletConfig},
+    lightclient::{Encryption, LightClient, Unlock, store::FileStore},
     testutils::default_test_wallet_settings,
     wallet::{LightWallet, keys::unified::UnifiedKeyStore},
 };
@@ -14,28 +14,30 @@ async fn reload_wallet_from_file() {
     let wallet_dir = tempfile::tempdir().unwrap();
     let chain_type = ChainType::Testnet;
 
-    let config = ClientConfig::builder()
-        .set_chain_type(chain_type)
-        .set_wallet_dir(wallet_dir.path().to_path_buf())
-        .set_wallet_config(WalletConfig::MnemonicPhrase {
+    let store = FileStore::new(wallet_dir.path().join("wallet.dat"));
+    let indexer_uri: http::Uri = DEFAULT_INDEXER_URI_TESTNET.parse().unwrap();
+    let mut mid_client = LightClient::create(
+        store.clone(),
+        chain_type,
+        indexer_uri.clone(),
+        WalletConfig::MnemonicPhrase {
             mnemonic_phrase: CHIMNEY_BETTER_SEED.to_string(),
             no_of_accounts: 1.try_into().unwrap(),
             birthday: 2_000_000,
             wallet_settings: default_test_wallet_settings(),
-        })
-        .build();
-    let mut mid_client = LightClient::new(config, true, None).await.unwrap();
+        },
+        Encryption::None,
+    )
+    .await
+    .unwrap();
 
     mid_client.save_task().await;
     mid_client.wait_for_save().await;
     mid_client.shutdown_save_task().await.unwrap();
 
-    let config = ClientConfig::builder()
-        .set_chain_type(chain_type)
-        .set_wallet_dir(wallet_dir.path().to_path_buf())
-        .set_wallet_config(WalletConfig::Read)
-        .build();
-    let loaded_client = LightClient::new(config, true, None).await.unwrap();
+    let loaded_client = LightClient::open(store, chain_type, indexer_uri, Unlock::Plaintext)
+        .await
+        .unwrap();
     let loaded_wallet = loaded_client.wallet().read().await;
 
     let expected_mnemonic = Mnemonic::from_phrase(CHIMNEY_BETTER_SEED.to_string()).unwrap();

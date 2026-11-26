@@ -9,8 +9,6 @@
 //! for the chosen pool. The `_default` scenarios use the default activation
 //! heights, where NU6.3 is active from height 1.
 
-use std::path::PathBuf;
-
 use tempfile::TempDir;
 use zcash_protocol::PoolType;
 use zingo_common_components::protocol::ActivationHeights;
@@ -18,10 +16,11 @@ use zingo_test_vectors::{
     REG_O_ADDR_FROM_ABANDONART, REG_T_ADDR_FROM_ABANDONART, REG_Z_ADDR_FROM_ABANDONART, seeds,
 };
 
-use crate::config::{ChainType, ClientConfig, WalletConfig};
+use crate::config::{ChainType, WalletConfig};
 use crate::get_base_address_macro;
-use crate::lightclient::LightClient;
 use crate::lightclient::error::LightClientError;
+use crate::lightclient::store::FileStore;
+use crate::lightclient::{Encryption, LightClient};
 use crate::testutils::chain_generics::conduct_chain::ConductChain;
 use crate::testutils::default_test_wallet_settings;
 use crate::testutils::lightclient::from_inputs::{self, quick_send};
@@ -74,45 +73,23 @@ impl ClientBuilder {
         }
     }
 
-    /// Creates a client config in a fresh wallet directory.
-    pub fn make_unique_data_dir_and_create_config(
-        &mut self,
-        configured_activation_heights: ActivationHeights,
-        wallet_config: WalletConfig,
-    ) -> ClientConfig {
+    /// A store for a wallet file in a fresh directory.
+    pub fn store(&mut self) -> FileStore {
         self.client_number += 1;
-        let conf_path = format!(
-            "{}_client_{}",
-            self.zingo_datadir.path().to_string_lossy(),
-            self.client_number
-        );
-        self.create_clientconfig(
-            PathBuf::from(conf_path),
-            configured_activation_heights,
-            wallet_config,
-        )
+        self.store_of(self.client_number)
     }
 
-    /// Creates a client config in `conf_path`.
-    pub fn create_clientconfig(
-        &self,
-        conf_path: PathBuf,
-        configured_activation_heights: ActivationHeights,
-        wallet_config: WalletConfig,
-    ) -> ClientConfig {
-        std::fs::create_dir(&conf_path).unwrap();
-        ClientConfig::builder()
-            .set_indexer_uri(self.server_id.clone())
-            .set_chain_type(ChainType::Regtest(configured_activation_heights))
-            .set_wallet_dir(conf_path)
-            .set_wallet_config(wallet_config)
-            .build()
+    /// The store of the `client_number`th client built, counting from 1.
+    pub fn store_of(&self, client_number: u8) -> FileStore {
+        FileStore::new(format!(
+            "{}_client_{client_number}/wallet.dat",
+            self.zingo_datadir.path().to_string_lossy(),
+        ))
     }
 
     /// Builds the faucet, the abandon-art wallet the miner address pays.
     pub async fn build_faucet(
         &mut self,
-        overwrite: bool,
         configured_activation_heights: ActivationHeights,
     ) -> LightClient {
         self.build_client(
@@ -122,7 +99,6 @@ impl ClientBuilder {
                 birthday: 1,
                 wallet_settings: default_test_wallet_settings(),
             },
-            overwrite,
             configured_activation_heights,
         )
         .await
@@ -133,12 +109,17 @@ impl ClientBuilder {
     pub async fn build_client(
         &mut self,
         wallet_config: WalletConfig,
-        overwrite: bool,
         configured_activation_heights: ActivationHeights,
     ) -> LightClient {
-        let config = self
-            .make_unique_data_dir_and_create_config(configured_activation_heights, wallet_config);
-        let mut lightclient = LightClient::new(config, overwrite, None).await.unwrap();
+        let mut lightclient = LightClient::create(
+            self.store(),
+            ChainType::Regtest(configured_activation_heights),
+            self.server_id.clone(),
+            wallet_config,
+            Encryption::None,
+        )
+        .await
+        .unwrap();
         lightclient
             .generate_unified_address(ReceiverSelection::sapling_only(), zip32::AccountId::ZERO)
             .await
@@ -188,11 +169,7 @@ pub async fn unfunded_client(
     let (local_net, mut client_builder) =
         custom_clients(PoolType::Transparent, configured_activation_heights).await;
     let mut lightclient = client_builder
-        .build_client(
-            hospital_museum_config(),
-            true,
-            configured_activation_heights,
-        )
+        .build_client(hospital_museum_config(), configured_activation_heights)
         .await;
     lightclient.sync_and_await().await.unwrap();
 
@@ -212,7 +189,7 @@ pub async fn faucet(
     let (local_net, mut client_builder) =
         custom_clients(mine_to_pool, configured_activation_heights).await;
     let mut faucet = client_builder
-        .build_faucet(true, configured_activation_heights)
+        .build_faucet(configured_activation_heights)
         .await;
     faucet.sync_and_await().await.unwrap();
 
@@ -233,14 +210,10 @@ pub async fn faucet_recipient(
     let (local_net, mut client_builder) =
         custom_clients(mine_to_pool, configured_activation_heights).await;
     let mut faucet = client_builder
-        .build_faucet(true, configured_activation_heights)
+        .build_faucet(configured_activation_heights)
         .await;
     let mut recipient = client_builder
-        .build_client(
-            hospital_museum_config(),
-            true,
-            configured_activation_heights,
-        )
+        .build_client(hospital_museum_config(), configured_activation_heights)
         .await;
     faucet.sync_and_await().await.unwrap();
     recipient.sync_and_await().await.unwrap();
@@ -402,18 +375,15 @@ impl ConductChain for RegtestEnvironment {
 
     async fn create_faucet(&mut self) -> LightClient {
         self.client_builder
-            .build_faucet(false, self.local_net.activation_heights())
+            .build_faucet(self.local_net.activation_heights())
             .await
     }
 
-    async fn zingo_config(&mut self) -> ClientConfig {
-        self.client_builder.make_unique_data_dir_and_create_config(
-            self.local_net.activation_heights(),
-            WalletConfig::NewSeed {
-                no_of_accounts: 1.try_into().unwrap(),
-                chain_height: 1,
-                wallet_settings: default_test_wallet_settings(),
-            },
+    fn client_target(&mut self) -> (FileStore, ChainType, http::Uri) {
+        (
+            self.client_builder.store(),
+            ChainType::Regtest(self.local_net.activation_heights()),
+            self.client_builder.server_id.clone(),
         )
     }
 

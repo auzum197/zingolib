@@ -9,8 +9,9 @@
 use std::num::NonZeroU32;
 
 use zingo_common_components::protocol::ActivationHeights;
-use zingolib::config::WalletConfig;
+use zingolib::config::{ChainType, WalletConfig};
 use zingolib::lightclient::LightClient;
+use zingolib::lightclient::store::FileStore;
 use zingolib::testutils::chain_generics::conduct_chain::ConductChain;
 use zingolib::testutils::default_test_wallet_settings;
 use zingolib::testutils::mock_indexer::{MockChain, MockNet};
@@ -112,7 +113,6 @@ pub async fn build_client(
                 birthday,
                 wallet_settings: default_test_wallet_settings(),
             },
-            true,
             activation_heights(),
         )
         .await
@@ -149,14 +149,11 @@ impl ConductChain for DarksideEnvironment {
         build_client(&mut self.client_builder, DARKSIDE_SEED, 1).await
     }
 
-    async fn zingo_config(&mut self) -> zingolib::config::ClientConfig {
-        self.client_builder.make_unique_data_dir_and_create_config(
-            activation_heights(),
-            WalletConfig::NewSeed {
-                no_of_accounts: 1.try_into().unwrap(),
-                chain_height: 1,
-                wallet_settings: default_test_wallet_settings(),
-            },
+    fn client_target(&mut self) -> (FileStore, ChainType, http::Uri) {
+        (
+            self.client_builder.store(),
+            ChainType::Regtest(activation_heights()),
+            self.client_builder.server_id.clone(),
         )
     }
 

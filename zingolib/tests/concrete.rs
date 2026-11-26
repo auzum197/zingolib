@@ -165,7 +165,7 @@ mod fast {
     async fn unified_address_discovery() {
         let (local_net, mut client_builder) = scenarios::custom_clients_default().await;
         let mut faucet = client_builder
-            .build_faucet(true, local_net.activation_heights())
+            .build_faucet(local_net.activation_heights())
             .await;
         let mut recipient = client_builder
             .build_client(
@@ -175,7 +175,6 @@ mod fast {
                     birthday: 1,
                     wallet_settings: default_test_wallet_settings(),
                 },
-                true,
                 local_net.activation_heights(),
             )
             .await;
@@ -231,7 +230,6 @@ mod fast {
                     birthday: 1,
                     wallet_settings: default_test_wallet_settings(),
                 },
-                true,
                 local_net.activation_heights(),
             )
             .await;
@@ -863,7 +861,6 @@ mod fast {
                     birthday: 1,
                     wallet_settings: default_test_wallet_settings(),
                 },
-                false,
                 local_net.activation_heights(),
             )
             .await;
@@ -942,7 +939,6 @@ tmQuMoTTjU3GFfTjrhPiBYihbTVfYmPk5Gr"
                     birthday: 1,
                     wallet_settings: default_test_wallet_settings(),
                 },
-                false,
                 local_net.activation_heights(),
             )
             .await;
@@ -1097,8 +1093,8 @@ mod slow {
     use zcash_protocol::{PoolType, ShieldedPool};
     use zingo_common_components::protocol::ActivationHeights;
     use zingo_test_vectors::TEST_TXID;
-    use zingolib::config::{ChainType, ClientConfig, WalletConfig};
-    use zingolib::lightclient::LightClient;
+    use zingolib::config::{ChainType, WalletConfig};
+    use zingolib::lightclient::{Encryption, LightClient};
     use zingolib::testutils::lightclient::{from_inputs, get_fees_paid_by_client};
     use zingolib::testutils::scenarios::increase_height_and_wait_for_client;
     use zingolib::testutils::send::error::{
@@ -1243,7 +1239,7 @@ mod slow {
 
         let (local_net, mut client_builder) = scenarios::custom_clients_default().await;
         let mut faucet = client_builder
-            .build_faucet(false, local_net.activation_heights())
+            .build_faucet(local_net.activation_heights())
             .await;
         let mut original_recipient = client_builder
             .build_client(
@@ -1253,7 +1249,6 @@ mod slow {
                     birthday: 1,
                     wallet_settings: default_test_wallet_settings(),
                 },
-                false,
                 local_net.activation_heights(),
             )
             .await;
@@ -1331,17 +1326,19 @@ mod slow {
         .unwrap(),
         &zcash_protocol::consensus::NetworkType::Regtest,
     );
-            let zingo_config = ClientConfig::builder()
-                .set_indexer_uri(client_builder.server_id.clone())
-                .set_chain_type(ChainType::Regtest(local_net.activation_heights()))
-                .set_wallet_dir(client_builder.zingo_datadir.path().to_path_buf())
-                .set_wallet_config(WalletConfig::Ufvk {
+            let mut watch_client = LightClient::create(
+                client_builder.store(),
+                ChainType::Regtest(local_net.activation_heights()),
+                client_builder.server_id.clone(),
+                WalletConfig::Ufvk {
                     ufvk,
                     birthday: 1,
                     wallet_settings: default_test_wallet_settings(),
-                })
-                .build();
-            let mut watch_client = LightClient::new(zingo_config, false, None).await.unwrap();
+                },
+                Encryption::None,
+            )
+            .await
+            .unwrap();
             let balance = watch_client
                 .account_balance(zip32::AccountId::ZERO)
                 .await
@@ -2510,7 +2507,7 @@ TransactionSummary {
     async fn wallet_events_check_fees() {
         let (local_net, mut client_builder) = scenarios::custom_clients_default().await;
         let mut faucet = client_builder
-            .build_faucet(false, local_net.activation_heights())
+            .build_faucet(local_net.activation_heights())
             .await;
         let mut pool_migration_client = client_builder
             .build_client(
@@ -2520,7 +2517,6 @@ TransactionSummary {
                     birthday: 1,
                     wallet_settings: default_test_wallet_settings(),
                 },
-                false,
                 local_net.activation_heights(),
             )
             .await;
@@ -2564,7 +2560,7 @@ TransactionSummary {
         // Test all possible promoting note source combinations
         let (local_net, mut client_builder) = scenarios::custom_clients_default().await;
         let mut faucet = client_builder
-            .build_faucet(false, local_net.activation_heights())
+            .build_faucet(local_net.activation_heights())
             .await;
         let mut client = client_builder
             .build_client(
@@ -2574,7 +2570,6 @@ TransactionSummary {
                     birthday: 1,
                     wallet_settings: default_test_wallet_settings(),
                 },
-                false,
                 local_net.activation_heights(),
             )
             .await;
@@ -3294,8 +3289,8 @@ mod testnet_test {
     use pepper_sync::sync_status;
     use zingo_test_vectors::seeds::HOSPITAL_MUSEUM_SEED;
     use zingolib::{
-        config::{ChainType, ClientConfig, DEFAULT_INDEXER_URI_TESTNET, WalletConfig},
-        lightclient::LightClient,
+        config::{ChainType, DEFAULT_INDEXER_URI_TESTNET, WalletConfig},
+        lightclient::{Encryption, LightClient, Unlock, store::FileStore},
         testutils::{default_test_wallet_settings, tempfile::TempDir},
     };
 
@@ -3312,19 +3307,22 @@ mod testnet_test {
 
         while test_count < NUM_TESTS {
             let wallet_dir = TempDir::new().unwrap();
-            let config = ClientConfig::builder()
-                .set_chain_type(ChainType::Testnet)
-                .set_indexer_uri((DEFAULT_INDEXER_URI_TESTNET).parse::<http::Uri>().unwrap())
-                .set_wallet_config(WalletConfig::MnemonicPhrase {
+            let store = FileStore::new(wallet_dir.path().join("wallet.dat"));
+            let indexer_uri = (DEFAULT_INDEXER_URI_TESTNET).parse::<http::Uri>().unwrap();
+            let mut lightclient = LightClient::create(
+                store.clone(),
+                ChainType::Testnet,
+                indexer_uri.clone(),
+                WalletConfig::MnemonicPhrase {
                     mnemonic_phrase: HOSPITAL_MUSEUM_SEED.to_string(),
                     no_of_accounts: 1.try_into().unwrap(),
                     birthday: 2_000_000,
                     wallet_settings: default_test_wallet_settings(),
-                })
-                .set_wallet_dir(wallet_dir.path().to_path_buf())
-                .build();
-
-            let mut lightclient = LightClient::new(config, true, None).await.unwrap();
+                },
+                Encryption::None,
+            )
+            .await
+            .unwrap();
             lightclient.save_task().await;
             lightclient.sync().await.unwrap();
             let mut interval = tokio::time::interval(std::time::Duration::from_millis(100));
@@ -3343,13 +3341,9 @@ mod testnet_test {
             lightclient.shutdown_save_task().await.unwrap();
 
             // will fail if there were any reload errors due to bad file write code i.e. no flushing or file syncing
-            let config = ClientConfig::builder()
-                .set_chain_type(ChainType::Testnet)
-                .set_indexer_uri((DEFAULT_INDEXER_URI_TESTNET).parse::<http::Uri>().unwrap())
-                .set_wallet_config(WalletConfig::Read)
-                .set_wallet_dir(wallet_dir.path().to_path_buf())
-                .build();
-            LightClient::new(config, true, None).await.unwrap();
+            LightClient::open(store, ChainType::Testnet, indexer_uri, Unlock::Plaintext)
+                .await
+                .unwrap();
 
             test_count += 1;
         }

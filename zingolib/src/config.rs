@@ -1,17 +1,12 @@
-//! Module for configuration and construction of [`crate::lightclient::LightClient`] and [`crate::wallet::LightWallet`].
+//! Module for configuration and construction of [`crate::wallet::LightWallet`].
 
-use std::{
-    collections::BTreeMap,
-    num::NonZeroU32,
-    path::{Path, PathBuf},
-};
+use std::{collections::BTreeMap, num::NonZeroU32};
 
 use bip0039::{English, Mnemonic};
 use http::uri::InvalidUri;
 
 use zcash_protocol::consensus::{BlockHeight, Parameters};
 
-use pepper_sync::config::{SyncConfig, TransparentAddressDiscovery};
 pub use zingolib_common::chain::{ChainType, InvalidChainType};
 
 use crate::wallet::{
@@ -22,7 +17,6 @@ use crate::wallet::{
 
 pub const DEFAULT_INDEXER_URI: &str = "https://zec.rocks:443";
 pub const DEFAULT_INDEXER_URI_TESTNET: &str = "https://testnet.zec.rocks";
-pub const DEFAULT_WALLET_NAME: &str = "zingo-wallet.dat";
 
 /// Configuration data for the construction of a [`crate::wallet::LightWallet`].
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -54,8 +48,6 @@ pub enum WalletConfig {
         birthday: u32,
         wallet_settings: WalletSettings,
     },
-    /// Read from wallet file.
-    Read,
 }
 
 impl WalletConfig {
@@ -146,7 +138,6 @@ impl WalletConfig {
                     encryption: None,
                 })
             }
-            WalletConfig::Read => Err(WalletError::WalletAlreadyCreated),
         }
     }
 }
@@ -175,192 +166,4 @@ pub fn construct_lightwalletd_uri(server: Option<String>) -> Result<http::Uri, I
         None => DEFAULT_INDEXER_URI.to_string(),
     }
     .parse()
-}
-
-/// Configuration data for the construction of a [`crate::lightclient::LightClient`].
-#[derive(Clone, Debug)]
-pub struct ClientConfig {
-    /// URI of the indexer the lightclient is connected to.
-    indexer_uri: http::Uri,
-    /// Chain type of the blockchain the lightclient is connected to.
-    chain_type: ChainType,
-    /// Directory where the wallet file will be created. By default, this will be in ~/.zcash on Linux and %APPDATA%\Zcash on Windows.
-    wallet_dir: PathBuf,
-    /// Wallet file name. This will be created in the `wallet_dir`.
-    wallet_name: String,
-    wallet_config: WalletConfig,
-}
-
-impl ClientConfig {
-    #[must_use]
-    pub fn builder() -> ClientConfigBuilder {
-        ClientConfigBuilder::default()
-    }
-
-    #[must_use]
-    pub fn indexer_uri(&self) -> http::Uri {
-        self.indexer_uri.clone()
-    }
-
-    #[must_use]
-    pub fn chain_type(&self) -> ChainType {
-        self.chain_type
-    }
-
-    #[must_use]
-    pub fn wallet_dir(&self) -> PathBuf {
-        self.wallet_dir.clone()
-    }
-
-    #[must_use]
-    pub fn wallet_name(&self) -> &str {
-        &self.wallet_name
-    }
-
-    #[must_use]
-    pub fn wallet_config(&self) -> WalletConfig {
-        self.wallet_config.clone()
-    }
-
-    /// Returns full path to wallet file.
-    #[must_use]
-    pub fn get_wallet_path(&self) -> Box<Path> {
-        let mut wallet_path = self.wallet_dir();
-        wallet_path.push(self.wallet_name());
-
-        wallet_path.into_boxed_path()
-    }
-}
-
-#[derive(Clone, Debug)]
-pub struct ClientConfigBuilder {
-    indexer_uri: Option<http::Uri>,
-    chain_type: ChainType,
-    wallet_dir: Option<PathBuf>,
-    wallet_name: Option<String>,
-    wallet_config: WalletConfig,
-}
-
-impl ClientConfigBuilder {
-    pub fn new() -> Self {
-        Self::default()
-    }
-
-    /// TODO: Will be renamed `set_indexer` and accept an `Indexer` type from
-    /// `zingo-netutils` instead of `http::Uri`.
-    pub fn set_indexer_uri(mut self, indexer_uri: http::Uri) -> Self {
-        self.indexer_uri = Some(indexer_uri);
-        self
-    }
-
-    pub fn set_chain_type(mut self, chain_type: ChainType) -> Self {
-        self.chain_type = chain_type;
-        self
-    }
-
-    pub fn set_wallet_dir(mut self, dir: PathBuf) -> Self {
-        self.wallet_dir = Some(dir);
-        self
-    }
-
-    pub fn set_wallet_name(mut self, wallet_name: String) -> Self {
-        self.wallet_name = Some(wallet_name);
-        self
-    }
-
-    pub fn set_wallet_config(mut self, wallet_config: WalletConfig) -> Self {
-        self.wallet_config = wallet_config;
-        self
-    }
-
-    pub fn build(self) -> ClientConfig {
-        let wallet_dir = wallet_dir_or_default(self.wallet_dir, self.chain_type);
-        let wallet_name = wallet_name_or_default(self.wallet_name);
-        ClientConfig {
-            indexer_uri: self
-                .indexer_uri
-                .clone()
-                .unwrap_or_else(|| DEFAULT_INDEXER_URI.parse().expect("valid constant URI")),
-            chain_type: self.chain_type,
-            wallet_dir,
-            wallet_name,
-            wallet_config: self.wallet_config,
-        }
-    }
-}
-
-impl Default for ClientConfigBuilder {
-    fn default() -> Self {
-        Self {
-            indexer_uri: None,
-            wallet_dir: None,
-            wallet_name: None,
-            chain_type: ChainType::Mainnet,
-            wallet_config: WalletConfig::NewSeed {
-                no_of_accounts: NonZeroU32::try_from(1).expect("hard coded non-zero integer"),
-                chain_height: 1,
-                wallet_settings: WalletSettings {
-                    sync_config: SyncConfig {
-                        transparent_address_discovery: TransparentAddressDiscovery::minimal(),
-                        performance_level: pepper_sync::config::PerformanceLevel::High,
-                        ..SyncConfig::default()
-                    },
-                    min_confirmations: NonZeroU32::try_from(3)
-                        .expect("hard coded non-zero integer"),
-                },
-            },
-        }
-    }
-}
-
-fn wallet_name_or_default(opt_wallet_name: Option<String>) -> String {
-    let wallet_name = opt_wallet_name.unwrap_or_else(|| DEFAULT_WALLET_NAME.into());
-    if wallet_name.is_empty() {
-        DEFAULT_WALLET_NAME.into()
-    } else {
-        wallet_name
-    }
-}
-
-fn wallet_dir_or_default(opt_wallet_dir: Option<PathBuf>, chain: ChainType) -> PathBuf {
-    let wallet_dir: PathBuf;
-    #[cfg(any(target_os = "ios", target_os = "android"))]
-    {
-        // TODO: handle errors
-        wallet_dir = opt_wallet_dir.unwrap();
-    }
-
-    #[cfg(not(any(target_os = "ios", target_os = "android")))]
-    {
-        wallet_dir = opt_wallet_dir.clone().unwrap_or_else(|| {
-            let mut dir = dirs::data_dir().expect("Couldn't determine user's data directory!");
-
-            #[cfg(any(target_os = "macos", target_os = "windows"))]
-            {
-                dir.push("Zcash");
-            }
-
-            #[cfg(not(any(target_os = "macos", target_os = "windows")))]
-            {
-                dir.push(".zcash");
-            }
-
-            match chain {
-                ChainType::Mainnet => {}
-                ChainType::Testnet => dir.push("testnet3"),
-                ChainType::Regtest(_) => dir.push("regtest"),
-            }
-
-            dir
-        });
-
-        match std::fs::create_dir_all(wallet_dir.clone()) {
-            Ok(()) => {}
-            Err(e) => {
-                panic!("Couldn't create zcash directory!\n {e}");
-            }
-        }
-    }
-
-    wallet_dir
 }

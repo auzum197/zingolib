@@ -43,13 +43,12 @@
 //! wraps the public zingolib API. The passphrase is passed as a plain `String` throughout
 //! (zingolib wraps it in a [`SecretString`] internally), so the FFI layer needs no `secrecy`
 //! dependency. To support encryption from mobile, that layer should:
-//! - **Create encrypted:** call `LightClient::new` with a create `WalletConfig` variant and
-//!   `Some(EncryptionConfig::with_params(passphrase, params))`. On a memory-constrained device
-//!   pass `Argon2Params::with_memory_mib(N)` with a smaller `N` (e.g. 19 to 32) instead of the
-//!   64 MiB default.
-//! - **Open encrypted:** call `LightClient::new` with `WalletConfig::Read` and
-//!   `Some(EncryptionConfig::new(passphrase))`. The passphrase decrypts the file, whose KDF
-//!   parameters are read from the header.
+//! - **Create encrypted:** call `LightClient::create` with
+//!   `Encryption::Passphrase(EncryptionConfig::with_params(passphrase, params))`. On a
+//!   memory-constrained device pass `Argon2Params::with_memory_mib(N)` with a smaller `N`
+//!   (e.g. 19 to 32) instead of the 64 MiB default.
+//! - **Open encrypted:** call `LightClient::open` with `Unlock::Passphrase(passphrase)`. The
+//!   passphrase decrypts the file, whose KDF parameters are read from the header.
 //! - **Save:** `LightWallet::save` already returns encrypted bytes once a
 //!   passphrase is set, no change required.
 

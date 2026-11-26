@@ -27,11 +27,10 @@ use pepper_sync::events::{ScanTiming, SequencedSyncEvent, SyncEvent};
 use pepper_sync::sync::ScanPriority;
 use tokio::sync::broadcast::error::RecvError;
 
-use zingolib::config::{
-    ChainType, ClientConfig, DEFAULT_INDEXER_URI, DEFAULT_INDEXER_URI_TESTNET, WalletConfig,
-};
+use zingolib::config::{ChainType, DEFAULT_INDEXER_URI, DEFAULT_INDEXER_URI_TESTNET, WalletConfig};
 use zingolib::data::PollReport;
-use zingolib::lightclient::LightClient;
+use zingolib::lightclient::store::FileStore;
+use zingolib::lightclient::{Encryption, LightClient};
 use zingolib::wallet::WalletSettings;
 
 const USAGE: &str =
@@ -682,14 +681,17 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     };
 
-    // throwaway wallet dir: nothing is saved since the save task is never started
-    let wallet_dir = std::env::temp_dir().join(format!("zingo-sync-events-{}", std::process::id()));
-    std::fs::create_dir_all(&wallet_dir)?;
+    // throwaway store: nothing is saved since the save task is never started
+    let store = FileStore::new(
+        std::env::temp_dir().join(format!("zingo-sync-events-{}.dat", std::process::id())),
+    );
 
-    let config = ClientConfig::builder()
-        .set_chain_type(args.chain)
-        .set_indexer_uri(args.server.clone())
-        .set_wallet_config(WalletConfig::Ufvk {
+    println!("connecting to {}", args.server);
+    let mut lc = LightClient::create(
+        store,
+        args.chain,
+        args.server,
+        WalletConfig::Ufvk {
             ufvk: args.ufvk,
             birthday: args.birthday,
             wallet_settings: WalletSettings {
@@ -699,12 +701,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 },
                 ..WalletSettings::default()
             },
-        })
-        .set_wallet_dir(wallet_dir)
-        .build();
-
-    println!("connecting to {}", args.server);
-    let mut lc = LightClient::new(config, true, None).await?;
+        },
+        Encryption::None,
+    )
+    .await?;
 
     // subscribe before launching so SessionStarted is not missed
     let mut events = lc.subscribe_sync_events();

@@ -28,6 +28,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `moved_to` in the JSON of a transaction summary: the destination pool of a pool move, or null.
 
 ### Changed
+- `LightClient::new` is replaced by `LightClient::create` and `LightClient::open`. Both take a
+  `lightclient::store::WalletStore`, the chain type and the indexer URI. `create` fails with
+  `CreateError::AlreadyExists` and never overwrites. `open` fails with `OpenError::NotFound`,
+  `PassphraseRequired`, `NotEncrypted` or `DecryptionFailed`.
+- `lightclient::Encryption` and `lightclient::Unlock` replace the `Option<EncryptionConfig>`
+  argument. A passphrase given for a plaintext wallet is now an error.
+- `lightclient::store::FileStore` holds the atomic file write. It creates the parent directory.
+- `LightClient::do_info` is now `server_info` and returns `Result<LightdInfo, Status>`.
 - `zingolib-price` no longer exists. `PriceList` and `Price` are in `zingolib_common::price`, and
   the fetch with its `PriceError` is the new `price` module here.
 - `LightWallet::write` takes `&self`.
@@ -59,6 +67,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `LightClientError`. `zcash_proofs` and the Sapling parameter download are now test-only.
 
 ### Removed
+- `config::ClientConfig`, `config::ClientConfigBuilder`, `config::DEFAULT_WALLET_NAME` and the
+  default wallet directory. The caller selects the wallet path.
+- `WalletConfig::Read` and `WalletError::WalletAlreadyCreated`.
+- `LightClient::wallet_path`, `wallet_dir`, `backup_wallet_file` and `do_delete`. Use
+  `FileStore::path` and `WalletStore::delete`.
+- `LightClientError::FileError`, `ClientError` and `WalletError`.
 - `wallet::legacy`, `wallet::keys::legacy`, `wallet::disk::testing::examples` and
   `testutils::paths`: wallet files older than layout 41 are no longer readable, so the legacy
   readers, the example wallet files and the tests that loaded them are gone.

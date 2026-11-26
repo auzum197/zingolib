@@ -8,9 +8,10 @@ use zcash_protocol::consensus::BlockHeight;
 use zingo_netutils::lightwallet_protocol::GetSubtreeRootsArg;
 use zingo_netutils::{GrpcIndexer, Indexer};
 use zingo_test_vectors::seeds::HOSPITAL_MUSEUM_SEED;
-use zingolib::config::{ChainType, ClientConfig, WalletConfig};
+use zingolib::config::{ChainType, WalletConfig};
 use zingolib::data::PollReport;
 use zingolib::lightclient::DEFAULT_REQUEST_TIMEOUT;
+use zingolib::lightclient::{Encryption, store::FileStore};
 use zingolib::testutils::default_test_wallet_settings;
 use zingolib::testutils::lightclient::from_inputs::quick_send;
 use zingolib::testutils::scenarios::{self, increase_height_and_wait_for_client};
@@ -103,19 +104,20 @@ async fn add_subtree_roots() {
 
     let uri = construct_lightwalletd_uri(Some(DEFAULT_INDEXER_URI.to_string())).unwrap();
     let temp_dir = TempDir::new().unwrap();
-    let temp_path = temp_dir.path().to_path_buf();
-    let config = ClientConfig::builder()
-        .set_indexer_uri(uri.clone())
-        .set_chain_type(ChainType::Mainnet)
-        .set_wallet_dir(temp_path)
-        .set_wallet_config(WalletConfig::MnemonicPhrase {
+    let mut lightclient = LightClient::create(
+        FileStore::new(temp_dir.path().join("wallet.dat")),
+        ChainType::Mainnet,
+        uri,
+        WalletConfig::MnemonicPhrase {
             mnemonic_phrase: HOSPITAL_MUSEUM_SEED.to_string(),
             no_of_accounts: NonZeroU32::try_from(1).expect("hard-coded integer"),
             birthday: 2_000_000,
             wallet_settings: default_test_wallet_settings(),
-        })
-        .build();
-    let mut lightclient = LightClient::new(config, true, None).await.unwrap();
+        },
+        Encryption::None,
+    )
+    .await
+    .unwrap();
 
     let mut grpc_client = GrpcIndexer::new(lightclient.indexer_uri().clone())
         .await
