@@ -356,7 +356,7 @@ mod tests {
 
     use super::super::error::ProposeShieldError;
     use crate::{
-        config::{ChainType, DEFAULT_INDEXER_URI, WalletConfig},
+        config::{Birthday, ChainType, DEFAULT_INDEXER_URI, WalletConfig},
         lightclient::{Encryption, LightClient, store::MemoryStore},
         testutils::default_test_wallet_settings,
     };
@@ -369,7 +369,7 @@ mod tests {
             WalletConfig::MnemonicPhrase {
                 mnemonic_phrase: seeds::HOSPITAL_MUSEUM_SEED.to_string(),
                 no_of_accounts: 1.try_into().unwrap(),
-                birthday: 419200,
+                birthday: Birthday::Height(419200),
                 wallet_settings: default_test_wallet_settings(),
             },
             Encryption::None,

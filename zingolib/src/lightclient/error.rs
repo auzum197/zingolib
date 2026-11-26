@@ -41,6 +41,8 @@ pub enum CreateError {
     Wallet(#[from] WalletError),
     #[error("gRPC client error. {0}")]
     Indexer(#[from] GetClientError),
+    #[error("Failed to get the chain tip for the wallet birthday. {0}")]
+    ChainTip(#[from] zingo_netutils::Status),
 }
 
 /// Why [`crate::lightclient::LightClient::open`] failed.

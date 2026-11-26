@@ -13,7 +13,7 @@ use tokio::sync::broadcast::error::RecvError;
 use tokio::sync::mpsc;
 use zcash_protocol::{PoolType, ShieldedPool};
 use zingo_common_components::protocol::ActivationHeights;
-use zingolib::config::{ChainType, WalletConfig, construct_lightwalletd_uri};
+use zingolib::config::{Birthday, ChainType, WalletConfig, construct_lightwalletd_uri};
 use zingolib::data::PollReport;
 use zingolib::lightclient::error::OpenError;
 use zingolib::lightclient::save::SaveState;
@@ -342,7 +342,7 @@ impl Backend {
                     self.config.server_uri(network, Some(&server))?,
                     WalletConfig::Ufvk {
                         ufvk,
-                        birthday,
+                        birthday: Birthday::Height(birthday),
                         wallet_settings: wallet_settings(),
                     },
                     encryption,

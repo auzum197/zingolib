@@ -56,7 +56,7 @@ use zcash_transparent::bundle::{
 };
 use zingo_common_components::protocol::ActivationHeights;
 
-use crate::config::{ChainType, WalletConfig};
+use crate::config::{Birthday, ChainType, WalletConfig};
 use crate::lightclient::store::FileStore;
 use crate::lightclient::{Encryption, LightClient};
 use crate::testutils::chain_generics::conduct_chain::ConductChain;
@@ -2292,7 +2292,7 @@ impl MockNet {
             WalletConfig::MnemonicPhrase {
                 mnemonic_phrase: mnemonic.to_string(),
                 no_of_accounts: 1.try_into().expect("hard-coded non-zero"),
-                birthday: 1,
+                birthday: Birthday::Height(1),
                 wallet_settings: default_test_wallet_settings(),
             },
             Encryption::None,

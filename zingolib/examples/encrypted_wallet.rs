@@ -13,7 +13,7 @@ use std::io::Cursor;
 use std::num::NonZeroU32;
 
 use pepper_sync::config::{PerformanceLevel, SyncConfig, TransparentAddressDiscovery};
-use zingolib::config::{ChainType, WalletConfig};
+use zingolib::config::{Birthday, ChainType, WalletConfig};
 use zingolib::wallet::LightWallet;
 use zingolib::wallet::WalletSettings;
 use zingolib::wallet::encryption::{self, EncryptionConfig};
@@ -40,7 +40,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         network,
         WalletConfig::NewSeed {
             no_of_accounts: NonZeroU32::MIN,
-            chain_height: 419_300,
+            birthday: Birthday::Height(419_200),
             wallet_settings,
         },
         Some(EncryptionConfig::new(passphrase.clone())),

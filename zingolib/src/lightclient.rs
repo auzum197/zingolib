@@ -8,7 +8,7 @@ use tokio::{
 use bip0039::Mnemonic;
 use zcash_keys::address::UnifiedAddress;
 use zcash_primitives::transaction::TxId;
-use zcash_protocol::consensus::BlockHeight;
+use zcash_protocol::consensus::{BlockHeight, NetworkUpgrade, Parameters as _};
 use zcash_transparent::address::TransparentAddress;
 
 use pepper_sync::{
@@ -18,7 +18,7 @@ use pepper_sync::{
 use zingo_netutils::{Indexer as _, lightwallet_protocol::LightdInfo};
 
 use crate::{
-    config::{ChainType, WalletConfig},
+    config::{Birthday, ChainType, WalletConfig},
     wallet::{
         LightWallet,
         balance::AccountBalance,
@@ -106,16 +106,31 @@ pub struct LightClient {
 
 impl LightClient {
     /// Creates a wallet and its client. Fails if `store` already holds a wallet.
+    ///
+    /// A [`Birthday::ChainTip`] is read from the indexer, so it needs network access.
     #[allow(clippy::result_large_err)]
     pub async fn create(
         store: impl WalletStore,
         chain_type: ChainType,
         indexer_uri: http::Uri,
-        wallet_config: WalletConfig,
+        mut wallet_config: WalletConfig,
         encryption: Encryption,
     ) -> Result<Self, CreateError> {
         if store.load()?.is_some() {
             return Err(CreateError::AlreadyExists);
+        }
+        let mut indexer = Self::connect(indexer_uri).await?;
+        let birthday = wallet_config.birthday_mut();
+        if *birthday == Birthday::ChainTip {
+            let chain_tip = indexer
+                .get_latest_block(DEFAULT_REQUEST_TIMEOUT)
+                .await?
+                .height;
+            let sapling_activation = chain_type
+                .activation_height(NetworkUpgrade::Sapling)
+                .map_or(0, u32::from);
+            *birthday =
+                Birthday::Height((chain_tip.saturating_sub(100) as u32).max(sapling_activation));
         }
         let encryption = match encryption {
             Encryption::None => None,
@@ -126,7 +141,7 @@ impl LightClient {
             store.write(&bytes)?;
         }
 
-        Ok(Self::assemble(store, indexer_uri, wallet).await?)
+        Ok(Self::assemble(store, indexer, wallet))
     }
 
     /// Opens the wallet held by `store`. `unlock` must match how the wallet was stored.
@@ -152,20 +167,28 @@ impl LightClient {
                 e => OpenError::Wallet(e),
             })?;
 
-        Ok(Self::assemble(store, indexer_uri, wallet).await?)
+        Ok(Self::assemble(
+            store,
+            Self::connect(indexer_uri).await?,
+            wallet,
+        ))
     }
 
-    async fn assemble(
-        store: impl WalletStore,
+    async fn connect(
         indexer_uri: http::Uri,
-        wallet: LightWallet,
-    ) -> Result<Self, zingo_netutils::GetClientError> {
+    ) -> Result<zingo_netutils::GrpcIndexer, zingo_netutils::GetClientError> {
         // Both `ring` and `aws-lc-rs` are enabled through transitive dependencies, so rustls
         // cannot select a provider itself.
         let _ = rustls::crypto::ring::default_provider().install_default();
 
-        let indexer = zingo_netutils::GrpcIndexer::new(indexer_uri).await?;
+        zingo_netutils::GrpcIndexer::new(indexer_uri).await
+    }
 
+    fn assemble(
+        store: impl WalletStore,
+        indexer: zingo_netutils::GrpcIndexer,
+        wallet: LightWallet,
+    ) -> Self {
         let (sync_events, _root_receiver) =
             SyncEmitter::new(wallet.wallet_settings.sync_config.event_channel_capacity);
 
@@ -177,7 +200,7 @@ impl LightClient {
             Arc::new(store),
         );
 
-        Ok(LightClient {
+        LightClient {
             indexer,
             wallet,
             sync_mode: watch::Sender::new(SyncMode::NotRunning),
@@ -185,7 +208,7 @@ impl LightClient {
             sync_events,
             changes,
             save_state,
-        })
+        }
     }
 
     /// Returns the chain type for lock-free access.
@@ -359,7 +382,7 @@ mod mock_chain_tests;
 #[cfg(test)]
 mod tests {
     use crate::{
-        config::{ChainType, DEFAULT_INDEXER_URI, WalletConfig},
+        config::{Birthday, ChainType, DEFAULT_INDEXER_URI, WalletConfig},
         lightclient::{
             Encryption, LightClient, Unlock,
             error::{CreateError, OpenError},
@@ -400,7 +423,7 @@ mod tests {
             WalletConfig::MnemonicPhrase {
                 mnemonic_phrase: CHIMNEY_BETTER_SEED.to_string(),
                 no_of_accounts: 1.try_into().unwrap(),
-                birthday: 1,
+                birthday: Birthday::Height(1),
                 wallet_settings: default_test_wallet_settings(),
             },
             Encryption::None,
@@ -431,7 +454,7 @@ mod tests {
                 WalletConfig::MnemonicPhrase {
                     mnemonic_phrase: CHIMNEY_BETTER_SEED.to_string(),
                     no_of_accounts: 1.try_into().unwrap(),
-                    birthday: 1,
+                    birthday: Birthday::Height(1),
                     wallet_settings: default_test_wallet_settings(),
                 },
                 Encryption::None,

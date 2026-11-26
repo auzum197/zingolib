@@ -5,7 +5,7 @@ use std::{collections::BTreeMap, num::NonZeroU32};
 use bip0039::{English, Mnemonic};
 use http::uri::InvalidUri;
 
-use zcash_protocol::consensus::{BlockHeight, Parameters};
+use zcash_protocol::consensus::{BlockHeight, NetworkUpgrade, Parameters};
 
 pub use zingolib_common::chain::{ChainType, InvalidChainType};
 
@@ -18,39 +18,72 @@ use crate::wallet::{
 pub const DEFAULT_INDEXER_URI: &str = "https://zec.rocks:443";
 pub const DEFAULT_INDEXER_URI_TESTNET: &str = "https://testnet.zec.rocks";
 
+/// The first block that can hold activity of a wallet. Sync starts there.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Birthday {
+    /// 100 blocks below the chain tip of the indexer, for keys that have no history. Only
+    /// [`crate::lightclient::LightClient::create`] can resolve it.
+    ChainTip,
+    Height(u32),
+    /// The earliest birthday. Sync scans the whole shielded chain.
+    SaplingActivation,
+}
+
 /// Configuration data for the construction of a [`crate::wallet::LightWallet`].
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum WalletConfig {
     /// Generate a wallet with a new seed for a number of accounts.
     NewSeed {
         no_of_accounts: NonZeroU32,
-        chain_height: u32,
+        birthday: Birthday,
         wallet_settings: WalletSettings,
     },
     /// Generate a wallet from a mnemonic phrase for a number of accounts.
     MnemonicPhrase {
         mnemonic_phrase: String,
         no_of_accounts: NonZeroU32,
-        birthday: u32,
+        birthday: Birthday,
         wallet_settings: WalletSettings,
     },
     /// Generate a wallet from an encoded unified full viewing key.
     // TODO: take concrete UFVK type
     Ufvk {
         ufvk: String,
-        birthday: u32,
+        birthday: Birthday,
         wallet_settings: WalletSettings,
     },
     /// Generate a wallet from a unified spending key.
     // TODO: take concrete USK type
     Usk {
         usk: Vec<u8>,
-        birthday: u32,
+        birthday: Birthday,
         wallet_settings: WalletSettings,
     },
 }
 
+impl Birthday {
+    #[allow(clippy::result_large_err)]
+    fn height(self, chain_type: ChainType) -> Result<BlockHeight, WalletError> {
+        match self {
+            Birthday::ChainTip => Err(WalletError::ChainTipUnknown),
+            Birthday::Height(height) => Ok(BlockHeight::from_u32(height)),
+            Birthday::SaplingActivation => Ok(chain_type
+                .activation_height(NetworkUpgrade::Sapling)
+                .expect("should have some sapling activation height")),
+        }
+    }
+}
+
 impl WalletConfig {
+    pub(crate) fn birthday_mut(&mut self) -> &mut Birthday {
+        match self {
+            WalletConfig::NewSeed { birthday, .. }
+            | WalletConfig::MnemonicPhrase { birthday, .. }
+            | WalletConfig::Ufvk { birthday, .. }
+            | WalletConfig::Usk { birthday, .. } => birthday,
+        }
+    }
+
     /// Resolves the wallet config into the base data needed to construct the wallet.
     ///
     /// `NewSeed` generates the wallet base data from a new 24-word mnemonic.
@@ -59,24 +92,16 @@ impl WalletConfig {
         match self {
             WalletConfig::NewSeed {
                 no_of_accounts,
-                chain_height,
+                birthday,
                 wallet_settings,
-            } => {
-                let sapling_activation_height = chain_type
-                    .activation_height(zcash_protocol::consensus::NetworkUpgrade::Sapling)
-                    .expect("should have some sapling activation height");
-                let birthday =
-                    sapling_activation_height.max(BlockHeight::from_u32(chain_height) - 100);
-
-                WalletConfig::MnemonicPhrase {
-                    mnemonic_phrase: Mnemonic::<English>::generate(bip0039::Count::Words24)
-                        .into_phrase(),
-                    no_of_accounts,
-                    birthday: u32::from(birthday),
-                    wallet_settings,
-                }
-                .resolve(chain_type)
+            } => WalletConfig::MnemonicPhrase {
+                mnemonic_phrase: Mnemonic::<English>::generate(bip0039::Count::Words24)
+                    .into_phrase(),
+                no_of_accounts,
+                birthday,
+                wallet_settings,
             }
+            .resolve(chain_type),
             WalletConfig::MnemonicPhrase {
                 mnemonic_phrase: mnemonic,
                 no_of_accounts,
@@ -97,7 +122,7 @@ impl WalletConfig {
                 Ok(WalletBase {
                     unified_key_store,
                     mnemonic: Some(mnemonic),
-                    birthday: BlockHeight::from_u32(birthday),
+                    birthday: birthday.height(chain_type)?,
                     wallet_settings,
                     encryption: None,
                 })
@@ -115,7 +140,7 @@ impl WalletConfig {
                 Ok(WalletBase {
                     unified_key_store,
                     mnemonic: None,
-                    birthday: BlockHeight::from_u32(birthday),
+                    birthday: birthday.height(chain_type)?,
                     wallet_settings,
                     encryption: None,
                 })
@@ -133,7 +158,7 @@ impl WalletConfig {
                 Ok(WalletBase {
                     unified_key_store,
                     mnemonic: None,
-                    birthday: BlockHeight::from_u32(birthday),
+                    birthday: birthday.height(chain_type)?,
                     wallet_settings,
                     encryption: None,
                 })

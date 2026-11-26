@@ -9,7 +9,7 @@
 use std::num::NonZeroU32;
 
 use zingo_common_components::protocol::ActivationHeights;
-use zingolib::config::{ChainType, WalletConfig};
+use zingolib::config::{Birthday, ChainType, WalletConfig};
 use zingolib::lightclient::LightClient;
 use zingolib::lightclient::store::FileStore;
 use zingolib::testutils::chain_generics::conduct_chain::ConductChain;
@@ -110,7 +110,7 @@ pub async fn build_client(
             WalletConfig::MnemonicPhrase {
                 mnemonic_phrase: mnemonic_phrase.to_string(),
                 no_of_accounts: NonZeroU32::try_from(1).expect("hard-coded integer"),
-                birthday,
+                birthday: Birthday::Height(birthday),
                 wallet_settings: default_test_wallet_settings(),
             },
             activation_heights(),

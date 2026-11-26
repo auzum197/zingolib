@@ -144,7 +144,7 @@ mod fast {
     use zingolib::testutils::scenarios::increase_height_and_wait_for_client;
     use zingolib::{
         ZENNIES_FOR_ZINGO_REGTEST_ADDRESS,
-        config::WalletConfig,
+        config::{Birthday, WalletConfig},
         testutils::{
             chain_generics::conduct_chain::ConductChain,
             default_test_wallet_settings,
@@ -172,7 +172,7 @@ mod fast {
                 WalletConfig::MnemonicPhrase {
                     mnemonic_phrase: HOSPITAL_MUSEUM_SEED.to_string(),
                     no_of_accounts: 1.try_into().unwrap(),
-                    birthday: 1,
+                    birthday: Birthday::Height(1),
                     wallet_settings: default_test_wallet_settings(),
                 },
                 local_net.activation_heights(),
@@ -227,7 +227,7 @@ mod fast {
                 WalletConfig::MnemonicPhrase {
                     mnemonic_phrase: HOSPITAL_MUSEUM_SEED.to_string(),
                     no_of_accounts: 1.try_into().unwrap(),
-                    birthday: 1,
+                    birthday: Birthday::Height(1),
                     wallet_settings: default_test_wallet_settings(),
                 },
                 local_net.activation_heights(),
@@ -858,7 +858,7 @@ mod fast {
                 WalletConfig::MnemonicPhrase {
                     mnemonic_phrase: seed_phrase,
                     no_of_accounts: 1.try_into().unwrap(),
-                    birthday: 1,
+                    birthday: Birthday::Height(1),
                     wallet_settings: default_test_wallet_settings(),
                 },
                 local_net.activation_heights(),
@@ -936,7 +936,7 @@ tmQuMoTTjU3GFfTjrhPiBYihbTVfYmPk5Gr"
                 WalletConfig::MnemonicPhrase {
                     mnemonic_phrase: HOSPITAL_MUSEUM_SEED.to_string(),
                     no_of_accounts: 1.try_into().unwrap(),
-                    birthday: 1,
+                    birthday: Birthday::Height(1),
                     wallet_settings: default_test_wallet_settings(),
                 },
                 local_net.activation_heights(),
@@ -1093,7 +1093,7 @@ mod slow {
     use zcash_protocol::{PoolType, ShieldedPool};
     use zingo_common_components::protocol::ActivationHeights;
     use zingo_test_vectors::TEST_TXID;
-    use zingolib::config::{ChainType, WalletConfig};
+    use zingolib::config::{Birthday, ChainType, WalletConfig};
     use zingolib::lightclient::{Encryption, LightClient};
     use zingolib::testutils::lightclient::{from_inputs, get_fees_paid_by_client};
     use zingolib::testutils::scenarios::increase_height_and_wait_for_client;
@@ -1246,7 +1246,7 @@ mod slow {
                 WalletConfig::MnemonicPhrase {
                     mnemonic_phrase: HOSPITAL_MUSEUM_SEED.to_string(),
                     no_of_accounts: 1.try_into().unwrap(),
-                    birthday: 1,
+                    birthday: Birthday::Height(1),
                     wallet_settings: default_test_wallet_settings(),
                 },
                 local_net.activation_heights(),
@@ -1332,7 +1332,7 @@ mod slow {
                 client_builder.server_id.clone(),
                 WalletConfig::Ufvk {
                     ufvk,
-                    birthday: 1,
+                    birthday: Birthday::Height(1),
                     wallet_settings: default_test_wallet_settings(),
                 },
                 Encryption::None,
@@ -2514,7 +2514,7 @@ TransactionSummary {
                 WalletConfig::MnemonicPhrase {
                     mnemonic_phrase: HOSPITAL_MUSEUM_SEED.to_string(),
                     no_of_accounts: 1.try_into().unwrap(),
-                    birthday: 1,
+                    birthday: Birthday::Height(1),
                     wallet_settings: default_test_wallet_settings(),
                 },
                 local_net.activation_heights(),
@@ -2567,7 +2567,7 @@ TransactionSummary {
                 WalletConfig::MnemonicPhrase {
                     mnemonic_phrase: HOSPITAL_MUSEUM_SEED.to_string(),
                     no_of_accounts: 1.try_into().unwrap(),
-                    birthday: 1,
+                    birthday: Birthday::Height(1),
                     wallet_settings: default_test_wallet_settings(),
                 },
                 local_net.activation_heights(),
@@ -3289,7 +3289,7 @@ mod testnet_test {
     use pepper_sync::sync_status;
     use zingo_test_vectors::seeds::HOSPITAL_MUSEUM_SEED;
     use zingolib::{
-        config::{ChainType, DEFAULT_INDEXER_URI_TESTNET, WalletConfig},
+        config::{Birthday, ChainType, DEFAULT_INDEXER_URI_TESTNET, WalletConfig},
         lightclient::{Encryption, LightClient, Unlock, store::FileStore},
         testutils::{default_test_wallet_settings, tempfile::TempDir},
     };
@@ -3316,7 +3316,7 @@ mod testnet_test {
                 WalletConfig::MnemonicPhrase {
                     mnemonic_phrase: HOSPITAL_MUSEUM_SEED.to_string(),
                     no_of_accounts: 1.try_into().unwrap(),
-                    birthday: 2_000_000,
+                    birthday: Birthday::Height(2_000_000),
                     wallet_settings: default_test_wallet_settings(),
                 },
                 Encryption::None,

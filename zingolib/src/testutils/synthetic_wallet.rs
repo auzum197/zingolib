@@ -37,7 +37,7 @@ use zcash_protocol::value::Zatoshis;
 use zingo_common_components::protocol::ActivationHeights;
 use zingolib_common::status::ConfirmationStatus;
 
-use crate::config::{ChainType, WalletConfig};
+use crate::config::{Birthday, ChainType, WalletConfig};
 use crate::mocks::SaplingCryptoNoteBuilder;
 use crate::mocks::nullifier::{OrchardNullifierBuilder, SaplingNullifierBuilder};
 use crate::mocks::orchard_note::OrchardCryptoNoteBuilder;
@@ -127,7 +127,7 @@ impl SyntheticWalletBuilder {
             WalletConfig::MnemonicPhrase {
                 mnemonic_phrase: self.mnemonic.clone(),
                 no_of_accounts: 1.try_into().expect("hard-coded non-zero"),
-                birthday: 1,
+                birthday: Birthday::Height(1),
                 wallet_settings: default_test_wallet_settings(),
             },
             None,

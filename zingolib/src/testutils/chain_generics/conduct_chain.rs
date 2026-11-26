@@ -4,7 +4,7 @@
 //! `NetworkedTestEnvironment`, which follows a live testnet indexer
 //! darkside, a mode for the lightserver which mocks zcashd. search 'impl ConductChain for DarksideEnvironment
 
-use crate::config::{ChainType, WalletConfig};
+use crate::config::{Birthday, ChainType, WalletConfig};
 use crate::get_base_address_macro;
 use crate::lightclient::store::FileStore;
 use crate::lightclient::{Encryption, LightClient};
@@ -39,7 +39,7 @@ pub trait ConductChain {
             indexer_uri,
             WalletConfig::NewSeed {
                 no_of_accounts: 1.try_into().unwrap(),
-                chain_height: 1,
+                birthday: Birthday::ChainTip,
                 wallet_settings: default_test_wallet_settings(),
             },
             Encryption::None,

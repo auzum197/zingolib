@@ -8,7 +8,7 @@ use zcash_protocol::consensus::BlockHeight;
 use zingo_netutils::lightwallet_protocol::GetSubtreeRootsArg;
 use zingo_netutils::{GrpcIndexer, Indexer};
 use zingo_test_vectors::seeds::HOSPITAL_MUSEUM_SEED;
-use zingolib::config::{ChainType, WalletConfig};
+use zingolib::config::{Birthday, ChainType, WalletConfig};
 use zingolib::data::PollReport;
 use zingolib::lightclient::DEFAULT_REQUEST_TIMEOUT;
 use zingolib::lightclient::{Encryption, store::FileStore};
@@ -111,7 +111,7 @@ async fn add_subtree_roots() {
         WalletConfig::MnemonicPhrase {
             mnemonic_phrase: HOSPITAL_MUSEUM_SEED.to_string(),
             no_of_accounts: NonZeroU32::try_from(1).expect("hard-coded integer"),
-            birthday: 2_000_000,
+            birthday: Birthday::Height(2_000_000),
             wallet_settings: default_test_wallet_settings(),
         },
         Encryption::None,

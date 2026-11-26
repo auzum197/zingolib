@@ -3,7 +3,7 @@ use zcash_keys::keys::Era;
 use zingo_test_vectors::seeds::CHIMNEY_BETTER_SEED;
 
 use crate::{
-    config::{ChainType, DEFAULT_INDEXER_URI_TESTNET, WalletConfig},
+    config::{Birthday, ChainType, DEFAULT_INDEXER_URI_TESTNET, WalletConfig},
     lightclient::{Encryption, LightClient, Unlock, store::FileStore},
     testutils::default_test_wallet_settings,
     wallet::{LightWallet, keys::unified::UnifiedKeyStore},
@@ -23,7 +23,7 @@ async fn reload_wallet_from_file() {
         WalletConfig::MnemonicPhrase {
             mnemonic_phrase: CHIMNEY_BETTER_SEED.to_string(),
             no_of_accounts: 1.try_into().unwrap(),
-            birthday: 2_000_000,
+            birthday: Birthday::Height(2_000_000),
             wallet_settings: default_test_wallet_settings(),
         },
         Encryption::None,
@@ -77,7 +77,7 @@ async fn reload_wallet_from_file() {
     let ufvk_string = ufvk.encode(&chain_type);
     let wallet_config = WalletConfig::Ufvk {
         ufvk: ufvk_string.clone(),
-        birthday: loaded_client.birthday(),
+        birthday: Birthday::Height(loaded_client.birthday()),
         wallet_settings: loaded_wallet.wallet_settings.clone(),
     };
     let view_wallet = LightWallet::new(chain_type, wallet_config, None).unwrap();
@@ -103,7 +103,7 @@ fn contains_subsequence(haystack: &[u8], needle: &[u8]) -> bool {
 /// a wrong or absent one.
 #[test]
 fn encrypted_wallet_round_trip_and_backward_compat() {
-    use crate::config::{ChainType, WalletConfig};
+    use crate::config::{Birthday, ChainType, WalletConfig};
     use crate::testutils::default_test_wallet_settings;
     use crate::wallet::encryption::is_encrypted;
     use std::num::NonZeroU32;
@@ -119,7 +119,7 @@ fn encrypted_wallet_round_trip_and_backward_compat() {
         WalletConfig::MnemonicPhrase {
             mnemonic_phrase: seed.to_string(),
             no_of_accounts: NonZeroU32::MIN,
-            birthday: 2_800_000,
+            birthday: Birthday::Height(2_800_000),
             wallet_settings: default_test_wallet_settings(),
         },
         None,
@@ -167,7 +167,7 @@ fn encrypted_wallet_round_trip_and_backward_compat() {
 /// the header, and the encrypted bytes round-trip (rejecting a wrong passphrase).
 #[test]
 fn construction_encryption_records_custom_memory_and_round_trips() {
-    use crate::config::{ChainType, WalletConfig};
+    use crate::config::{Birthday, ChainType, WalletConfig};
     use crate::testutils::default_test_wallet_settings;
     use crate::wallet::encryption::{Argon2Params, EncryptionConfig, is_encrypted};
     use std::num::NonZeroU32;
@@ -183,7 +183,7 @@ fn construction_encryption_records_custom_memory_and_round_trips() {
         WalletConfig::MnemonicPhrase {
             mnemonic_phrase: seed.to_string(),
             no_of_accounts: NonZeroU32::MIN,
-            birthday: 2_800_000,
+            birthday: Birthday::Height(2_800_000),
             wallet_settings: default_test_wallet_settings(),
         },
         Some(EncryptionConfig::with_params(
@@ -227,7 +227,7 @@ fn sapling_receivers_without_an_address_move_up_on_load() {
         WalletConfig::MnemonicPhrase {
             mnemonic_phrase: CHIMNEY_BETTER_SEED.to_string(),
             no_of_accounts: 1.try_into().unwrap(),
-            birthday: 2_000_000,
+            birthday: Birthday::Height(2_000_000),
             wallet_settings: default_test_wallet_settings(),
         },
         None,
