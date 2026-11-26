@@ -28,6 +28,8 @@
 //! ```text
 //! RUSTDOCFLAGS="-D warnings" cargo doc --all-features --document-private-items
 
+#![warn(missing_docs)]
+
 use std::future::Future;
 use std::time::Duration;
 
@@ -43,11 +45,15 @@ use lightwallet_protocol::{
 #[cfg(feature = "ping-very-insecure")]
 use lightwallet_protocol::{Duration as ProtoDuration, PingResponse};
 
+mod connector;
 pub mod error;
+mod source;
 
+pub use connector::{DohServer, Resolver, TcpConnector};
 pub use error::*;
 pub use lightwallet_protocol;
 pub use tonic::{Status, Streaming};
+pub use wallet_api;
 
 #[cfg(feature = "globally-public-transparent")]
 mod globally_public;
@@ -235,36 +241,47 @@ pub trait Indexer {
 pub struct GrpcIndexer {
     uri: http::Uri,
     clear_net_client: CompactTxStreamerClient<Channel>,
+    info: wallet_api::SourceInfo,
     // TODO; add nym_client
 }
 
 impl GrpcIndexer {
+    /// An untrusted indexer at `uri`, through a default [`TcpConnector`]. The connection
+    /// opens on the first request.
     pub async fn new(uri: http::Uri) -> Result<Self, GetClientError> {
-        let scheme = uri
-            .scheme_str()
-            .ok_or(GetClientError::InvalidScheme)?
-            .to_string();
+        Self::with_connector(uri, TcpConnector::default())
+    }
+
+    fn endpoint(uri: &http::Uri) -> Result<Endpoint, GetClientError> {
+        let scheme = uri.scheme_str().ok_or(GetClientError::InvalidScheme)?;
         if scheme != "http" && scheme != "https" {
             return Err(GetClientError::InvalidScheme);
         }
-        let _authority = uri
-            .authority()
-            .ok_or(GetClientError::InvalidAuthority)?
-            .clone();
+        uri.authority().ok_or(GetClientError::InvalidAuthority)?;
 
         let endpoint = Endpoint::from_shared(uri.to_string())?.tcp_nodelay(true);
-        let endpoint = if scheme == "https" {
-            endpoint.tls_config(client_tls_config())?
+        if scheme == "https" {
+            Ok(endpoint.tls_config(client_tls_config())?)
         } else {
-            endpoint
-        };
-        let channel = endpoint.connect_lazy();
-        let clear_net_client = CompactTxStreamerClient::new(channel);
+            Ok(endpoint)
+        }
+    }
 
-        Ok(Self {
+    fn from_channel(
+        uri: http::Uri,
+        channel: Channel,
+        mut transport: wallet_api::TransportInfo,
+    ) -> Self {
+        if uri.scheme_str() == Some("https") {
+            transport.exposed_to_network.content = false;
+        }
+        let info = source::info(&uri, transport);
+
+        Self {
             uri,
-            clear_net_client,
-        })
+            clear_net_client: CompactTxStreamerClient::new(channel),
+            info,
+        }
     }
 
     /// Returns URI the gRPC client(s) are connected to.
