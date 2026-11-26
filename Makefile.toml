@@ -5,9 +5,9 @@ default_to_workspace = false
 
 [env]
 NEXTEST_EXPERIMENTAL_LIBTEST_JSON = "1"
-ZINGOLIB_NEXTEST_PROFILE = "ci"
-ZINGOLIB_NEXTEST_RETRIES = "2"
-ZINGOLIB_NEXTEST_FILTER = "not test(slow)"
+EKDROMOI_NEXTEST_PROFILE = "ci"
+EKDROMOI_NEXTEST_RETRIES = "2"
+EKDROMOI_NEXTEST_FILTER = "not test(slow)"
 IMAGE_NAME = "zingodevops/ci-build"
 RUST_VERSION = { script = ["sed -n 's/^[[:space:]]*channel[[:space:]]*=[[:space:]]*\"\\([0-9.]*\\)\".*/\\1/p' rust-toolchain.toml | head -n1"] }
 
@@ -15,13 +15,13 @@ RUST_VERSION = { script = ["sed -n 's/^[[:space:]]*channel[[:space:]]*=[[:space:
 alias = "help"
 
 [tasks.help]
-description = "List Zingolib cargo-make tasks"
+description = "List Ekdromoi cargo-make tasks"
 script_runner = "bash"
 script = '''
 set -euo pipefail
 
 cat <<'HELP'
-Zingolib test tasks
+Ekdromoi test tasks
 -------------------
 
 Common usage:
@@ -41,10 +41,10 @@ The local-run task mirrors the PR test defaults:
   cargo nextest run --verbose --workspace --profile ci --retries 2 -E 'not test(slow)'
 
 Forward extra nextest flags after the task name:
-  makers container-test -p zingolib-common
+  makers container-test -p ekdromoi-common
 
 Override the default nextest filter:
-  ZINGOLIB_NEXTEST_FILTER='package(zingolib) & not test(slow)' makers container-test
+  EKDROMOI_NEXTEST_FILTER='package(ekdromoi) & not test(slow)' makers container-test
 
 Reproduce the latest failing or incomplete nextest run:
   makers rerun
@@ -124,8 +124,8 @@ nextest_args() {
   local -a extra_args=("$@")
   local -a args=(
     --verbose
-    --profile "${ZINGOLIB_NEXTEST_PROFILE}"
-    --retries "${ZINGOLIB_NEXTEST_RETRIES}"
+    --profile "${EKDROMOI_NEXTEST_PROFILE}"
+    --retries "${EKDROMOI_NEXTEST_RETRIES}"
   )
 
   args+=("${extra_args[@]}")
@@ -136,8 +136,8 @@ nextest_args() {
     args+=("${workspace_arg}")
   fi
 
-  if [[ -n "${ZINGOLIB_NEXTEST_FILTER:-}" ]]; then
-    args+=(-E "${ZINGOLIB_NEXTEST_FILTER}")
+  if [[ -n "${EKDROMOI_NEXTEST_FILTER:-}" ]]; then
+    args+=(-E "${EKDROMOI_NEXTEST_FILTER}")
   fi
 
   printf '%s\n' "${args[@]}"
@@ -155,9 +155,9 @@ container_nextest_run() {
   "${runtime}" run --rm --init \
     --pids-limit -1 \
     -v "${PWD}:/workspace" \
-    -v "zingolib-container-target:/workspace/target${mount_suffix}" \
-    -v "zingolib-cargo-git:/root/.cargo/git${mount_suffix}" \
-    -v "zingolib-cargo-registry:/root/.cargo/registry${mount_suffix}" \
+    -v "ekdromoi-container-target:/workspace/target${mount_suffix}" \
+    -v "ekdromoi-cargo-git:/root/.cargo/git${mount_suffix}" \
+    -v "ekdromoi-cargo-registry:/root/.cargo/registry${mount_suffix}" \
     -e "NEXTEST_EXPERIMENTAL_LIBTEST_JSON=${NEXTEST_EXPERIMENTAL_LIBTEST_JSON}" \
     -w /workspace \
     "${IMAGE_NAME}:${tag}" \
@@ -178,7 +178,7 @@ description = "Initialize named volumes used by containerized tests"
 extend = "base-script"
 script.main = '''
 runtime="$(container_runtime)"
-for volume in zingolib-container-target zingolib-cargo-git zingolib-cargo-registry; do
+for volume in ekdromoi-container-target ekdromoi-cargo-git ekdromoi-cargo-registry; do
   "${runtime}" volume inspect "${volume}" >/dev/null 2>&1 || "${runtime}" volume create "${volume}" >/dev/null
 done
 mkdir -p target

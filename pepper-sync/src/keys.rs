@@ -18,8 +18,8 @@ pub mod transparent;
 
 use crate::engine::KeyIdOps as _;
 
-pub(crate) use zingolib_common::engine::encode_orchard_receiver;
-pub use zingolib_common::keys::{AddressIndex, KeyId, decode_address, decode_unified_address};
+pub(crate) use ekdromoi_common::engine::encode_orchard_receiver;
+pub use ekdromoi_common::keys::{AddressIndex, KeyId, decode_address, decode_unified_address};
 
 /// A key that can be used to perform trial decryption and nullifier
 /// computation for a `CompactSaplingOutput` or `CompactOrchardAction`.

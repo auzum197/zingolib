@@ -8,7 +8,7 @@ use tokio_util::sync::CancellationToken;
 use zcash_primitives::transaction::{Transaction, TxId};
 use zcash_protocol::consensus::{self, BlockHeight};
 
-use zingo_netutils::{
+use ekdromoi_netutils::{
     Indexer, TransparentIndexer,
     lightwallet_protocol::{
         BlockId, CompactBlock, GetAddressUtxosReply, RawTransaction, TreeState,
@@ -21,7 +21,7 @@ use crate::{
 };
 
 #[cfg(not(feature = "darkside_test"))]
-use zingo_netutils::lightwallet_protocol::SubtreeRoot;
+use ekdromoi_netutils::lightwallet_protocol::SubtreeRoot;
 
 pub(crate) mod fetch;
 

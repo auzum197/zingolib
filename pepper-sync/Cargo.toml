@@ -16,13 +16,13 @@ default = []
 # removes failing calls to `GetSubTreeRoots` in darkside testing
 darkside_test = []
 # exposes test constructors for wallet types
-test-features = ["zingolib-common/test-features"]
+test-features = ["ekdromoi-common/test-features"]
 
 [dependencies]
 # Zingo
 lightwallet-protocol.workspace = true
-zingolib-common.workspace = true
-zingo-netutils.workspace = true
+ekdromoi-common.workspace = true
+ekdromoi-netutils.workspace = true
 
 # Zcash
 incrementalmerkletree.workspace = true
@@ -75,7 +75,7 @@ hex.workspace = true
 simple-mermaid.workspace = true
 
 [dev-dependencies]
-zingolib-common = { workspace = true, features = ["test-features"] }
+ekdromoi-common = { workspace = true, features = ["test-features"] }
 zcash_protocol = { workspace = true, features = [ "local-consensus"] }
 criterion.workspace = true
 proptest.workspace = true

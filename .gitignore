@@ -2,6 +2,6 @@
 cobertura.xml
 target
 wallets/*
-zingolib/proptest-regressions
+ekdromoi/proptest-regressions
 .DS_Store
 .zingo-cli/

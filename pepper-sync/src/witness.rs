@@ -3,6 +3,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::ops::Range;
 
+use ekdromoi_netutils::lightwallet_protocol::TreeState;
 use incrementalmerkletree::{
     Position, Retention,
     frontier::{CommitmentTree, Frontier},
@@ -12,17 +13,16 @@ use sapling_crypto::Node;
 use shardtree::LocatedPrunableTree;
 use zcash_primitives::{block::BlockHash, merkle_tree::read_commitment_tree};
 use zcash_protocol::consensus::BlockHeight;
-use zingo_netutils::lightwallet_protocol::TreeState;
 
 use crate::sync::SHARDTREE_CHECKPOINT_ROLLING_WINDOW_SIZE;
 
 #[cfg(not(feature = "darkside_test"))]
 use {
-    crate::error::ServerError, shardtree::store::ShardStore, subtle::CtOption,
-    zingo_netutils::lightwallet_protocol::SubtreeRoot,
+    crate::error::ServerError, ekdromoi_netutils::lightwallet_protocol::SubtreeRoot,
+    shardtree::store::ShardStore, subtle::CtOption,
 };
 
-pub(crate) use zingolib_common::wallet::SHARD_HEIGHT;
+pub(crate) use ekdromoi_common::wallet::SHARD_HEIGHT;
 
 /// Required data for updating [`shardtree::ShardTree`]
 #[derive(Debug)]

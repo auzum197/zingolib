@@ -3,6 +3,9 @@ use std::{
     collections::{BTreeMap, BTreeSet, HashMap},
 };
 
+use ekdromoi_netutils::lightwallet_protocol::{
+    CompactBlock, CompactOrchardAction, CompactSaplingOutput,
+};
 use incrementalmerkletree::{Marking, Position, Retention};
 use orchard::tree::MerkleHashOrchard;
 use sapling_crypto::Node;
@@ -11,9 +14,6 @@ use zcash_keys::keys::UnifiedFullViewingKey;
 use zcash_note_encryption::Domain;
 use zcash_primitives::block::BlockHash;
 use zcash_protocol::consensus::{self, BlockHeight};
-use zingo_netutils::lightwallet_protocol::{
-    CompactBlock, CompactOrchardAction, CompactSaplingOutput,
-};
 use zip32::AccountId;
 
 use crate::{
@@ -600,7 +600,7 @@ fn set_checkpoint_retentions<L>(
 
 #[cfg(all(test, not(feature = "darkside_test")))]
 mod tests {
-    use zingo_netutils::lightwallet_protocol::ChainMetadata;
+    use ekdromoi_netutils::lightwallet_protocol::ChainMetadata;
 
     use super::*;
 

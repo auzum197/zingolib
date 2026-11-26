@@ -8,6 +8,8 @@ use std::time::{Duration, Instant, SystemTime};
 use tokio::sync::{RwLock, mpsc, watch};
 use tokio_util::sync::CancellationToken;
 
+use ekdromoi_netutils::lightwallet_protocol::RawTransaction;
+use ekdromoi_netutils::{Indexer, TransparentIndexer};
 use incrementalmerkletree::{Marking, Retention};
 use orchard::tree::MerkleHashOrchard;
 use shardtree::store::ShardStore;
@@ -15,11 +17,9 @@ use zcash_keys::keys::UnifiedFullViewingKey;
 use zcash_primitives::transaction::{Transaction, TxId};
 use zcash_protocol::ShieldedPool;
 use zcash_protocol::consensus::{self, BlockHeight};
-use zingo_netutils::lightwallet_protocol::RawTransaction;
-use zingo_netutils::{Indexer, TransparentIndexer};
 use zip32::AccountId;
 
-use zingolib_common::status::ConfirmationStatus;
+use ekdromoi_common::status::ConfirmationStatus;
 
 use crate::client::{self, FetchRequest};
 use crate::config::{PerformanceLevel, SyncConfig};
@@ -47,7 +47,7 @@ use crate::witness::LocatedTreeData;
 #[cfg(not(feature = "darkside_test"))]
 use crate::witness;
 #[cfg(not(feature = "darkside_test"))]
-use zingo_netutils::lightwallet_protocol::SubtreeRoot;
+use ekdromoi_netutils::lightwallet_protocol::SubtreeRoot;
 
 #[cfg(not(feature = "darkside_test"))]
 pub(crate) mod transparent;
@@ -55,9 +55,9 @@ pub(crate) mod transparent;
 pub(crate) mod spend;
 pub(crate) mod state;
 
-pub(crate) use zingolib_common::engine::VerifyEnd;
-pub use zingolib_common::sync::{ScanPriority, ScanRange};
-pub(crate) use zingolib_common::wallet::{
+pub(crate) use ekdromoi_common::engine::VerifyEnd;
+pub use ekdromoi_common::sync::{ScanPriority, ScanRange};
+pub(crate) use ekdromoi_common::wallet::{
     MAX_REORG_ALLOWANCE, SHARDTREE_CHECKPOINT_ROLLING_WINDOW_SIZE,
 };
 
@@ -1933,6 +1933,7 @@ mod test {
         use std::collections::{BTreeMap, HashMap};
         use std::time::Duration;
 
+        use ekdromoi_common::status::ConfirmationStatus;
         use incrementalmerkletree::Position;
         use shardtree::store::ShardStore;
         use tokio::sync::mpsc;
@@ -1940,7 +1941,6 @@ mod test {
         use zcash_primitives::transaction::{TransactionData, TxId, TxVersion};
         use zcash_protocol::consensus::{BlockHeight, BranchId};
         use zcash_protocol::local_consensus::LocalNetwork;
-        use zingolib_common::status::ConfirmationStatus;
 
         use crate::bench_support::{synthetic_orchard_leaves, synthetic_sapling_leaves};
         use crate::config::PerformanceLevel;

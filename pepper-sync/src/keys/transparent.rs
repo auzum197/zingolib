@@ -7,7 +7,7 @@ use zcash_transparent::address::TransparentAddress;
 #[cfg(not(feature = "darkside_test"))]
 use zcash_transparent::keys::{AccountPubKey, IncomingViewingKey as _, NonHardenedChildIndex};
 
-pub use zingolib_common::keys::{TransparentAddressId, TransparentScope};
+pub use ekdromoi_common::keys::{TransparentAddressId, TransparentScope};
 
 #[cfg(not(feature = "darkside_test"))]
 pub(crate) fn derive_address(

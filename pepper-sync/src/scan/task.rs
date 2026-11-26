@@ -12,10 +12,10 @@ use tokio::{
     task::JoinSet,
 };
 
+use ekdromoi_netutils::lightwallet_protocol::CompactBlock;
 use zcash_keys::keys::UnifiedFullViewingKey;
 use zcash_primitives::transaction::TxId;
 use zcash_protocol::consensus::{self, BlockHeight};
-use zingo_netutils::lightwallet_protocol::CompactBlock;
 use zip32::AccountId;
 
 use crate::{
@@ -868,10 +868,10 @@ impl ScanTask {
 mod tests {
     use std::collections::{BTreeSet, HashMap};
 
-    use zcash_protocol::consensus::BlockHeight;
-    use zingo_netutils::lightwallet_protocol::{
+    use ekdromoi_netutils::lightwallet_protocol::{
         CompactBlock, CompactOrchardAction, CompactSaplingOutput, CompactTx,
     };
+    use zcash_protocol::consensus::BlockHeight;
 
     use crate::sync::{ScanPriority, ScanRange};
 

@@ -4,16 +4,16 @@ use std::{ops::Range, time::Duration};
 
 use tokio::sync::mpsc::UnboundedReceiver;
 
-use tracing::instrument;
-use zcash_primitives::transaction::TxId;
-use zcash_protocol::consensus::BlockHeight;
-use zingo_netutils::{
+use ekdromoi_netutils::{
     Indexer, TransparentIndexer,
     lightwallet_protocol::{
         BlockId, BlockRange, CompactBlock, GetAddressUtxosArg, GetAddressUtxosReply,
         RawTransaction, TransparentAddressBlockFilter, TreeState, TxFilter,
     },
 };
+use tracing::instrument;
+use zcash_primitives::transaction::TxId;
+use zcash_protocol::consensus::BlockHeight;
 
 use crate::client::FetchRequest;
 
@@ -21,7 +21,7 @@ const UNARY_RPC_TIMEOUT: Duration = Duration::from_secs(10);
 const HEAVY_UNARY_TIMEOUT: Duration = Duration::from_secs(20);
 
 #[cfg(not(feature = "darkside_test"))]
-use zingo_netutils::lightwallet_protocol::{GetSubtreeRootsArg, SubtreeRoot};
+use ekdromoi_netutils::lightwallet_protocol::{GetSubtreeRootsArg, SubtreeRoot};
 
 /// Receives [`self::FetchRequest`]'s via an [`tokio::sync::mpsc::UnboundedReceiver`] for queueing,
 /// prioritisation and fetching from the server.

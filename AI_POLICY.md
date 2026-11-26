@@ -1,6 +1,6 @@
 # AI Usage Policy
 
-The Zingolib project has strict rules for AI usage:
+The Ekdromoi project has strict rules for AI usage:
 
 - **All AI usage in any form must be disclosed.** You must state
   the tool you used (e.g. Claude Code, Cursor, Amp) along with
@@ -35,11 +35,11 @@ Any team member may close a PR. We'll leave a comment explaining why and invite 
 - No linked issue, or issue exists but no team member has responded to it
 - Feature or refactor nobody requested
 - Missing test evidence or inability to explain the changes
-- Out of scope for Zingolib (see above)
+- Out of scope for Ekdromoi (see above)
 
 ## There are Humans Here
 
-Please remember that Zingolib is maintained by humans.
+Please remember that Ekdromoi is maintained by humans.
 
 Every discussion, issue, and pull request is read and reviewed by
 humans (and sometimes machines, too). It is a boundary point at which
@@ -54,6 +54,6 @@ we have to have strict rules to protect maintainers.
 
 ## AI is Welcome Here
 
-Zingolib is written with plenty of AI assistance, and many maintainers embrace
+Ekdromoi is written with plenty of AI assistance, and many maintainers embrace
 AI tools as a productive tool in their workflow. As a project, we welcome
 AI as a tool!

@@ -1,11 +1,11 @@
+use ekdromoi_netutils::lightwallet_protocol::{
+    CompactBlock, CompactOrchardAction, CompactSaplingOutput, CompactTx,
+};
 use orchard::note_encryption::CompactAction;
 use sapling_crypto::{note::ExtractedNoteCommitment, note_encryption::CompactOutputDescription};
 use zcash_note_encryption::EphemeralKeyBytes;
 use zcash_primitives::block::{BlockHash, BlockHeader};
 use zcash_protocol::{TxId, consensus::BlockHeight};
-use zingo_netutils::lightwallet_protocol::{
-    CompactBlock, CompactOrchardAction, CompactSaplingOutput, CompactTx,
-};
 
 use crate::error::CompactFormatError;
 

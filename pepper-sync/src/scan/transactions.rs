@@ -25,11 +25,11 @@ use zcash_protocol::{
     memo::Memo,
 };
 
+use ekdromoi_common::memo::ParsedMemo;
+use ekdromoi_common::status::ConfirmationStatus;
 use zcash_transparent::bundle::{
     Authorization as TransparentAuthorization, Bundle as TransparentBundle, TxIn,
 };
-use zingolib_common::memo::ParsedMemo;
-use zingolib_common::status::ConfirmationStatus;
 use zip32::AccountId;
 
 use crate::{
@@ -605,7 +605,7 @@ where
         .iter()
         .filter_map(|note| {
             if let Memo::Arbitrary(encoded_memo_bytes) = note.memo() {
-                match zingolib_common::memo::parse_zingolib_memo(*encoded_memo_bytes.as_ref()) {
+                match ekdromoi_common::memo::parse_zingolib_memo(*encoded_memo_bytes.as_ref()) {
                     Ok(encoded_memo) => Some(encoded_memo),
                     Err(e) => {
                         tracing::error!("Failed to decode memo data. {e}");

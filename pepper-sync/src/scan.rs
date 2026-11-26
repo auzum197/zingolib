@@ -8,11 +8,11 @@ use orchard::tree::MerkleHashOrchard;
 use task::ScanTask;
 use tokio::sync::mpsc;
 
+use ekdromoi_netutils::lightwallet_protocol::{CompactBlock, CompactTx};
 use incrementalmerkletree::Position;
 use zcash_keys::keys::UnifiedFullViewingKey;
 use zcash_primitives::transaction::TxId;
 use zcash_protocol::consensus::{self, BlockHeight};
-use zingo_netutils::lightwallet_protocol::{CompactBlock, CompactTx};
 use zip32::AccountId;
 
 use crate::{

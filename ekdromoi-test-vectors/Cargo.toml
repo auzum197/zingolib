@@ -1,0 +1,9 @@
+[package]
+name = "ekdromoi-test-vectors"
+description = "A crate that provides access to test vectors."
+version = "0.0.1"
+edition = "2024"
+authors = ["Zingolabs <zingo@zingolabs.org>"]
+repository = "https://github.com/auzum197/zingolib"
+homepage = "https://github.com/auzum197/zingolib"
+license = "MIT"

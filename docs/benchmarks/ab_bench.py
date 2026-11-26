@@ -38,7 +38,7 @@ def build(label, commit, deps_from, tmp, env, deps):
     run(["git", "worktree", "add", "--detach", str(tree), commit], cwd=root)
     if deps_from is not None:
         run(["git", "checkout", deps_from, "--", "Cargo.toml", "Cargo.lock"], cwd=tree)
-    run(["cargo", "bench", "-p", "zingolib", "--bench", "pepper_sync", "--no-run"],
+    run(["cargo", "bench", "-p", "ekdromoi", "--bench", "pepper_sync", "--no-run"],
         cwd=tree, env=env)
     exe = max(
         (p for p in deps.glob("pepper_sync-*") if p.is_file() and p.suffix != ".d"),
@@ -57,7 +57,7 @@ ap.add_argument("--keep", action="store_true", help="keep the worktrees for insp
 args = ap.parse_args()
 
 root = Path(subprocess.check_output(["git", "rev-parse", "--show-toplevel"], text=True).strip())
-bench_rs = root / "zingolib" / "benches" / "pepper_sync.rs"
+bench_rs = root / "ekdromoi" / "benches" / "pepper_sync.rs"
 scenarios = re.findall(r'Scenario \{\s*name: "([^"]+)"', bench_rs.read_text())
 if not scenarios:
     sys.exit("no scenarios found in the bench source")

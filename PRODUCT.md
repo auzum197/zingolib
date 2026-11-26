@@ -10,7 +10,7 @@ Wallet users monitor and manage their Zcash funds from a terminal. During sync, 
 
 ## Product Purpose
 
-Zingolib provides the wallet library and terminal interface behind Zcash wallet operations. The sync view should make current work legible while keeping the wallet task in focus.
+Ekdromoi provides the wallet library and terminal interface behind Zcash wallet operations. The sync view should make current work legible while keeping the wallet task in focus.
 
 ## Brand Personality
 
