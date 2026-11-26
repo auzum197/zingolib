@@ -28,6 +28,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `moved_to` in the JSON of a transaction summary: the destination pool of a pool move, or null.
 
 ### Changed
+- A `LightClient` saves its wallet without being asked. `create` writes the wallet to the store
+  before it returns, and a task saves every later change, at most once a second. A failed save is
+  retried. `LightClient::flush` waits for the store to hold every change and returns a
+  `SaveError` if the save failed. `LightClient::close` stops sync and flushes.
+  `LightClient::save_state` gives the result of each save.
+- `LightWallet::save_required` is replaced by a change count. `LightWallet::mark_dirty` records a
+  change and `LightWallet::subscribe_changes` watches the count.
+- `lightclient::store::MemoryStore`: a store that keeps the wallet in memory.
 - `LightClient::new` is replaced by `LightClient::create` and `LightClient::open`. Both take a
   `lightclient::store::WalletStore`, the chain type and the indexer URI. `create` fails with
   `CreateError::AlreadyExists` and never overwrites. `open` fails with `OpenError::NotFound`,
@@ -67,6 +75,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `LightClientError`. `zcash_proofs` and the Sapling parameter download are now test-only.
 
 ### Removed
+- `LightClient::save_task`, `wait_for_save`, `check_save_error` and `shutdown_save_task`.
 - `config::ClientConfig`, `config::ClientConfigBuilder`, `config::DEFAULT_WALLET_NAME` and the
   default wallet directory. The caller selects the wallet path.
 - `WalletConfig::Read` and `WalletError::WalletAlreadyCreated`.

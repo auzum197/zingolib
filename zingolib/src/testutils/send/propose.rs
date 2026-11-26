@@ -357,13 +357,13 @@ mod tests {
     use super::super::error::ProposeShieldError;
     use crate::{
         config::{ChainType, DEFAULT_INDEXER_URI, WalletConfig},
-        lightclient::{Encryption, LightClient, store::FileStore},
+        lightclient::{Encryption, LightClient, store::MemoryStore},
         testutils::default_test_wallet_settings,
     };
 
     async fn create_basic_client() -> LightClient {
         LightClient::create(
-            FileStore::new(tempfile::tempdir().unwrap().path().join("wallet.dat")),
+            MemoryStore::default(),
             ChainType::Mainnet,
             DEFAULT_INDEXER_URI.parse().unwrap(),
             WalletConfig::MnemonicPhrase {

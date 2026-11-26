@@ -74,7 +74,7 @@ impl LightWallet {
 
             _ => return Err(CalculateTransactionError::NonTexMultiStep),
         };
-        self.save_required = true;
+        self.mark_dirty();
 
         Ok(calculated_txids)
     }
@@ -244,7 +244,7 @@ impl LightClient {
                         &mut wallet.wallet_transactions,
                         vec![*txid],
                     );
-                    wallet.save_required = true;
+                    wallet.mark_dirty();
                     WalletError::TransactionWrite(e)
                 })?;
 
@@ -277,7 +277,7 @@ impl LightClient {
                                 &mut wallet.wallet_transactions,
                                 vec![*txid],
                             );
-                            wallet.save_required = true;
+                            wallet.mark_dirty();
                             break Err(e);
                         } else {
                             retry_count += 1;
@@ -294,7 +294,7 @@ impl LightClient {
                 .get_mut(txid)
                 .ok_or(WalletError::TransactionNotFound(*txid))?
                 .update_status(ConfirmationStatus::Transmitted(height), crate::utils::now());
-            wallet.save_required = true;
+            wallet.mark_dirty();
 
             let txid_from_server =
                 crate::utils::conversion::txid_from_hex_encoded_str(txid_from_server.as_str())

@@ -190,7 +190,8 @@ impl LightWallet {
             #[cfg(any(test, feature = "testutils"))]
             send_proposal: None,
             output_locks: OutputLocks::default(),
-            save_required: false,
+            changes: tokio::sync::watch::Sender::new(0),
+            saved: 0,
             encryption: None,
         })
     }

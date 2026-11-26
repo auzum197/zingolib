@@ -4,6 +4,7 @@ use std::{
     fs::{File, OpenOptions},
     io::{self, ErrorKind, Write as _},
     path::{Path, PathBuf},
+    sync::{Mutex, PoisonError},
 };
 
 /// Persistence for the serialized wallet. A platform without a plain file system supplies its own.
@@ -16,6 +17,30 @@ pub trait WalletStore: Send + Sync + 'static {
 
     /// Removes the stored wallet.
     fn delete(&self) -> io::Result<()>;
+}
+
+/// Wallet bytes held in memory. Nothing outlives the process.
+#[derive(Debug, Default)]
+pub struct MemoryStore(Mutex<Option<Vec<u8>>>);
+
+impl WalletStore for MemoryStore {
+    fn load(&self) -> io::Result<Option<Vec<u8>>> {
+        Ok(self
+            .0
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .clone())
+    }
+
+    fn write(&self, bytes: &[u8]) -> io::Result<()> {
+        *self.0.lock().unwrap_or_else(PoisonError::into_inner) = Some(bytes.to_vec());
+        Ok(())
+    }
+
+    fn delete(&self) -> io::Result<()> {
+        *self.0.lock().unwrap_or_else(PoisonError::into_inner) = None;
+        Ok(())
+    }
 }
 
 /// A wallet file on the local file system, replaced atomically on every write.

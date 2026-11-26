@@ -604,7 +604,7 @@ async fn multi() {
 
 async fn seal(client: &LightClient) -> Vec<u8> {
     let mut wallet = client.wallet().write().await;
-    wallet.save_required = true;
+    wallet.mark_dirty();
     wallet
         .save()
         .expect("an encrypted wallet saves")

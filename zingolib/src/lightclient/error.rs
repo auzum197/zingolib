@@ -1,5 +1,7 @@
 //! Errors assoicated with [`crate::lightclient::LightClient`].
 
+use std::sync::Arc;
+
 use pepper_sync::error::{SyncError, SyncModeError};
 use zingo_netutils::GetClientError;
 
@@ -15,6 +17,17 @@ pub enum LightClientError {
     SyncError(#[from] SyncError<WalletError>),
     #[error("Sync mode error. {0}")]
     SyncModeError(#[from] SyncModeError),
+}
+
+/// Why the wallet could not be saved to its store.
+#[derive(Clone, Debug, thiserror::Error)]
+#[error("Wallet save failed. {0}")]
+pub struct SaveError(Arc<std::io::Error>);
+
+impl From<std::io::Error> for SaveError {
+    fn from(e: std::io::Error) -> Self {
+        Self(Arc::new(e))
+    }
 }
 
 /// Why [`crate::lightclient::LightClient::create`] failed.

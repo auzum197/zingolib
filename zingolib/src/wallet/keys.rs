@@ -74,7 +74,7 @@ impl LightWallet {
         };
         self.unified_addresses
             .insert(address_id, unified_address.clone());
-        self.save_required = true;
+        self.mark_dirty();
 
         Ok((address_id, unified_address))
     }
@@ -124,7 +124,7 @@ impl LightWallet {
             address_id,
             transparent::encode_address(&self.chain_type, external_address),
         );
-        self.save_required = true;
+        self.mark_dirty();
 
         Ok((address_id, external_address))
     }
@@ -174,7 +174,7 @@ impl LightWallet {
                 Ok((address_id, refund_address))
             })
             .collect::<Result<Vec<(TransparentAddressId, TransparentAddress)>, KeyError>>()?;
-        self.save_required = true;
+        self.mark_dirty();
 
         Ok(refund_addresses)
     }

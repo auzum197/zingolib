@@ -188,9 +188,7 @@ async fn sent_transaction_reorged_into_mempool() {
             .unwrap()
     );
 
-    light_client.save_task().await;
-    light_client.wait_for_save().await;
-    light_client.shutdown_save_task().await.unwrap();
+    light_client.close().await.unwrap();
 
     let mut loaded_client = LightClient::open(
         client_manager.store_of(1),

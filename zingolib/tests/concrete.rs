@@ -3323,7 +3323,6 @@ mod testnet_test {
             )
             .await
             .unwrap();
-            lightclient.save_task().await;
             lightclient.sync().await.unwrap();
             let mut interval = tokio::time::interval(std::time::Duration::from_millis(100));
             interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
@@ -3336,9 +3335,7 @@ mod testnet_test {
             {
                 interval.tick().await;
             }
-            lightclient.stop_sync().unwrap();
-            lightclient.await_sync().await.unwrap();
-            lightclient.shutdown_save_task().await.unwrap();
+            lightclient.close().await.unwrap();
 
             // will fail if there were any reload errors due to bad file write code i.e. no flushing or file syncing
             LightClient::open(store, ChainType::Testnet, indexer_uri, Unlock::Plaintext)

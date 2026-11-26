@@ -16,6 +16,7 @@ use zingo_common_components::protocol::ActivationHeights;
 use zingolib::config::{ChainType, WalletConfig, construct_lightwalletd_uri};
 use zingolib::data::PollReport;
 use zingolib::lightclient::error::OpenError;
+use zingolib::lightclient::save::SaveState;
 use zingolib::lightclient::store::FileStore;
 use zingolib::lightclient::{Encryption, LightClient, Unlock};
 use zingolib::wallet::WalletSettings;
@@ -125,6 +126,7 @@ struct Backend {
     config: BackendConfig,
     actions: mpsc::UnboundedSender<Action>,
     lc: Option<LightClient>,
+    save_state: Option<tokio::sync::watch::Receiver<SaveState>>,
     network: Network,
     auto: bool,
     next_launch: Option<Instant>,
@@ -139,6 +141,7 @@ impl Backend {
             config,
             actions,
             lc: None,
+            save_state: None,
             auto: true,
             next_launch: None,
             dirty: false,
@@ -192,11 +195,9 @@ impl Backend {
                 match self.open(spec).await {
                     Ok((lc, info)) => {
                         *events = Some(lc.subscribe_sync_events());
+                        self.save_state = Some(lc.save_state());
                         self.lc = Some(lc);
                         self.send(Action::WalletOpened(info));
-                        if let Some(lc) = self.lc.as_mut() {
-                            lc.save_task().await;
-                        }
                         self.launch().await;
                         self.refresh().await;
                     }
@@ -443,12 +444,13 @@ impl Backend {
             self.last_mode = mode;
             self.sync_note(SyncNote::Mode(mode));
         }
-        let save = match self.lc.as_mut() {
-            Some(lc) => lc.check_save_error().await,
-            None => Ok(()),
-        };
-        if let Err(e) = save {
-            self.send(Action::Notice(format!("wallet save failed: {e}")));
+        let save_error = self
+            .save_state
+            .as_mut()
+            .filter(|state| state.has_changed().unwrap_or(false))
+            .and_then(|state| state.borrow_and_update().clone().err());
+        if let Some(e) = save_error {
+            self.send(Action::Notice(e.to_string()));
         }
         if self.dirty {
             self.dirty = false;
@@ -582,8 +584,7 @@ impl Backend {
             let _ = lc.stop_sync();
             let _ = tokio::time::timeout(STOP_TIMEOUT, lc.await_sync()).await;
         }
-        let _ = tokio::time::timeout(SAVE_TIMEOUT, lc.wait_for_save()).await;
-        if let Err(e) = lc.shutdown_save_task().await {
+        if let Ok(Err(e)) = tokio::time::timeout(SAVE_TIMEOUT, lc.flush()).await {
             tracing::error!("final wallet save failed: {e}");
         }
     }
