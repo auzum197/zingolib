@@ -38,7 +38,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   before it returns, and a task saves every later change, at most once a second. A failed save is
   retried. `LightClient::flush` waits for the store to hold every change and returns a
   `SaveError` if the save failed. `LightClient::close` stops sync and flushes.
-  `LightClient::save_state` gives the outcome of each save.
+  `LightClient::save_state` gives the result of each save.
 - `LightWallet::save_required` is replaced by a change count. `LightWallet::mark_dirty` records a
   change and `LightWallet::subscribe_changes` watches the count.
 - `lightclient::store::MemoryStore`: a store that keeps the wallet in memory.
