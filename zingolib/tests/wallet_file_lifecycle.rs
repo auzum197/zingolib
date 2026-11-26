@@ -9,7 +9,6 @@
 //! without a prover. Sending needs the real Sapling parameters, so the send scenario is named
 //! `slow` and CI skips it.
 
-use std::io;
 use std::num::NonZeroU32;
 use std::panic::catch_unwind;
 use std::sync::mpsc;
@@ -41,7 +40,7 @@ use zingolib::wallet::{
 };
 use zingolib_common::price::PriceList;
 use zingolib_common::serialization::ReadableWriteable;
-use zingolib_file_format::{WalletFile, WalletFileRef};
+use zingolib_file_format::{WalletFile, WalletFileError, WalletFileRef};
 
 const SEED: &str = zingo_test_vectors::seeds::HOSPITAL_MUSEUM_SEED;
 /// Ironwood is active from the first block: the Zakura Orchard crate only builds bundles for
@@ -404,7 +403,7 @@ fn truncations(len: usize) -> impl Iterator<Item = Corruption> {
 }
 
 /// Why reading `file` did not reject it, or `None` when it did.
-fn unrejected(file: Vec<u8>, read: fn(&[u8]) -> io::Result<()>) -> Option<String> {
+fn unrejected(file: Vec<u8>, read: fn(&[u8]) -> Result<(), WalletFileError>) -> Option<String> {
     let (sender, receiver) = mpsc::channel();
     std::thread::spawn(move || {
         let why = match catch_unwind(|| read(&file)) {
@@ -432,7 +431,7 @@ fn assert_rejected(
     scenario: &str,
     file: &[u8],
     corruptions: impl Iterator<Item = Corruption>,
-    read: fn(&[u8]) -> io::Result<()>,
+    read: fn(&[u8]) -> Result<(), WalletFileError>,
 ) {
     let failures: Vec<String> = corruptions
         .filter_map(|corruption| {
@@ -448,11 +447,11 @@ fn assert_rejected(
     );
 }
 
-fn read_any(file: &[u8]) -> io::Result<()> {
+fn read_any(file: &[u8]) -> Result<(), WalletFileError> {
     WalletFile::read_any(file).map(drop)
 }
 
-fn read_encrypted_any(file: &[u8]) -> io::Result<()> {
+fn read_encrypted_any(file: &[u8]) -> Result<(), WalletFileError> {
     WalletFile::read_encrypted_any(file, Some(PASSPHRASE.to_string())).map(drop)
 }
 

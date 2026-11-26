@@ -8,5 +8,5 @@ pub mod encryption;
 mod file;
 mod settings;
 
-pub use file::{WalletFile, WalletFileRef};
+pub use file::{WalletFile, WalletFileError, WalletFileRef};
 pub use settings::WalletSettings;

@@ -31,6 +31,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `zingolib-price` no longer exists. `PriceList` and `Price` are in `zingolib_common::price`, and
   the fetch with its `PriceError` is the new `price` module here.
 - `LightWallet::write` takes `&self`.
+- `LightWallet::read` and `LightWallet::read_encrypted` return `WalletError` in place of
+  `io::Error`. A file that cannot be read is the new `WalletError::File`, which holds a
+  `zingolib_file_format::WalletFileError`.
 - `LightWallet::new`: address derivation errors now surface as `WalletError::KeyError` in every
   case, and a wallet file naming an account without keys fails with `KeyError::NoAccountKeys`.
 - The wallet history API now uses wallet event terminology. `ValueTransfer`,

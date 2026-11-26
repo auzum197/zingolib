@@ -128,8 +128,7 @@ impl LightClient {
                 // If the file is encrypted, `encryption` carries the passphrase to decrypt it
                 // (its KDF params are ignored here, since those are read from the file header).
                 let passphrase = encryption.map(|encryption| encryption.into_passphrase());
-                LightWallet::read_encrypted(buffer, config.chain_type(), passphrase)
-                    .map_err(LightClientError::FileError)?
+                LightWallet::read_encrypted(buffer, config.chain_type(), passphrase)?
             }
             _ => {
                 #[cfg(not(any(target_os = "ios", target_os = "android")))]
