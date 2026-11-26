@@ -45,7 +45,7 @@ pub(super) fn spawn(
 }
 
 impl LightClient {
-    /// The outcome of the last save. It changes after every save.
+    /// The result of the last save. It changes after every save.
     pub fn save_state(&self) -> watch::Receiver<SaveState> {
         self.save_state.clone()
     }
@@ -61,10 +61,10 @@ impl LightClient {
             .map(drop)
     }
 
-    /// Stops sync and saves the wallet. The outcome of the stopped sync is discarded.
+    /// Stops sync and saves the wallet. The result of the stopped sync is discarded.
     pub async fn close(mut self) -> Result<(), SaveError> {
         if self.stop_sync().is_ok() {
-            let _sync_outcome = self.await_sync().await;
+            let _sync_result = self.await_sync().await;
         }
         self.flush().await
     }
