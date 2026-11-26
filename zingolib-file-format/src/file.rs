@@ -28,8 +28,25 @@ use zingolib_common::{
     },
 };
 
-use crate::encryption::{self, EncryptionSession};
+use crate::encryption::{self, EncryptionSession, WalletEncryptionError};
 use crate::settings::WalletSettings;
+
+/// Why a wallet file could not be read.
+#[derive(Debug, thiserror::Error)]
+pub enum WalletFileError {
+    /// The layout version is older or newer than the one this build reads.
+    #[error("wallet layout version {0} is not supported, expected {expected}", expected = WalletFile::VERSION)]
+    UnsupportedVersion(u64),
+    /// The file belongs to another network.
+    #[error("wallet file is for {0}")]
+    WrongChain(ChainType),
+    /// The envelope could not be opened.
+    #[error(transparent)]
+    Encryption(#[from] WalletEncryptionError),
+    /// The bytes are truncated or do not decode as a wallet.
+    #[error("wallet file could not be decoded. {0}")]
+    Decode(#[from] io::Error),
+}
 
 /// Decoded contents of a wallet file. Every field is public so a wallet can be assembled
 /// from it without this crate knowing anything about the wallet type.
@@ -135,7 +152,7 @@ impl WalletFile {
         reader: R,
         chain_type: ChainType,
         passphrase: Option<String>,
-    ) -> io::Result<(Self, Option<EncryptionSession>)> {
+    ) -> Result<(Self, Option<EncryptionSession>), WalletFileError> {
         Self::open(reader, passphrase, |plaintext| {
             Self::read(plaintext, chain_type)
         })
@@ -146,30 +163,24 @@ impl WalletFile {
     pub fn read_encrypted_any<R: Read>(
         reader: R,
         passphrase: Option<String>,
-    ) -> io::Result<(Self, Option<EncryptionSession>)> {
+    ) -> Result<(Self, Option<EncryptionSession>), WalletFileError> {
         Self::open(reader, passphrase, |plaintext| Self::read_any(plaintext))
     }
 
     fn open<R: Read, T>(
         mut reader: R,
         passphrase: Option<String>,
-        decode: impl FnOnce(&mut dyn Read) -> io::Result<T>,
-    ) -> io::Result<(T, Option<EncryptionSession>)> {
+        decode: impl FnOnce(&mut dyn Read) -> Result<T, WalletFileError>,
+    ) -> Result<(T, Option<EncryptionSession>), WalletFileError> {
         let mut head = [0u8; 8];
         reader.read_exact(&mut head)?;
 
         if encryption::is_encrypted(&head) {
-            let passphrase = passphrase.ok_or_else(|| {
-                Error::new(
-                    ErrorKind::InvalidInput,
-                    encryption::WalletEncryptionError::PassphraseRequired.to_string(),
-                )
-            })?;
+            let passphrase = passphrase.ok_or(WalletEncryptionError::PassphraseRequired)?;
             let passphrase = SecretString::new(passphrase);
             let mut envelope = head.to_vec();
             reader.read_to_end(&mut envelope)?;
-            let (plaintext, session) = encryption::decrypt(&passphrase, &envelope)
-                .map_err(|e| Error::new(ErrorKind::InvalidData, e.to_string()))?;
+            let (plaintext, session) = encryption::decrypt(&passphrase, &envelope)?;
             let decoded = decode(&mut io::Cursor::new(plaintext.as_slice()))?;
             Ok((decoded, Some(session)))
         } else {
@@ -183,16 +194,13 @@ impl WalletFile {
     ///
     /// `chain_type` is also what the keys and transactions are decoded against, so a regtest
     /// wallet is read with the activation heights the caller configured.
-    pub fn read<R: Read>(mut reader: R, chain_type: ChainType) -> io::Result<Self> {
+    pub fn read<R: Read>(mut reader: R, chain_type: ChainType) -> Result<Self, WalletFileError> {
         Self::read_version(&mut reader)?;
         let stored = ChainType::read(&mut reader)?;
         if stored.to_string() != chain_type.to_string() {
-            return Err(Error::new(
-                ErrorKind::InvalidData,
-                format!("wallet chain name {stored} doesn't match expected {chain_type}"),
-            ));
+            return Err(WalletFileError::WrongChain(stored));
         }
-        Self::read_body(reader, chain_type)
+        Ok(Self::read_body(reader, chain_type)?)
     }
 
     /// Deserialize into `reader`, taking the chain from the file itself.
@@ -205,33 +213,21 @@ impl WalletFile {
     ///
     /// let file = WalletFile::read_any(std::fs::File::open("zingo-wallet.dat")?)?;
     /// println!("{} wallet, layout version {}", file.chain_type, file.read_version);
-    /// # Ok::<(), std::io::Error>(())
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
     /// ```
-    pub fn read_any<R: Read>(mut reader: R) -> io::Result<Self> {
+    pub fn read_any<R: Read>(mut reader: R) -> Result<Self, WalletFileError> {
         Self::read_version(&mut reader)?;
         let chain_type = ChainType::read(&mut reader)?;
-        Self::read_body(reader, chain_type)
+        Ok(Self::read_body(reader, chain_type)?)
     }
 
-    fn read_version<R: Read>(mut reader: R) -> io::Result<()> {
+    fn read_version<R: Read>(mut reader: R) -> Result<(), WalletFileError> {
         let version = reader.read_u64::<LittleEndian>()?;
         info!("Reading wallet version {version}");
         match version {
             Self::VERSION => Ok(()),
-            encryption::MAGIC_AS_VERSION => Err(Error::new(
-                ErrorKind::InvalidInput,
-                "wallet file is encrypted; load it with a passphrase via read_encrypted",
-            )),
-            ..Self::VERSION => Err(Error::new(
-                ErrorKind::InvalidData,
-                format!(
-                    "wallet layout version {version} predates the first release and cannot be read"
-                ),
-            )),
-            _ => Err(Error::new(
-                ErrorKind::InvalidData,
-                format!("wallet layout version {version} is newer than this build supports"),
-            )),
+            encryption::MAGIC_AS_VERSION => Err(WalletEncryptionError::PassphraseRequired.into()),
+            _ => Err(WalletFileError::UnsupportedVersion(version)),
         }
     }
 
@@ -530,8 +526,8 @@ mod tests {
         ]
     }
 
-    fn error_text<T>(outcome: io::Result<T>) -> String {
-        outcome.err().expect("expected an error").to_string()
+    fn error_text<T>(read: Result<T, WalletFileError>) -> String {
+        read.err().expect("expected an error").to_string()
     }
 
     #[test]
@@ -591,25 +587,27 @@ mod tests {
     #[test]
     fn read_rejects_a_chain_mismatch() {
         let written = bytes(&fresh(ChainType::Testnet));
-        let message = error_text(WalletFile::read(written.as_slice(), ChainType::Mainnet));
-        assert!(
-            message.contains("testnet doesn't match expected mainnet"),
-            "{message}"
-        );
+        assert!(matches!(
+            WalletFile::read(written.as_slice(), ChainType::Mainnet),
+            Err(WalletFileError::WrongChain(ChainType::Testnet))
+        ));
         assert!(WalletFile::read_any(written.as_slice()).is_ok());
     }
 
     #[test]
     fn older_and_newer_layouts_are_rejected_by_both_readers() {
         let written = bytes(&fresh(ChainType::Mainnet));
-        for (version, expected) in [(40u64, "predates"), (42u64, "newer")] {
+        for version in [40u64, 42] {
             let mut patched = written.clone();
             patched[..8].copy_from_slice(&version.to_le_bytes());
-            assert!(error_text(WalletFile::read_any(patched.as_slice())).contains(expected));
-            assert!(
-                error_text(WalletFile::read(patched.as_slice(), ChainType::Mainnet))
-                    .contains(expected)
-            );
+            for read in [
+                WalletFile::read_any(patched.as_slice()),
+                WalletFile::read(patched.as_slice(), ChainType::Mainnet),
+            ] {
+                assert!(
+                    matches!(read, Err(WalletFileError::UnsupportedVersion(v)) if v == version)
+                );
+            }
         }
     }
 
@@ -626,11 +624,17 @@ mod tests {
         let envelope = fast_session(PASSPHRASE)
             .encrypt(&bytes(&fresh(ChainType::Mainnet)))
             .unwrap();
-        assert!(error_text(WalletFile::read_any(envelope.as_slice())).contains("encrypted"));
-        assert!(
-            error_text(WalletFile::read(envelope.as_slice(), ChainType::Mainnet))
-                .contains("encrypted")
-        );
+        for read in [
+            WalletFile::read_any(envelope.as_slice()),
+            WalletFile::read(envelope.as_slice(), ChainType::Mainnet),
+        ] {
+            assert!(matches!(
+                read,
+                Err(WalletFileError::Encryption(
+                    WalletEncryptionError::PassphraseRequired
+                ))
+            ));
+        }
     }
 
     #[test]
@@ -700,12 +704,14 @@ mod tests {
         let envelope = fast_session(PASSPHRASE)
             .encrypt(&bytes(&fresh(ChainType::Testnet)))
             .unwrap();
-        let message = error_text(WalletFile::read_encrypted(
-            envelope.as_slice(),
-            ChainType::Mainnet,
-            Some(PASSPHRASE.to_string()),
+        assert!(matches!(
+            WalletFile::read_encrypted(
+                envelope.as_slice(),
+                ChainType::Mainnet,
+                Some(PASSPHRASE.to_string()),
+            ),
+            Err(WalletFileError::WrongChain(ChainType::Testnet))
         ));
-        assert!(message.contains("doesn't match"), "{message}");
     }
 
     #[test]

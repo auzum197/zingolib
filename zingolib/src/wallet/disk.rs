@@ -45,7 +45,7 @@
 
 use std::{
     collections::BTreeMap,
-    io::{self, Error, ErrorKind, Read, Write},
+    io::{self, Read, Write},
 };
 
 use zcash_protocol::consensus;
@@ -58,6 +58,7 @@ use zingolib_common::{
 pub use zingolib_file_format::{WalletFile, WalletFileRef};
 
 use super::LightWallet;
+use super::error::WalletError;
 use super::locks::OutputLocks;
 use pepper_sync::{keys::transparent, wallet::KeyIdInterface};
 
@@ -204,18 +205,15 @@ impl LightWallet {
         reader: R,
         chain_type: ChainType,
         passphrase: Option<String>,
-    ) -> io::Result<Self> {
+    ) -> Result<Self, WalletError> {
         let (file, session) = WalletFile::read_encrypted(reader, chain_type, passphrase)?;
-        let mut wallet =
-            Self::from_file(file).map_err(|e| Error::new(ErrorKind::InvalidData, e))?;
+        let mut wallet = Self::from_file(file)?;
         wallet.encryption = session;
         Ok(wallet)
     }
 
-    // TODO: update to return WalletError
-    pub fn read<R: Read>(reader: R, chain_type: ChainType) -> io::Result<Self> {
-        Self::from_file(WalletFile::read(reader, chain_type)?)
-            .map_err(|e| Error::new(ErrorKind::InvalidData, e))
+    pub fn read<R: Read>(reader: R, chain_type: ChainType) -> Result<Self, WalletError> {
+        Ok(Self::from_file(WalletFile::read(reader, chain_type)?)?)
     }
 }
 

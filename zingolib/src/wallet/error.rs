@@ -57,6 +57,8 @@ pub enum WalletError {
         "birthday {0} below sapling activation height {1}. pre-sapling wallets are not supported!"
     )]
     BirthdayBelowSapling(u32, u32),
+    #[error("Wallet file error. {0}")]
+    File(#[from] zingolib_file_format::WalletFileError),
     /// At-rest encryption setup failed (e.g. key derivation).
     #[error("Wallet encryption error. {0}")]
     Encryption(#[from] crate::wallet::encryption::WalletEncryptionError),

@@ -19,6 +19,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- `WalletFile::read`, `read_any`, `read_encrypted` and `read_encrypted_any` return the new
+  `WalletFileError` in place of `io::Error`. Its variants are `UnsupportedVersion`, `WrongChain`,
+  `Encryption` and `Decode`.
 - Depends on `zingolib-common` for all wallet data and no longer on `pepper-sync` or
   `zingolib-price`. The crate builds with no network code and no sync engine.
 
