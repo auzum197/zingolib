@@ -1124,6 +1124,41 @@ mod strict_chain {
     }
 
     #[tokio::test]
+    async fn transaction_list_returns_each_transaction_in_the_requested_sequence() {
+        use futures::TryStreamExt as _;
+
+        let mut net = MockNet::launch().await;
+        let mut sender = funded_sender(&mut net).await;
+        let mut txids = Vec::new();
+        let address = external_address(PoolType::ORCHARD);
+        for _ in 0..2 {
+            let payment = vec![(address.as_str(), PAYMENT, None)];
+            txids.extend(from_inputs::quick_send(&mut sender, payment).await.unwrap());
+            net.chain.write().await.mine_mempool();
+            sender.sync_and_await().await.unwrap();
+        }
+        txids.reverse();
+
+        let fetched = sender
+            .source_set()
+            .transactions(txids.clone())
+            .await
+            .unwrap();
+        let transactions: Vec<_> = fetched.value.try_collect().await.unwrap();
+
+        let branch_id = zcash_protocol::consensus::BranchId::Nu6_1;
+        let returned: Vec<_> = transactions
+            .iter()
+            .map(|raw| {
+                let transaction =
+                    zcash_primitives::transaction::Transaction::read(&raw.data[..], branch_id);
+                transaction.unwrap().txid()
+            })
+            .collect();
+        assert_eq!(returned, txids);
+    }
+
+    #[tokio::test]
     async fn sync_recovers_from_a_truncated_block_stream() {
         let mut net = MockNet::launch().await;
         let mut recipient = net
@@ -1225,8 +1260,9 @@ mod sources {
     use std::sync::atomic::{AtomicUsize, Ordering};
 
     use chain_router::{
-        BoxFuture, Connection, Connector, Integrity, Quorum, RequestEvent, RequestKind,
-        SourceError, SourceExposure, SourceId, TransportInfo, WalletIdentifier,
+        AllowedIdentifiers, BoxFuture, Connection, Connector, Integrity, Quorum, RequestEvent,
+        RequestKind, SourceError, SourceExposure, SourceId, TransportInfo, TxidRule,
+        WalletIdentifier,
     };
     use lightwallet_grpc_client::GrpcIndexer;
     use pepper_sync::AssumedOnly;
@@ -1245,7 +1281,7 @@ mod sources {
         GrpcIndexer::new(net.indexer_uri())
             .await
             .unwrap()
-            .allow_identifiers(&WalletIdentifier::ALL)
+            .allow_identifiers(AllowedIdentifiers::all())
     }
 
     async fn create(builder: LightClientBuilder) -> LightClient {
@@ -1305,7 +1341,7 @@ mod sources {
         let dials = Arc::new(AtomicUsize::new(0));
         let indexer = GrpcIndexer::with_connector(net.indexer_uri(), CountingTcp(dials.clone()))
             .unwrap()
-            .allow_identifiers(&WalletIdentifier::ALL);
+            .allow_identifiers(AllowedIdentifiers::all());
         let mut client = create(LightClient::builder(net.chain_type()).source(indexer)).await;
 
         let synced = client.sync_and_await().await.unwrap();
@@ -1325,7 +1361,7 @@ mod sources {
             .indexer(
                 net.indexer_uri(),
                 Integrity::Assumed,
-                &WalletIdentifier::ALL,
+                AllowedIdentifiers::all(),
             )
             .unwrap()
             .request_events(move |event: &RequestEvent| copy.lock().unwrap().push(event.clone()));
@@ -1355,7 +1391,7 @@ mod sources {
     /// The result of one sync through an indexer that allows `identifiers`, and the requests
     /// that the sync sent.
     async fn sync_through(
-        identifiers: &[WalletIdentifier],
+        identifiers: AllowedIdentifiers,
         discovery: TransparentAddressDiscovery,
     ) -> (Result<SyncResult, LightClientError>, Vec<RequestKind>) {
         let net = MockNet::launch().await;
@@ -1384,6 +1420,11 @@ mod sources {
         (synced, sent)
     }
 
+    const ONLY_TXID: AllowedIdentifiers = AllowedIdentifiers {
+        txid: TxidRule::Alone,
+        ..AllowedIdentifiers::none()
+    };
+
     fn not_allowed(error: LightClientError) -> Option<WalletIdentifier> {
         match error {
             LightClientError::SyncError(SyncError::ServerError(ServerError::RequestFailed(
@@ -1395,11 +1436,17 @@ mod sources {
 
     #[tokio::test]
     async fn sync_fails_before_any_request_if_no_source_allows_a_needed_identifier() {
-        use WalletIdentifier::{TransparentAddress, Txid};
-
-        for (allowed, missing) in [(TransparentAddress, Txid), (Txid, TransparentAddress)] {
+        let only_address = AllowedIdentifiers {
+            transparent_address: true,
+            ..AllowedIdentifiers::none()
+        };
+        let cases = [
+            (only_address, WalletIdentifier::Txid),
+            (ONLY_TXID, WalletIdentifier::TransparentAddress),
+        ];
+        for (allowed, missing) in cases {
             let (synced, sent) =
-                sync_through(&[allowed], TransparentAddressDiscovery::minimal()).await;
+                sync_through(allowed, TransparentAddressDiscovery::minimal()).await;
             assert_eq!(not_allowed(synced.unwrap_err()), Some(missing));
             assert!(sent.is_empty(), "{sent:?}");
         }
@@ -1407,11 +1454,7 @@ mod sources {
 
     #[tokio::test]
     async fn sync_needs_no_transparent_address_if_discovery_is_off() {
-        let (synced, sent) = sync_through(
-            &[WalletIdentifier::Txid],
-            TransparentAddressDiscovery::disabled(),
-        )
-        .await;
+        let (synced, sent) = sync_through(ONLY_TXID, TransparentAddressDiscovery::disabled()).await;
 
         synced.unwrap();
         assert!(sent.contains(&RequestKind::Blocks));
@@ -1440,8 +1483,8 @@ mod verification {
     use std::sync::{Arc, Mutex};
 
     use chain_router::{
-        BoxFuture, ChainSource, Integrity, Request, Response, Route, Router, SourceError, SourceId,
-        SourceInfo, WalletIdentifier,
+        AllowedIdentifiers, BoxFuture, ChainSource, Integrity, Request, Response, Route, Router,
+        SourceError, SourceId, SourceInfo,
     };
     use lightwallet_grpc_client::GrpcIndexer;
     use pepper_sync::Verified;
@@ -1477,7 +1520,7 @@ mod verification {
         GrpcIndexer::new(net.indexer_uri())
             .await
             .unwrap()
-            .allow_identifiers(&WalletIdentifier::ALL)
+            .allow_identifiers(AllowedIdentifiers::all())
     }
 
     struct CountingTreeStates(GrpcIndexer, Arc<AtomicUsize>);

@@ -17,6 +17,7 @@ pub enum RequestKind {
     TreeState,
     SubtreeRoots,
     Transaction,
+    Transactions,
     AddressTransactions,
     Mempool,
     Broadcast,

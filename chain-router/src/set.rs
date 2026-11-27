@@ -103,7 +103,7 @@ impl SourceSet {
     pub fn allows(&self, identifier: WalletIdentifier) -> bool {
         self.infos
             .iter()
-            .any(|info| info.allowed_identifiers.contains(&identifier))
+            .any(|info| info.allowed_identifiers.allows(identifier))
     }
 
     /// Passes a failure of `source` to the router.
@@ -125,7 +125,7 @@ impl SourceSet {
                 .filter(|id| {
                     self.infos
                         .get(id.0)
-                        .is_some_and(|info| info.allowed_identifiers.contains(&identifier))
+                        .is_some_and(|info| info.allowed_identifiers.allows_request(request))
                 })
                 .collect();
             if ids.is_empty() && selected > 0 {
@@ -234,6 +234,15 @@ impl SourceSet {
     /// See [`Request::Transaction`].
     pub async fn transaction(&self, txid: TxId) -> Result<Fetched<RawTransaction>, SourceError> {
         typed!(self.send(Request::Transaction(txid)).await?, Transaction)
+    }
+
+    /// See [`Request::Transactions`].
+    pub async fn transactions(
+        &self,
+        txids: Vec<TxId>,
+    ) -> Result<Fetched<ResponseStream<RawTransaction>>, SourceError> {
+        let request = Request::Transactions(txids);
+        typed!(self.send(request).await?, Transactions)
     }
 
     /// See [`Request::AddressTransactions`].
@@ -510,7 +519,10 @@ mod tests {
     use incrementalmerkletree::frontier::Frontier;
 
     use super::*;
-    use crate::{Bandwidth, Quorum, SourceExposure, SourceHealth, chain::BlockHash};
+    use crate::{
+        AllowedIdentifiers, Bandwidth, Quorum, SourceExposure, SourceHealth, TxidRule,
+        chain::BlockHash,
+    };
 
     struct Mock {
         info: SourceInfo,
@@ -527,7 +539,7 @@ mod tests {
 
     fn mock(integrity: Integrity, tip: u32, tree: &'static str) -> Arc<Mock> {
         let mut info = SourceInfo::new("mock", integrity, TransportInfo::direct());
-        info.allowed_identifiers = WalletIdentifier::ALL.to_vec();
+        info.allowed_identifiers = AllowedIdentifiers::all();
         Arc::new(Mock {
             info,
             tip,
@@ -593,6 +605,15 @@ mod tests {
                         data: Vec::new(),
                         mined_height: None,
                     }),
+                    Request::Transactions(txids) => {
+                        let transactions = txids.into_iter().map(|txid| {
+                            Ok(RawTransaction {
+                                data: txid.as_ref().to_vec(),
+                                mined_height: None,
+                            })
+                        });
+                        Response::Transactions(stream::iter(transactions).boxed())
+                    }
                     Request::Broadcast(_) => match &self.submit_error {
                         Some(error) => return Err(error.clone()),
                         None => Response::Broadcast(TxId::from_bytes([0; 32])),
@@ -789,13 +810,18 @@ mod tests {
         assert_eq!(sources.transaction(txid).await.unwrap().source, SourceId(1));
     }
 
-    fn allowing(identifiers: &[WalletIdentifier]) -> Arc<Mock> {
-        custom(|source| source.info.allowed_identifiers = identifiers.to_vec())
+    fn allowing(txid: TxidRule) -> Arc<Mock> {
+        custom(|source| {
+            source.info.allowed_identifiers = AllowedIdentifiers {
+                txid,
+                ..AllowedIdentifiers::none()
+            }
+        })
     }
 
     #[tokio::test]
     async fn identifying_request_goes_only_to_a_source_that_allows_the_identifier() {
-        let (closed, open) = (allowing(&[]), allowing(&[WalletIdentifier::Txid]));
+        let (closed, open) = (allowing(TxidRule::Never), allowing(TxidRule::Alone));
         let sources = set(&[&closed, &open], Failover::default());
 
         let transaction = sources
@@ -811,7 +837,7 @@ mod tests {
 
     #[tokio::test]
     async fn identifying_request_is_not_sent_if_no_source_allows_the_identifier() {
-        let (a, b) = (allowing(&[WalletIdentifier::Txid]), allowing(&[]));
+        let (a, b) = (allowing(TxidRule::Alone), allowing(TxidRule::Never));
         let not_allowed = SourceError::IdentifierNotAllowed(WalletIdentifier::SentTransaction);
 
         for sources in [set(&[&a, &b], Failover::default()), set(&[&a, &b], AskAll)] {
@@ -829,7 +855,7 @@ mod tests {
         let (a, b, closed) = (
             mock(UNVERIFIED, 10, "a"),
             mock(UNVERIFIED, 10, "a"),
-            allowing(&[]),
+            allowing(TxidRule::Never),
         );
         let sources = set(&[&a, &closed, &b], AskAll);
 
@@ -839,6 +865,40 @@ mod tests {
             .unwrap();
         assert_eq!(transaction.basis, IntegrityBasis::Quorum(2));
         assert_eq!(closed.calls.load(Ordering::Relaxed), 0);
+    }
+
+    #[tokio::test]
+    async fn transaction_list_needs_the_minimum_number_of_different_txids() {
+        let txids = |count: u8| {
+            (0..count)
+                .map(|byte| TxId::from_bytes([byte; 32]))
+                .collect()
+        };
+        let source = allowing(TxidRule::Among(3));
+        let sources = set(&[&source], Failover::default());
+
+        let fetched = sources.transactions(txids(3)).await.unwrap();
+        let transactions: Vec<_> = fetched.value.try_collect().await.unwrap();
+        assert_eq!(transactions.len(), 3);
+        assert_eq!(transactions[2].data, [2; 32]);
+
+        let not_allowed = Some(SourceError::IdentifierNotAllowed(WalletIdentifier::Txid));
+        let too_few = sources.transactions(txids(2)).await;
+        assert_eq!(too_few.err(), not_allowed);
+        let repeated = vec![TxId::from_bytes([0; 32]); 3];
+        assert_eq!(sources.transactions(repeated).await.err(), not_allowed);
+        let direct = sources.transaction(TxId::from_bytes([0; 32])).await;
+        assert_eq!(direct.err(), not_allowed);
+        assert!(!sources.allows(WalletIdentifier::Txid));
+    }
+
+    #[tokio::test]
+    async fn source_that_allows_a_txid_also_allows_it_among_other_txids() {
+        let source = allowing(TxidRule::Alone);
+        let sources = set(&[&source], Failover::default());
+
+        let txids = vec![TxId::from_bytes([0; 32])];
+        assert!(sources.transactions(txids).await.is_ok());
     }
 
     #[tokio::test]

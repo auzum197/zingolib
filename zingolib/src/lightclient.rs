@@ -12,8 +12,8 @@ use zcash_protocol::consensus::{BlockHeight, NetworkUpgrade, Parameters as _};
 use zcash_transparent::address::TransparentAddress;
 
 use chain_router::{
-    ChainSource, EventReceiver, Failover, Integrity, RequestEvent, Router, SourceError, SourceSet,
-    WalletIdentifier, chain::ServerInfo,
+    AllowedIdentifiers, ChainSource, EventReceiver, Failover, Integrity, RequestEvent, Router,
+    SourceError, SourceSet, chain::ServerInfo,
 };
 use lightwallet_grpc_client::{GrpcIndexer, TcpConnector};
 use pepper_sync::{
@@ -143,7 +143,7 @@ impl LightClientBuilder {
         self,
         uri: http::Uri,
         integrity: Integrity,
-        identifiers: &[WalletIdentifier],
+        identifiers: AllowedIdentifiers,
     ) -> Result<Self, lightwallet_grpc_client::GetClientError> {
         let indexer = GrpcIndexer::with_connector(uri, TcpConnector::default())?
             .with_integrity(integrity)
@@ -273,7 +273,7 @@ impl LightClient {
         encryption: Encryption,
     ) -> Result<Self, CreateError> {
         Self::builder(chain_type)
-            .indexer(indexer_uri, Integrity::Assumed, &WalletIdentifier::ALL)?
+            .indexer(indexer_uri, Integrity::Assumed, AllowedIdentifiers::all())?
             .create(store, wallet_config, encryption)
             .await
     }
@@ -289,7 +289,7 @@ impl LightClient {
         unlock: Unlock,
     ) -> Result<Self, OpenError> {
         Self::builder(chain_type)
-            .indexer(indexer_uri, Integrity::Assumed, &WalletIdentifier::ALL)?
+            .indexer(indexer_uri, Integrity::Assumed, AllowedIdentifiers::all())?
             .open(store, unlock)
             .await
     }
@@ -361,7 +361,7 @@ impl LightClient {
     ) -> Result<(), lightwallet_grpc_client::GetClientError> {
         let indexer = GrpcIndexer::with_connector(server, TcpConnector::default())?
             .with_integrity(Integrity::Assumed)
-            .allow_identifiers(&WalletIdentifier::ALL);
+            .allow_identifiers(AllowedIdentifiers::all());
         self.sources = Arc::new(source_set(
             vec![Arc::new(indexer)],
             Arc::new(Failover::default()),
