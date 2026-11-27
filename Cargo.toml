@@ -6,7 +6,7 @@ members = [
     "zingolib-file-format",
     "zingolib",
     "zingolib-tui",
-    "zingo-netutils",
+    "lightwallet-grpc-client",
     "zingo_common_components",
     "zingo_test_vectors",
 ]
@@ -42,7 +42,7 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 # proto files (see [patch.crates-io]), which carry the Ironwood fields the
 # checked-in generated code lacks. Requires `protoc`.
 lightwallet-protocol = { version = "0.3.0", features = ["rebuild-proto"] }
-zingo-netutils = { path = "zingo-netutils", features = [
+lightwallet-grpc-client = { path = "lightwallet-grpc-client", features = [
     "globally-public-transparent",
 ] }
 zingo_common_components = { path = "zingo_common_components" }

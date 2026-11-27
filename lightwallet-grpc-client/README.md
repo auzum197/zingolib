@@ -1,4 +1,4 @@
-# zingo-netutils
+# lightwallet-grpc-client
 
 A complete `Indexer` abstraction for communicating with Zcash chain indexers
 (`lightwalletd` / `zainod`).
@@ -19,7 +19,7 @@ an additional dependency.
 ## Usage
 
 ```rust
-use zingo_netutils::{GrpcIndexer, Indexer};
+use lightwallet_grpc_client::{GrpcIndexer, Indexer};
 
 let uri: http::Uri = "https://zec.rocks:443".parse().unwrap();
 let indexer = GrpcIndexer::new(uri)?;
@@ -42,7 +42,7 @@ can still obtain one:
 let client = indexer.get_client().await?;
 
 // Using zcash_client_backend types (migration aid)
-// Requires: zingo-netutils = { features = ["back_compatible"] }
+// Requires: lightwallet-grpc-client = { features = ["back_compatible"] }
 let client = indexer.get_zcb_client().await?;
 ```
 

@@ -4,7 +4,7 @@ use http::Uri;
 
 use zcash_protocol::consensus::BlockHeight;
 
-use zingo_netutils::Indexer as _;
+use lightwallet_grpc_client::Indexer as _;
 
 use super::conduct_chain::ConductChain;
 use crate::{
@@ -21,9 +21,10 @@ pub struct NetworkedTestEnvironment {
 
 impl NetworkedTestEnvironment {
     async fn update_server_height(&mut self) {
-        let mut indexer = zingo_netutils::GrpcIndexer::new(self.lightserver_uri().unwrap())
-            .await
-            .unwrap();
+        let mut indexer =
+            lightwallet_grpc_client::GrpcIndexer::new(self.lightserver_uri().unwrap())
+                .await
+                .unwrap();
         let latest = indexer
             .get_latest_block(DEFAULT_REQUEST_TIMEOUT)
             .await

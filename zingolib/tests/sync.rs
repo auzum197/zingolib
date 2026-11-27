@@ -1,12 +1,12 @@
 use std::{num::NonZeroU32, time::Duration};
 
 use incrementalmerkletree::Position;
+use lightwallet_grpc_client::lightwallet_protocol::GetSubtreeRootsArg;
+use lightwallet_grpc_client::{GrpcIndexer, Indexer};
 use pepper_sync::sync::ScanPriority;
 use pepper_sync::wallet::ShardTrees;
 use shardtree::store::ShardStore;
 use zcash_protocol::consensus::BlockHeight;
-use zingo_netutils::lightwallet_protocol::GetSubtreeRootsArg;
-use zingo_netutils::{GrpcIndexer, Indexer};
 use zingo_test_vectors::seeds::HOSPITAL_MUSEUM_SEED;
 use zingolib::config::{Birthday, ChainType, WalletConfig};
 use zingolib::data::PollReport;

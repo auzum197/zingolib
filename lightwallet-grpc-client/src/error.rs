@@ -8,7 +8,7 @@
 ///   (e.g. DNS resolution, TCP connect timeout). Retrying may succeed.
 ///
 /// ```
-/// use zingo_netutils::GetClientError;
+/// use lightwallet_grpc_client::GetClientError;
 ///
 /// let e = GetClientError::InvalidScheme;
 /// assert_eq!(e.to_string(), "bad uri: invalid scheme");

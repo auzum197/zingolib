@@ -2240,6 +2240,35 @@ dependencies = [
 ]
 
 [[package]]
+name = "lightwallet-grpc-client"
+version = "5.0.1"
+dependencies = [
+ "futures",
+ "hex",
+ "hickory-resolver",
+ "http",
+ "http-body-util",
+ "hyper",
+ "hyper-rustls",
+ "hyper-util",
+ "incrementalmerkletree",
+ "lightwallet-protocol",
+ "rustls-pemfile",
+ "thiserror 2.0.19",
+ "tokio",
+ "tokio-rustls",
+ "tokio-stream",
+ "tonic",
+ "tracing",
+ "wallet-api",
+ "x509-parser",
+ "zakura-orchard",
+ "zakura-primitives",
+ "zakura-protocol",
+ "zakura-sapling-crypto",
+]
+
+[[package]]
 name = "lightwallet-protocol"
 version = "0.3.0"
 source = "git+https://github.com/zingolabs/lightwallet-protocol-rust?rev=9bdfdc77eb283f2a3d26c27100cc2ac90148cd93#9bdfdc77eb283f2a3d26c27100cc2ac90148cd93"
@@ -5907,35 +5936,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "zingo-netutils"
-version = "5.0.1"
-dependencies = [
- "futures",
- "hex",
- "hickory-resolver",
- "http",
- "http-body-util",
- "hyper",
- "hyper-rustls",
- "hyper-util",
- "incrementalmerkletree",
- "lightwallet-protocol",
- "rustls-pemfile",
- "thiserror 2.0.19",
- "tokio",
- "tokio-rustls",
- "tokio-stream",
- "tonic",
- "tracing",
- "wallet-api",
- "x509-parser",
- "zakura-orchard",
- "zakura-primitives",
- "zakura-protocol",
- "zakura-sapling-crypto",
-]
-
-[[package]]
 name = "zingo_common_components"
 version = "0.4.0"
 dependencies = [
@@ -5960,6 +5960,7 @@ dependencies = [
  "http",
  "incrementalmerkletree",
  "itertools 0.14.0",
+ "lightwallet-grpc-client",
  "log",
  "nonempty",
  "pepper-sync",
@@ -5995,7 +5996,6 @@ dependencies = [
  "zakura-transparent",
  "zcash_encoding 0.4.0",
  "zeroize",
- "zingo-netutils",
  "zingo_common_components",
  "zingo_test_vectors",
  "zingolib",
