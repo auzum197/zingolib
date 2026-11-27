@@ -10,7 +10,7 @@ use zcash_protocol::consensus::{self, BlockHeight};
 
 use futures::TryStreamExt as _;
 use wallet_api::{
-    ResponseStream, SourceError, SourceSet,
+    Fetched, IntegrityBasis, ResponseStream, SourceError, SourceSet,
     chain::{BlockId, CompactBlock, RawTransaction, TreeState},
 };
 
@@ -26,6 +26,27 @@ use zcash_protocol::ShieldedPool;
 
 pub(crate) mod fetch;
 
+/// Which integrity basis a sync run needs.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Policy {
+    Auto,
+    AssumedOnly,
+}
+
+impl Policy {
+    pub(crate) fn admit<T>(
+        self,
+        fetched: Result<Fetched<T>, SourceError>,
+    ) -> Result<T, ServerError> {
+        let fetched = fetched?;
+        if self == Policy::AssumedOnly && fetched.basis != IntegrityBasis::Assumed {
+            return Err(ServerError::IntegrityRequired);
+        }
+
+        Ok(fetched.value)
+    }
+}
+
 #[cfg(not(feature = "darkside_test"))]
 const MAX_RETRIES: u8 = 3;
 
@@ -34,14 +55,11 @@ const FETCH_REPLY_TIMEOUT: Duration = Duration::from_secs(10);
 const STREAM_MSG_TIMEOUT: Duration = Duration::from_secs(15);
 
 async fn recv_fetch_reply<T>(
-    rx: oneshot::Receiver<Result<T, SourceError>>,
+    rx: oneshot::Receiver<Result<T, ServerError>>,
     what: &'static str,
 ) -> Result<T, ServerError> {
     match tokio::time::timeout(FETCH_REPLY_TIMEOUT, rx).await {
-        Ok(res) => {
-            let inner = res.map_err(|_| ServerError::FetcherDropped)?;
-            inner.map_err(Into::into)
-        }
+        Ok(res) => res.map_err(|_| ServerError::FetcherDropped)?,
         Err(_) => Err(SourceError::Timeout(format!("fetch {what} reply timeout")).into()),
     }
 }
@@ -64,35 +82,35 @@ async fn next_stream_item<T>(
 /// Each variant includes a [`tokio::sync::oneshot::Sender`] for returning the fetched data to the requester.
 pub enum FetchRequest {
     /// Gets the height of the blockchain from the server.
-    ChainTip(oneshot::Sender<Result<BlockId, SourceError>>),
+    ChainTip(oneshot::Sender<Result<BlockId, ServerError>>),
     /// Gets  a compact block of the given block height.
     CompactBlock(
-        oneshot::Sender<Result<CompactBlock, SourceError>>,
+        oneshot::Sender<Result<CompactBlock, ServerError>>,
         BlockHeight,
     ),
     /// Gets the specified range of compact blocks from the server (end exclusive).
     CompactBlockRange(
-        oneshot::Sender<Result<ResponseStream<CompactBlock>, SourceError>>,
+        oneshot::Sender<Result<ResponseStream<CompactBlock>, ServerError>>,
         Range<BlockHeight>,
     ),
     /// Gets the specified range of nullifiers from the server (end exclusive).
     NullifierRange(
-        oneshot::Sender<Result<ResponseStream<CompactBlock>, SourceError>>,
+        oneshot::Sender<Result<ResponseStream<CompactBlock>, ServerError>>,
         Range<BlockHeight>,
     ),
     /// Gets the tree states for a specified block height.
-    TreeState(oneshot::Sender<Result<TreeState, SourceError>>, BlockHeight),
+    TreeState(oneshot::Sender<Result<TreeState, ServerError>>, BlockHeight),
     /// Get a full transaction by txid.
-    Transaction(oneshot::Sender<Result<RawTransaction, SourceError>>, TxId),
+    Transaction(oneshot::Sender<Result<RawTransaction, ServerError>>, TxId),
     /// Get a list of transactions for a given transparent address and block range.
     TransparentAddressTxs(
-        oneshot::Sender<Result<ResponseStream<RawTransaction>, SourceError>>,
+        oneshot::Sender<Result<ResponseStream<RawTransaction>, ServerError>>,
         (String, Range<BlockHeight>),
     ),
     /// Get a stream of shards.
     #[cfg(not(feature = "darkside_test"))]
     SubtreeRoots(
-        oneshot::Sender<Result<ResponseStream<SubtreeRoot>, SourceError>>,
+        oneshot::Sender<Result<ResponseStream<SubtreeRoot>, ServerError>>,
         u32,
         ShieldedPool,
         u32,
@@ -356,16 +374,46 @@ pub(crate) async fn get_transparent_address_transactions(
 /// Returns [`MempoolError::ShutdownWithoutStream`] if `shutdown` is cancelled before the stream opens.
 pub(crate) async fn get_mempool_transaction_stream(
     sources: &SourceSet,
+    policy: Policy,
     shutdown: &CancellationToken,
 ) -> Result<ResponseStream<RawTransaction>, MempoolError> {
     tracing::debug!("Fetching mempool stream");
     tokio::select! {
         biased;
         mempool_stream_response = sources.mempool() => {
-            mempool_stream_response
-                .map(|stream| stream.value)
-                .map_err(|e| MempoolError::ServerError(ServerError::RequestFailed(e)))
+            Ok(policy.admit(mempool_stream_response)?)
         }
         _ = shutdown.cancelled() => Err(MempoolError::ShutdownWithoutStream),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use wallet_api::SourceId;
+
+    use super::*;
+
+    fn fetched(basis: IntegrityBasis) -> Result<Fetched<u8>, SourceError> {
+        Ok(Fetched {
+            value: 1,
+            source: SourceId(0),
+            basis,
+        })
+    }
+
+    #[test]
+    fn assumed_only_policy_rejects_results_from_other_sources() {
+        assert!(matches!(
+            Policy::AssumedOnly.admit(fetched(IntegrityBasis::Quorum(2))),
+            Err(ServerError::IntegrityRequired)
+        ));
+        assert!(matches!(
+            Policy::AssumedOnly.admit(fetched(IntegrityBasis::Assumed)),
+            Ok(1)
+        ));
+        assert!(matches!(
+            Policy::Auto.admit(fetched(IntegrityBasis::Unverified)),
+            Ok(1)
+        ));
     }
 }

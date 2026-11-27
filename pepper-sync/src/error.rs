@@ -96,7 +96,8 @@ impl ServerError {
             | ServerError::InvalidTransaction(_)
             | ServerError::InvalidSubtreeRoot
             | ServerError::ChainVerificationError
-            | ServerError::GenesisBlockOnly => false,
+            | ServerError::GenesisBlockOnly
+            | ServerError::IntegrityRequired => false,
         }
     }
 }
@@ -156,7 +157,9 @@ impl ServerError {
             | ServerError::InvalidSubtreeRoot
             | ServerError::ChainVerificationError => SyncRecoveryObservables::ServerUnavailable,
             // Empty chain — no point retrying anywhere.
-            ServerError::GenesisBlockOnly => SyncRecoveryObservables::Abort,
+            ServerError::GenesisBlockOnly | ServerError::IntegrityRequired => {
+                SyncRecoveryObservables::Abort
+            }
         }
     }
 }
@@ -328,6 +331,9 @@ pub enum ServerError {
     /// Server reports only the genesis block exists.
     #[error("server reports only the genesis block exists.")]
     GenesisBlockOnly,
+    /// The sync strategy accepts only results with assumed integrity.
+    #[error("the sync strategy accepts only results with assumed integrity.")]
+    IntegrityRequired,
 }
 
 /// Sync mode error.
