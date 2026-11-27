@@ -1256,8 +1256,10 @@ async fn chain_tip_birthday_is_100_blocks_below_the_tip() {
 }
 
 mod sources {
+    use std::num::NonZeroUsize;
     use std::sync::Arc;
     use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::time::{Duration, Instant};
 
     use chain_router::{
         AllowedIdentifiers, BoxFuture, Connection, Connector, Integrity, Quorum, RequestEvent,
@@ -1545,6 +1547,38 @@ mod sources {
         fund(&net, vec![(&other, 100_000, None)], 0).await;
         client.sync_and_await().await.unwrap();
         assert_eq!(decoy_requests(&kinds), 1);
+    }
+
+    /// The time for two transaction requests at the same time, each with a delay at the indexer.
+    async fn two_delayed_requests(indexer: GrpcIndexer, net: &MockNet) -> Duration {
+        use crate::testutils::mock_indexer;
+
+        const DELAY: Duration = Duration::from_millis(300);
+        for _ in 0..2 {
+            let mut chain = net.chain.write().await;
+            chain.faults.inject(
+                mock_indexer::Rpc::Transaction,
+                mock_indexer::Fault::Delay(DELAY),
+            );
+        }
+        let indexer = indexer.allow_identifiers(AllowedIdentifiers::all());
+        let sources = chain_router::SourceSet::single(indexer);
+        let txid = zcash_protocol::TxId::from_bytes([0; 32]);
+
+        let start = Instant::now();
+        let _ignore_errors = tokio::join!(sources.transaction(txid), sources.transaction(txid));
+        start.elapsed()
+    }
+
+    #[tokio::test]
+    async fn concurrency_limit_applies_to_all_requests_on_the_connection() {
+        let net = MockNet::launch().await;
+        let one = NonZeroUsize::new(1).unwrap();
+
+        let limited = indexer(&net).await.with_concurrency_limit(one);
+        assert!(two_delayed_requests(limited, &net).await >= Duration::from_millis(600));
+        let unlimited = indexer(&net).await;
+        assert!(two_delayed_requests(unlimited, &net).await < Duration::from_millis(550));
     }
 
     #[tokio::test]

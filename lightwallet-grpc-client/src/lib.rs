@@ -242,6 +242,8 @@ pub struct GrpcIndexer {
     uri: http::Uri,
     clear_net_client: CompactTxStreamerClient<Channel>,
     info: chain_router::SourceInfo,
+    endpoint: Endpoint,
+    dial: source::Dial,
     // TODO; add nym_client
 }
 
@@ -267,10 +269,11 @@ impl GrpcIndexer {
         }
     }
 
-    fn from_channel(
+    fn from_endpoint(
         uri: http::Uri,
-        channel: Channel,
+        endpoint: Endpoint,
         mut transport: chain_router::TransportInfo,
+        dial: source::Dial,
     ) -> Self {
         if uri.scheme_str() == Some("https") {
             transport.exposed_to_network.content = false;
@@ -279,8 +282,12 @@ impl GrpcIndexer {
 
         Self {
             uri,
-            clear_net_client: CompactTxStreamerClient::new(channel),
+            clear_net_client: CompactTxStreamerClient::new(
+                endpoint.connect_with_connector_lazy(dial.clone()),
+            ),
             info,
+            endpoint,
+            dial,
         }
     }
 

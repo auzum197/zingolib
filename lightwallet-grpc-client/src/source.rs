@@ -1,7 +1,8 @@
 //! [`ChainSource`] for [`GrpcIndexer`], and custom connection-based transports for it.
 
 use std::{
-    io,
+    fmt, io,
+    num::NonZeroUsize,
     sync::Arc,
     task::{Context, Poll},
     time::Duration,
@@ -33,7 +34,13 @@ const UNARY_TIMEOUT: Duration = Duration::from_secs(10);
 const HEAVY_TIMEOUT: Duration = Duration::from_secs(20);
 
 #[derive(Clone)]
-struct Dial(Arc<dyn Connector>);
+pub(crate) struct Dial(Arc<dyn Connector>);
+
+impl fmt::Debug for Dial {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("Dial")
+    }
+}
 
 impl Service<http::Uri> for Dial {
     type Response = TokioIo<Box<dyn Connection>>;
@@ -70,9 +77,18 @@ impl GrpcIndexer {
     ) -> Result<Self, GetClientError> {
         let endpoint = Self::endpoint(&uri)?;
         let transport = connector.info();
-        let channel = endpoint.connect_with_connector_lazy(Dial(Arc::new(connector)));
+        let dial = Dial(Arc::new(connector));
 
-        Ok(Self::from_channel(uri, channel, transport))
+        Ok(Self::from_endpoint(uri, endpoint, transport, dial))
+    }
+
+    /// Sets the maximum number of requests that wait for the start of a response at the same
+    /// time. The default is no limit. Opens a new connection, so set it before the first request.
+    pub fn with_concurrency_limit(mut self, limit: NonZeroUsize) -> Self {
+        self.endpoint = self.endpoint.concurrency_limit(limit.get());
+        let channel = self.endpoint.connect_with_connector_lazy(self.dial.clone());
+        self.clear_net_client = proto::CompactTxStreamerClient::new(channel);
+        self
     }
 
     /// Sets the integrity.
