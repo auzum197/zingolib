@@ -17,7 +17,14 @@ on:
 
 jobs:
   reject-trailing-whitespace:
-    uses: zingolabs/infrastructure/.github/workflows/trailing-whitespace.yaml@20485fed7a080e381130ed8120419dc81acae641
+    name: Reject trailing whitespace
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+
+      - name: Reject trailing whitespace
+        run: ./utils/trailing-whitespace.sh reject
 
   cargo-checkmate:
     uses: ./.github/workflows/cargo-checkmate.yaml
@@ -45,13 +52,13 @@ jobs:
           fi
 
       - name: Run cargo-hack
-        uses: zingolabs/infrastructure/.github/actions/cargo-hack@20485fed7a080e381130ed8120419dc81acae641
+        uses: ./.github/actions/cargo-hack
         with:
           hack-subcommand: check
           hack-flags: --workspace --exclude watchonly-tui --feature-powerset --lib --bins --tests --target-dir target/hack
 
       - name: Run cargo-hack (watchonly-tui)
-        uses: zingolabs/infrastructure/.github/actions/cargo-hack@20485fed7a080e381130ed8120419dc81acae641
+        uses: ./.github/actions/cargo-hack
         with:
           hack-subcommand: check
           hack-flags: --package watchonly-tui --feature-powerset --bins --tests --target-dir target/hack

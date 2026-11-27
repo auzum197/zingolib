@@ -1,0 +1,30 @@
+name: Cargo Hack
+description: Run cargo-hack to test feature combinations
+
+inputs:
+  rustflags:
+    description: RUSTFLAGS passed via env
+    required: false
+    default: "-D warnings"
+  hack-subcommand:
+    description: cargo-hack subcommand
+    required: false
+    default: build
+  hack-flags:
+    description: Flags to pass to cargo-hack
+    required: false
+    default: "--workspace --feature-powerset --lib --bins --tests --target-dir target/hack"
+
+runs:
+  using: composite
+  steps:
+    - name: Install cargo-hack
+      uses: taiki-e/install-action@v2
+      with:
+        tool: cargo-hack
+
+    - name: Run cargo-hack
+      shell: bash
+      env:
+        RUSTFLAGS: ${{ inputs.rustflags }}
+      run: cargo hack ${{ inputs.hack-subcommand }} ${{ inputs.hack-flags }}
