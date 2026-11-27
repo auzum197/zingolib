@@ -170,6 +170,11 @@ where
     P: consensus::Parameters,
     W: SyncBlocks + SyncTransactions + SyncNullifiers,
 {
+    let chain_height = wallet
+        .get_sync_state()
+        .map_err(SyncError::WalletError)?
+        .last_known_chain_height()
+        .unwrap_or(BlockHeight::from_u32(0));
     let wallet_transactions = wallet
         .get_wallet_transactions()
         .map_err(SyncError::WalletError)?;
@@ -221,6 +226,7 @@ where
         &mut outpoint_map,
         HashMap::new(), // no need to scan transparent bundles as all relevant txs will not be evaded during scanning
         &HashMap::new(),
+        chain_height,
     )
     .await?;
 

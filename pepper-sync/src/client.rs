@@ -153,6 +153,16 @@ pub enum FetchRequest {
     ),
     /// Get a full transaction by txid.
     Transaction(oneshot::Sender<Result<RawTransaction, ServerError>>, TxId),
+    /// Gets the minimum number of txids for a transaction request among decoys. `None` if a
+    /// source can receive a txid alone, or if no source can receive one among decoys.
+    DecoyMinimum(oneshot::Sender<Option<usize>>),
+    /// Gets full transactions by txid, in the same sequence.
+    TransactionsAmongDecoys {
+        reply: oneshot::Sender<Result<Vec<RawTransaction>, ServerError>>,
+        txids: Vec<TxId>,
+        /// The txids are those of the chain tip, and the request does not depend on the wallet.
+        tip: bool,
+    },
     /// Tells the router that blocks from this source failed verification.
     FailedVerification(SourceId),
     /// Get a list of transactions for a given transparent address and block range.
@@ -359,6 +369,15 @@ pub(crate) async fn get_transaction_and_block_height(
 
     let raw_transaction = recv_fetch_reply(reply_receiver, "Transaction").await?;
 
+    parse_transaction(consensus_parameters, &raw_transaction, txid)
+}
+
+/// Reads `raw_transaction`, which must have the ID `txid`.
+pub(crate) fn parse_transaction(
+    consensus_parameters: &impl consensus::Parameters,
+    raw_transaction: &RawTransaction,
+    txid: TxId,
+) -> Result<(Transaction, BlockHeight), ServerError> {
     let block_height = raw_transaction
         .mined_height
         .unwrap_or(BlockHeight::from_u32(0));
@@ -375,6 +394,36 @@ pub(crate) async fn get_transaction_and_block_height(
     }
 
     Ok((transaction, block_height))
+}
+
+/// See [`FetchRequest::DecoyMinimum`].
+pub(crate) async fn decoy_minimum(
+    fetch_request_sender: UnboundedSender<FetchRequest>,
+) -> Result<Option<usize>, ServerError> {
+    let (reply_sender, reply_receiver) = oneshot::channel();
+    fetch_request_sender
+        .send(FetchRequest::DecoyMinimum(reply_sender))
+        .map_err(|_| ServerError::FetcherDropped)?;
+
+    reply_receiver
+        .await
+        .map_err(|_| ServerError::FetcherDropped)
+}
+
+/// See [`FetchRequest::TransactionsAmongDecoys`].
+pub(crate) async fn get_transactions_among_decoys(
+    fetch_request_sender: UnboundedSender<FetchRequest>,
+    txids: Vec<TxId>,
+    tip: bool,
+) -> Result<Vec<RawTransaction>, ServerError> {
+    let (reply, reply_receiver) = oneshot::channel();
+    fetch_request_sender
+        .send(FetchRequest::TransactionsAmongDecoys { reply, txids, tip })
+        .map_err(|_| ServerError::FetcherDropped)?;
+
+    reply_receiver
+        .await
+        .map_err(|_| ServerError::FetcherDropped)?
 }
 
 /// Gets transactions relevant to a given `transparent address` in the specified `block_range`.

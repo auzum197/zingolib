@@ -1,12 +1,16 @@
 //! Queue and prioritise fetch requests to fetch data from the server
 
+use std::collections::HashMap;
+
 use tokio::sync::mpsc::UnboundedReceiver;
 
 use chain_router::{
-    IntegrityBasis, Request, SourceError, SourceSet,
-    chain::{BlockId, TreeState},
+    IntegrityBasis, Request, SourceError, SourceSet, WalletIdentifier,
+    chain::{BlockId, RawTransaction, TreeState},
 };
+use futures::TryStreamExt as _;
 use tracing::instrument;
+use zcash_primitives::transaction::TxId;
 use zcash_protocol::consensus::BlockHeight;
 
 use crate::client::{FetchRequest, Policy};
@@ -24,6 +28,7 @@ pub(crate) async fn fetch(
     policy: Policy,
 ) {
     let mut fetch_request_queue: Vec<FetchRequest> = Vec::new();
+    let mut tip_transactions = HashMap::new();
 
     loop {
         // `fetch` returns here when all requests have successfully been fetched and the
@@ -35,7 +40,7 @@ pub(crate) async fn fetch(
         let fetch_request = select_fetch_request(&mut fetch_request_queue);
 
         if let Some(request) = fetch_request {
-            fetch_from_server(&sources, policy, request).await;
+            fetch_from_server(&sources, policy, &mut tip_transactions, request).await;
         }
     }
 }
@@ -85,7 +90,12 @@ fn select_fetch_request(fetch_request_queue: &mut Vec<FetchRequest>) -> Option<F
     }
 }
 
-async fn fetch_from_server(sources: &SourceSet, policy: Policy, fetch_request: FetchRequest) {
+async fn fetch_from_server(
+    sources: &SourceSet,
+    policy: Policy,
+    tip_transactions: &mut HashMap<TxId, RawTransaction>,
+    fetch_request: FetchRequest,
+) {
     match fetch_request {
         FetchRequest::ChainTip(sender) => {
             tracing::debug!("Fetching chain tip.");
@@ -134,6 +144,17 @@ async fn fetch_from_server(sources: &SourceSet, policy: Policy, fetch_request: F
             let transaction = policy.admit(sources.transaction(txid).await);
             let _ignore_error = sender.send(transaction);
         }
+        FetchRequest::DecoyMinimum(sender) => {
+            let direct = sources.allows(WalletIdentifier::Txid);
+            let minimum = sources.txid_minimum().filter(|_| !direct);
+            let _ignore_error = sender.send(minimum);
+        }
+        FetchRequest::TransactionsAmongDecoys { reply, txids, tip } => {
+            tracing::debug!("Fetching {} transactions among decoys.", txids.len());
+            let transactions =
+                get_transactions_among_decoys(sources, policy, tip_transactions, txids, tip).await;
+            let _ignore_error = reply.send(transactions);
+        }
         FetchRequest::FailedVerification(source) => {
             tracing::warn!("Blocks from source {} failed verification.", source.0);
             sources.on_failure(source, &SourceError::FailedVerification);
@@ -156,6 +177,39 @@ fn checkable(sources: &SourceSet, block_height: BlockHeight) -> bool {
     sources
         .route_info(&Request::TreeState(block_height))
         .is_ok_and(|route| route.basis != IntegrityBasis::Unverified)
+}
+
+/// Transactions of the last tip request are kept, so that a scan of the tip sends no second
+/// request for them.
+async fn get_transactions_among_decoys(
+    sources: &SourceSet,
+    policy: Policy,
+    tip_transactions: &mut HashMap<TxId, RawTransaction>,
+    txids: Vec<TxId>,
+    tip: bool,
+) -> Result<Vec<RawTransaction>, ServerError> {
+    let kept: Option<Vec<_>> = txids
+        .iter()
+        .map(|txid| tip_transactions.get(txid).cloned())
+        .collect();
+    if let Some(transactions) = kept {
+        return Ok(transactions);
+    }
+
+    let stream = policy.admit(sources.transactions(txids.clone()).await)?;
+    let transactions: Vec<_> = stream.try_collect().await?;
+    if transactions.len() != txids.len() {
+        let wrong_count = "the number of transactions is not the number of txids";
+        return Err(SourceError::InvalidData(wrong_count.into()).into());
+    }
+    if tip {
+        *tip_transactions = txids
+            .into_iter()
+            .zip(transactions.iter().cloned())
+            .collect();
+    }
+
+    Ok(transactions)
 }
 
 #[instrument(

@@ -1461,6 +1461,92 @@ mod sources {
         assert!(!sent.contains(&RequestKind::AddressTransactions));
     }
 
+    type Kinds = Arc<std::sync::Mutex<Vec<RequestKind>>>;
+
+    /// A client whose indexer can receive a txid only among `minimum` txids, and the kinds of
+    /// the requests that it sends.
+    async fn decoy_client(net: &MockNet, minimum: usize) -> (LightClient, Kinds) {
+        let kinds = Kinds::default();
+        let copy = kinds.clone();
+        let allowed = AllowedIdentifiers {
+            txid: TxidRule::Among(minimum),
+            transparent_address: true,
+            sent_transaction: false,
+        };
+        let builder = LightClient::builder(net.chain_type())
+            .indexer(net.indexer_uri(), Integrity::Assumed, allowed)
+            .unwrap()
+            .request_events(move |event: &RequestEvent| copy.lock().unwrap().push(event.kind));
+        (create(builder).await, kinds)
+    }
+
+    fn decoy_requests(kinds: &Kinds) -> usize {
+        let mut kinds = kinds.lock().unwrap();
+        assert!(!kinds.contains(&RequestKind::Transaction));
+        let count = kinds
+            .iter()
+            .filter(|kind| **kind == RequestKind::Transactions)
+            .count();
+        kinds.clear();
+        count
+    }
+
+    #[tokio::test]
+    async fn sync_gets_wallet_transactions_among_decoys() {
+        let net = MockNet::launch().await;
+        let (mut client, kinds) = decoy_client(&net, 2).await;
+        let address = get_base_address(&client, PoolType::Shielded(ShieldedPool::Orchard)).await;
+        fund(&net, vec![(&address, 100_000, None)], 1).await;
+        fund(&net, vec![(&address, 50_000, None)], 1).await;
+
+        client.sync_and_await().await.unwrap();
+
+        check_client_balances!(client, i: 150_000 o: 0 s: 0 t: 0);
+        assert!(decoy_requests(&kinds) > 0);
+    }
+
+    #[tokio::test]
+    async fn wallet_transaction_at_the_tip_needs_no_request_after_the_tip_request() {
+        let net = MockNet::launch().await;
+        let (mut client, kinds) = decoy_client(&net, 1).await;
+        let address = get_base_address(&client, PoolType::Shielded(ShieldedPool::Orchard)).await;
+        fund(&net, vec![(&address, 100_000, None)], 0).await;
+
+        client.sync_and_await().await.unwrap();
+
+        check_client_balances!(client, i: 100_000 o: 0 s: 0 t: 0);
+        assert_eq!(decoy_requests(&kinds), 1);
+    }
+
+    #[tokio::test]
+    async fn sync_fails_if_the_chain_has_too_few_transactions_for_the_decoy_minimum() {
+        let net = MockNet::launch().await;
+        let (mut client, _kinds) = decoy_client(&net, 1000).await;
+        let address = get_base_address(&client, PoolType::Shielded(ShieldedPool::Orchard)).await;
+        fund(&net, vec![(&address, 100_000, None)], 1).await;
+
+        let not_allowed = not_allowed(client.sync_and_await().await.unwrap_err());
+        assert_eq!(not_allowed, Some(WalletIdentifier::Txid));
+    }
+
+    #[tokio::test]
+    async fn sync_requests_the_tip_transactions_once_for_each_new_tip() {
+        let net = MockNet::launch().await;
+        let (mut client, kinds) = decoy_client(&net, 1).await;
+        let other = external_address(PoolType::ORCHARD);
+        fund(&net, vec![(&other, 100_000, None)], 1).await;
+
+        client.sync_and_await().await.unwrap();
+        assert_eq!(decoy_requests(&kinds), 1);
+
+        client.sync_and_await().await.unwrap();
+        assert_eq!(decoy_requests(&kinds), 0);
+
+        fund(&net, vec![(&other, 100_000, None)], 0).await;
+        client.sync_and_await().await.unwrap();
+        assert_eq!(decoy_requests(&kinds), 1);
+    }
+
     #[tokio::test]
     async fn unverified_sources_that_disagree_stop_sync() {
         let mut funded = MockNet::launch().await;

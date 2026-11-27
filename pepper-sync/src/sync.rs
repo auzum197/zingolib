@@ -31,6 +31,7 @@ use crate::error::{
 use crate::events::{CommitTiming, ScanTiming, SyncEmitter, SyncEvent, emit_tip_if_advanced};
 use crate::keys::transparent::TransparentAddressId;
 use crate::scan::ScanResults;
+use crate::scan::decoys::Blocks;
 use crate::scan::task::{Scanner, ScannerState};
 use crate::scan::transactions::scan_transaction;
 use crate::wallet::traits::{
@@ -199,6 +200,9 @@ where
     if let Some(identifier) = needed_identifiers(&config)
         .into_iter()
         .find(|identifier| !sources.allows(*identifier))
+        .filter(|identifier| {
+            *identifier != WalletIdentifier::Txid || sources.txid_minimum().is_none()
+        })
     {
         let not_allowed = chain_router::SourceError::IdentifierNotAllowed(identifier);
         return Err(ServerError::RequestFailed(not_allowed).into());
@@ -258,6 +262,16 @@ where
         config.transparent_address_discovery,
     )
     .await?;
+
+    if last_known_chain_height < chain_height
+        && let Some(minimum) = client::decoy_minimum(fetch_request_sender.clone()).await?
+    {
+        let scanned = BTreeMap::new();
+        let txids = Blocks::new(&scanned, fetch_request_sender.clone(), consensus_parameters)
+            .bucket_txids(chain_height, chain_height, minimum)
+            .await?;
+        client::get_transactions_among_decoys(fetch_request_sender.clone(), txids, true).await?;
+    }
 
     #[cfg(not(feature = "darkside_test"))]
     update_subtree_roots(

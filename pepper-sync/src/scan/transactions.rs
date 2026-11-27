@@ -1,4 +1,4 @@
-use std::collections::{BTreeMap, BTreeSet, HashMap};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 
 use tokio::sync::mpsc;
 
@@ -38,7 +38,7 @@ use crate::{
         KeyIdOps as _, OutgoingNoteOps as _, TransparentCoinOps as _, WalletNoteOps as _,
         WalletTransactionOps as _,
     },
-    error::ScanError,
+    error::{ScanError, ServerError},
     keys::{self, KeyId, transparent::TransparentAddressId},
     wallet::{
         IronwoodNote, NoteInterface, NullifierMap, OrchardNote, OutgoingIronwoodNote, OutgoingNote,
@@ -48,7 +48,7 @@ use crate::{
     },
 };
 
-use super::DecryptedNoteData;
+use super::{DecryptedNoteData, decoys::Blocks};
 
 trait ShieldedOutputExt<D: Domain>: ShieldedOutput<D, ENC_CIPHERTEXT_SIZE> {
     fn out_ciphertext(&self) -> [u8; 80];
@@ -97,8 +97,21 @@ pub(crate) async fn scan_transactions(
     outpoint_map: &mut BTreeMap<OutputId, ScanTarget>,
     transparent_addresses: HashMap<String, TransparentAddressId>,
     known_transactions: &HashMap<TxId, Vec<u8>>,
+    chain_height: BlockHeight,
 ) -> Result<HashMap<TxId, WalletTransaction>, ScanError> {
     let mut wallet_transactions = HashMap::with_capacity(scan_targets.len());
+    let decoy_minimum = if scan_targets.is_empty() {
+        None
+    } else {
+        client::decoy_minimum(fetch_request_sender.clone()).await?
+    };
+    let wanted: HashSet<_> = scan_targets.iter().map(|target| target.txid).collect();
+    let mut blocks = Blocks::new(
+        wallet_blocks,
+        fetch_request_sender.clone(),
+        consensus_parameters,
+    );
+    let mut among_decoys = HashMap::new();
 
     for scan_target in scan_targets {
         if scan_target.txid == TxId::from_bytes([0u8; 32]) {
@@ -117,9 +130,35 @@ pub(crate) async fn scan_transactions(
                     consensus::BranchId::for_height(consensus_parameters, scan_target.block_height);
                 Transaction::read(&bytes[..], branch_id).ok()
             });
-        let (transaction, block_height) = match known {
-            Some(transaction) => (transaction, scan_target.block_height),
-            None => {
+        let (transaction, block_height) = match (known, decoy_minimum) {
+            (Some(transaction), _) => (transaction, scan_target.block_height),
+            (None, Some(minimum)) => {
+                if !among_decoys.contains_key(&scan_target.txid) {
+                    let mut txids = blocks
+                        .bucket_txids(scan_target.block_height, chain_height, minimum)
+                        .await?;
+                    if !txids.contains(&scan_target.txid) {
+                        txids.push(scan_target.txid);
+                    }
+                    let transactions = client::get_transactions_among_decoys(
+                        fetch_request_sender.clone(),
+                        txids.clone(),
+                        false,
+                    )
+                    .await?;
+                    among_decoys.extend(
+                        txids
+                            .into_iter()
+                            .zip(transactions)
+                            .filter(|(txid, _)| wanted.contains(txid)),
+                    );
+                }
+                let raw_transaction = among_decoys
+                    .get(&scan_target.txid)
+                    .ok_or(ServerError::FetcherDropped)?;
+                client::parse_transaction(consensus_parameters, raw_transaction, scan_target.txid)?
+            }
+            (None, None) => {
                 client::get_transaction_and_block_height(
                     fetch_request_sender.clone(),
                     consensus_parameters,
