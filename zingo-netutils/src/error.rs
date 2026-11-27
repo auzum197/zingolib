@@ -21,12 +21,15 @@
 /// ```
 #[derive(Debug, thiserror::Error)]
 pub enum GetClientError {
+    /// The URI scheme is not `http` or `https`.
     #[error("bad uri: invalid scheme")]
     InvalidScheme,
 
+    /// The URI has no authority.
     #[error("bad uri: invalid authority")]
     InvalidAuthority,
 
+    /// The gRPC transport could not be set up.
     #[error(transparent)]
     Transport(#[from] tonic::transport::Error),
 }
