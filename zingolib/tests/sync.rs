@@ -119,9 +119,11 @@ async fn add_subtree_roots() {
     .await
     .unwrap();
 
-    let mut grpc_client = GrpcIndexer::new(lightclient.indexer_uri().clone())
-        .await
-        .unwrap();
+    let mut grpc_client = GrpcIndexer::new(
+        construct_lightwalletd_uri(Some(DEFAULT_INDEXER_URI.to_string())).unwrap(),
+    )
+    .await
+    .unwrap();
 
     let mut sapling_subtree_roots_server = Vec::new();
     let mut sapling_subtree_roots_stream = grpc_client

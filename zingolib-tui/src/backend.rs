@@ -307,13 +307,14 @@ impl Backend {
     }
 
     async fn open(&mut self, spec: OpenSpec) -> Result<(LightClient, WalletInfo), String> {
-        let (opened, network) = match spec {
+        let (opened, network, server_uri) = match spec {
             OpenSpec::Read { passphrase } => {
                 let network = self.config.network;
+                let server_uri = self.config.server_uri(network, None)?;
                 let opened = LightClient::open(
                     FileStore::new(self.config.wallet_path(network)),
                     chain_type(network),
-                    self.config.server_uri(network, None)?,
+                    server_uri.clone(),
                     passphrase.map_or(Unlock::Plaintext, Unlock::Passphrase),
                 )
                 .await
@@ -321,7 +322,7 @@ impl Backend {
                     OpenError::DecryptionFailed => "wrong passphrase or corrupt wallet file".into(),
                     e => e.to_string(),
                 });
-                (opened, network)
+                (opened, network, server_uri)
             }
             OpenSpec::Create {
                 network,
@@ -336,10 +337,11 @@ impl Backend {
                         Argon2Params::with_memory_mib(self.config.kdf_memory_mib),
                     ))
                 });
+                let server_uri = self.config.server_uri(network, Some(&server))?;
                 let opened = LightClient::create(
                     FileStore::new(self.config.wallet_path(network)),
                     chain_type(network),
-                    self.config.server_uri(network, Some(&server))?,
+                    server_uri.clone(),
                     WalletConfig::Ufvk {
                         ufvk,
                         birthday: Birthday::Height(birthday),
@@ -349,7 +351,7 @@ impl Backend {
                 )
                 .await
                 .map_err(|e| e.to_string());
-                (opened, network)
+                (opened, network, server_uri)
             }
         };
         let lc = opened?;
@@ -377,7 +379,7 @@ impl Backend {
             wallet_name: self.config.wallet_name.clone(),
             wallet_path: wallet_path.display().to_string(),
             birthday: lc.birthday(),
-            server: lc.indexer_uri().to_string(),
+            server: server_uri.to_string(),
             has_orchard,
         };
         Ok((lc, info))
