@@ -6,15 +6,17 @@ use std::ops::Range;
 use incrementalmerkletree::{Hashable, Position, Retention, frontier::Frontier};
 use orchard::tree::MerkleHashOrchard;
 use shardtree::LocatedPrunableTree;
-use subtle::CtOption;
-use wallet_api::chain::{self, TreeState};
+use wallet_api::chain::TreeState;
 use zcash_primitives::block::BlockHash;
 use zcash_protocol::consensus::BlockHeight;
 
 use crate::sync::SHARDTREE_CHECKPOINT_ROLLING_WINDOW_SIZE;
 
 #[cfg(not(feature = "darkside_test"))]
-use {crate::error::ServerError, shardtree::store::ShardStore, wallet_api::chain::SubtreeRoot};
+use {
+    crate::error::ServerError, shardtree::store::ShardStore, subtle::CtOption,
+    wallet_api::chain::SubtreeRoot,
+};
 
 pub(crate) use zingolib_common::wallet::SHARD_HEIGHT;
 
@@ -104,7 +106,7 @@ where
         >,
 {
     for (index, tree_root) in subtree_roots.into_iter().enumerate() {
-        let node = <S::H as FromBytes>::from_bytes(*tree_root.root.as_bytes())
+        let node = <S::H as FromBytes>::from_bytes(tree_root.root)
             .into_option()
             .ok_or(ServerError::InvalidSubtreeRoot)?;
         let shard = LocatedPrunableTree::with_root_value(
@@ -121,6 +123,7 @@ where
 }
 
 /// Allows generic construction of a shardtree node from raw byte representation
+#[cfg(not(feature = "darkside_test"))]
 pub(crate) trait FromBytes
 where
     Self: Sized,
@@ -128,12 +131,14 @@ where
     fn from_bytes(array: [u8; 32]) -> CtOption<Self>;
 }
 
+#[cfg(not(feature = "darkside_test"))]
 impl FromBytes for orchard::tree::MerkleHashOrchard {
     fn from_bytes(array: [u8; 32]) -> CtOption<Self> {
         Self::from_bytes(&array)
     }
 }
 
+#[cfg(not(feature = "darkside_test"))]
 impl FromBytes for sapling_crypto::Node {
     fn from_bytes(array: [u8; 32]) -> CtOption<Self> {
         Self::from_bytes(array)
@@ -241,44 +246,16 @@ impl Frontiers {
     }
 }
 
-impl TryFrom<TreeState> for Frontiers {
-    type Error = std::io::Error;
-
-    fn try_from(value: TreeState) -> Result<Self, Self::Error> {
-        Ok(Frontiers::new(
+impl From<TreeState> for Frontiers {
+    fn from(value: TreeState) -> Self {
+        Frontiers::new(
             value.height,
-            BlockHash(*value.hash.as_bytes()),
-            frontier(value.sapling.as_ref())?,
-            frontier(value.orchard.as_ref())?,
-            frontier(value.ironwood.as_ref())?,
-        ))
+            value.hash,
+            value.sapling,
+            value.orchard,
+            value.ironwood,
+        )
     }
-}
-
-/// Converts the nodes of a frontier into tree hashes. No frontier is an empty tree.
-fn frontier<H: FromBytes, const DEPTH: u8>(
-    frontier: Option<&chain::Frontier>,
-) -> std::io::Result<Frontier<H, DEPTH>> {
-    let Some(frontier) = frontier else {
-        return Ok(Frontier::empty());
-    };
-    let invalid = |reason: String| std::io::Error::new(std::io::ErrorKind::InvalidData, reason);
-    let node = |node: &chain::TreeNode| {
-        H::from_bytes(*node.as_bytes())
-            .into_option()
-            .ok_or_else(|| invalid(format!("tree node {node} is not a valid hash")))
-    };
-
-    Frontier::from_parts(
-        Position::from(frontier.position()),
-        node(&frontier.leaf())?,
-        frontier
-            .ommers()
-            .iter()
-            .map(node)
-            .collect::<Result<_, _>>()?,
-    )
-    .map_err(|e| invalid(format!("{e:?}")))
 }
 
 // checkpoints are held for the top SHARDTREE_CHECKPOINT_ROLLING_WINDOW_SIZE blocks of the chain only: a re-org is
