@@ -55,11 +55,11 @@ ARG ZCASH_VERSION
 ARG ZAINO_IMAGE_TAG
 ARG NEXTEST_VERSION
 
-LABEL org.zingolib.test-artifacts.versions.rust="${RUST_VERSION}"
-LABEL org.zingolib.test-artifacts.versions.lightwalletd="${LIGHTWALLETD_VERSION}"
-LABEL org.zingolib.test-artifacts.versions.zcashd="${ZCASH_VERSION}"
-LABEL org.zingolib.test-artifacts.versions.zaino="${ZAINO_IMAGE_TAG}"
-LABEL org.zingolib.test-artifacts.versions.nextest="${NEXTEST_VERSION}"
+LABEL org.ekdromos.test-artifacts.versions.rust="${RUST_VERSION}"
+LABEL org.ekdromos.test-artifacts.versions.lightwalletd="${LIGHTWALLETD_VERSION}"
+LABEL org.ekdromos.test-artifacts.versions.zcashd="${ZCASH_VERSION}"
+LABEL org.ekdromos.test-artifacts.versions.zaino="${ZAINO_IMAGE_TAG}"
+LABEL org.ekdromos.test-artifacts.versions.nextest="${NEXTEST_VERSION}"
 
 # Copy regtest binaries and zcash params from builder
 COPY --from=builder /usr/src/lightwalletd/lightwalletd /usr/bin/

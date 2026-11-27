@@ -1,0 +1,45 @@
+[package]
+name = "ekdromos-common"
+description = "Types shared across the ekdromos workspace: chain, keys, memo encoding, confirmation status and the serialization trait."
+authors = ["<zingo@zingolabs.org>"]
+version = "0.1.0"
+edition = "2024"
+repository = "https://github.com/auzum197/ekdromos"
+homepage = "https://github.com/auzum197/ekdromos"
+license = "MIT"
+
+[badges]
+maintenance = { status = "actively-developed" }
+
+[features]
+# exposes test constructors for wallet types
+test-features = []
+
+[dependencies]
+bip0039 = { workspace = true }
+bip32 = { workspace = true }
+byteorder = { workspace = true }
+incrementalmerkletree = { workspace = true }
+jubjub = { workspace = true }
+memuse = { workspace = true }
+orchard = { workspace = true }
+sapling-crypto = { workspace = true }
+shardtree = { workspace = true }
+serde = { workspace = true, features = ["derive"] }
+thiserror = { workspace = true }
+tracing = { workspace = true }
+zcash_address = { workspace = true }
+zcash_client_backend = { workspace = true, features = ["unstable-serialization"] }
+zcash_encoding = { workspace = true }
+zcash_keys = { workspace = true, features = ["unstable"] }
+zcash_primitives = { workspace = true }
+zcash_protocol = { workspace = true }
+zcash_transparent = { workspace = true }
+ekdromos-common-components = { workspace = true }
+zip32 = { workspace = true }
+
+[dev-dependencies]
+hex = { workspace = true }
+proptest = { workspace = true }
+zcash_protocol = { workspace = true, features = ["local-consensus"] }
+rand = { workspace = true }

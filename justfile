@@ -3,7 +3,7 @@
 # the current commit hash, matching the file names in docs/benchmarks/.
 
 bench label=`git rev-parse --short HEAD`:
-    PEPPER_BENCH_OUT="{{ justfile_directory() }}/docs/benchmarks/pepper-sync-{{ label }}.jsonl" cargo bench -p zingolib --bench pepper_sync
+    PEPPER_BENCH_OUT="{{ justfile_directory() }}/docs/benchmarks/pepper-sync-{{ label }}.jsonl" cargo bench -p ekdromos --bench pepper_sync
 
 compare before after:
     python3 "{{ justfile_directory() }}/docs/benchmarks/compare.py" \

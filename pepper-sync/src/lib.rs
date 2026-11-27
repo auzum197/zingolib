@@ -109,7 +109,7 @@ pub mod error;
 
 /// Operations on the wallet data that only the sync engine performs.
 pub mod engine {
-    pub use zingolib_common::engine::*;
+    pub use ekdromos_common::engine::*;
 }
 
 pub mod events;
@@ -121,6 +121,7 @@ pub(crate) mod utils;
 pub mod wallet;
 pub(crate) mod witness;
 
+pub use ekdromos_common::config;
 pub use events::{CommitTiming, ScanTiming, SequencedSyncEvent, SyncEmitter, SyncEvent};
 use shardtree::store::ShardStore;
 pub use strategy::{AssumedOnly, Auto, SyncContext, SyncStrategy, Verified};
@@ -130,7 +131,6 @@ pub use sync::scan_pending_transaction;
 pub use sync::set_transactions_failed;
 pub use sync::sync;
 pub use sync::sync_status;
-pub use zingolib_common::config;
 
 #[cfg(test)]
 mod mocks;

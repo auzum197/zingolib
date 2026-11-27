@@ -4,8 +4,8 @@ description = "Pepper-sync is a crate providing a sync engine for the zcash netw
 authors = ["<zingo@zingolabs.org>"]
 version = "0.6.0"
 edition = "2024"
-repository = "https://github.com/zingolabs/zingolib"
-homepage = "https://github.com/zingolabs/zingolib"
+repository = "https://github.com/auzum197/ekdromos"
+homepage = "https://github.com/auzum197/ekdromos"
 license = "MIT"
 
 [badges]
@@ -16,11 +16,11 @@ default = []
 # removes failing calls to `GetSubTreeRoots` in darkside testing
 darkside_test = []
 # exposes test constructors for wallet types
-test-features = ["zingolib-common/test-features"]
+test-features = ["ekdromos-common/test-features"]
 
 [dependencies]
-# Zingo
-zingolib-common.workspace = true
+# Workspace
+ekdromos-common.workspace = true
 chain-router.workspace = true
 
 # Zcash
@@ -69,7 +69,7 @@ thiserror.workspace = true
 simple-mermaid.workspace = true
 
 [dev-dependencies]
-zingolib-common = { workspace = true, features = ["test-features"] }
+ekdromos-common = { workspace = true, features = ["test-features"] }
 zcash_protocol = { workspace = true, features = [ "local-consensus"] }
 criterion.workspace = true
 proptest.workspace = true

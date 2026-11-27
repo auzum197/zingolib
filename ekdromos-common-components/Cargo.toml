@@ -1,0 +1,16 @@
+[package]
+name = "ekdromos-common-components"
+description = "Common components for the ekdromos workspace"
+documentation = "https://github.com/auzum197/ekdromos"
+homepage = "https://github.com/auzum197/ekdromos"
+repository = "https://github.com/auzum197/ekdromos"
+
+version = "0.4.0"
+edition = "2024"
+license = "MIT"
+
+[badges]
+maintenance = { status = "actively-developed" }
+
+[dependencies]
+hex.workspace = true

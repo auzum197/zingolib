@@ -33,12 +33,6 @@ ENV CC_armv7_unknown_linux_gnueabhihf="arm-linux-gnueabihf-gcc"
 RUN cd /opt && wget https://download.libsodium.org/libsodium/releases/libsodium-1.0.17-mingw.tar.gz && \
     tar xvf libsodium-1.0.17-mingw.tar.gz     
 
-# Cargo fetch the dependencies so we don't download them over and over again
-RUN cd /tmp && git clone --depth=1 https://github.com/zingolabs/zingolib.git && \
-    cd zingolib && \
-    cargo fetch && \
-    cd /tmp && rm -rf zingolib
-
 # This is a bug fix for the windows cross compiler for Rust.
 # RUN cp /usr/x86_64-w64-mingw32/lib/crt2.o  /root/.rustup/toolchains/1.49.0-x86_64-unknown-linux-gnu/lib/rustlib/x86_64-pc-windows-gnu/crt2.o
 

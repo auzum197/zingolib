@@ -1,0 +1,317 @@
+# Changelog
+
+All notable changes to this project will be documented in this file.
+
+The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
+and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
+
+## [Unreleased]
+
+### Deprecated
+
+### Added
+- `wallet::disk::WalletFile` and `wallet::disk::WalletFileRef`: the decoded contents of a wallet
+  file with public fields, and the borrowed view a wallet is written from. `LightWallet::read`
+  and `LightWallet::write` go through them, so the file layout no longer touches wallet internals.
+  Both live in `ekdromos_file_format` and are re-exported here.
+- `config::ChainType`, `wallet::WalletSettings` and `wallet::keys::unified::UnifiedAddressId`:
+  `read` and `write` for their wallet-file encoding.
+- `wallet::LightWallet::transaction_summary` and `lightclient::LightClient::transaction_summary`:
+  summarize a single transaction by txid, returning `None` if the transaction is not in the wallet.
+  Shares the construction path of `transaction_summaries`, so kind/value/fee always agree with the
+  bulk view.
+- `wallet::summary::data::SendType::PoolMove { to }`: a transaction that only sends to the
+  wallet itself and moves value into a pool it did not spend from, with the pool that gained the
+  most. After NU6.3 this is how Orchard funds reach Ironwood. Displays as `pool-move`.
+- `wallet::summary::data::SelfSendWalletEvent::PoolMove`: the wallet event for value moved
+  into such a pool. Displays as `pool-move`.
+- `moved_to` in the JSON of a transaction summary: the destination pool of a pool move, or null.
+
+### Changed
+- An error reply to a submitted transaction no longer sets the transaction to `Failed`. The
+  transaction gets `Transmitted` status and the send returns
+  `TransmissionError::OutcomeUnknown` with the txid. Sync sets `Mempool` or `Confirmed` when it
+  gets the transaction, and `Failed` at the expiry height. `TransmissionError::NotSubmitted`
+  is the error when no source can take the transaction. Both replace `TransmissionFailed`.
+- The crate is named `ekdromos`, formerly `zingolib`. Its import path is `ekdromos`.
+- `wallet::zcb_traits::ZingoAccount` is named `EkdromosAccount`.
+- `testutils::scenarios::ClientBuilder::zingo_datadir` is named `wallet_datadir`.
+- `zingo_common_components` and `zingo_test_vectors` are named `ekdromos-common-components` and
+  `ekdromos-test-vectors`.
+- `config::Birthday` is the birthday type of every `WalletConfig` variant: `ChainTip`,
+  `Height(u32)` or `SaplingActivation`. `LightClient::create` resolves `ChainTip` to 100 blocks
+  below the chain tip of the indexer and fails with `CreateError::ChainTip` if it cannot get
+  the tip. `LightWallet::new` has no indexer and fails with `WalletError::ChainTipUnknown`.
+- `WalletConfig::NewSeed` takes `birthday` in place of `chain_height`. A `Birthday::Height` is
+  used as given. The 100 blocks are only subtracted for `Birthday::ChainTip`.
+- A `LightClient` saves its wallet without being asked. `create` writes the wallet to the store
+  before it returns, and a task saves every later change, at most once a second. A failed save is
+  retried. `LightClient::flush` waits for the store to hold every change and returns a
+  `SaveError` if the save failed. `LightClient::close` stops sync and flushes.
+  `LightClient::save_state` gives the result of each save.
+- `LightWallet::save_required` is replaced by a change count. `LightWallet::mark_dirty` records a
+  change and `LightWallet::subscribe_changes` watches the count.
+- `lightclient::store::MemoryStore`: a store that keeps the wallet in memory.
+- `LightClient::new` is replaced by `LightClient::create` and `LightClient::open`. Both take a
+  `lightclient::store::WalletStore`, the chain type and the indexer URI. `create` fails with
+  `CreateError::AlreadyExists` and never overwrites. `open` fails with `OpenError::NotFound`,
+  `PassphraseRequired`, `NotEncrypted` or `DecryptionFailed`.
+- `lightclient::Encryption` and `lightclient::Unlock` replace the `Option<EncryptionConfig>`
+  argument. A passphrase given for a plaintext wallet is now an error.
+- `lightclient::store::FileStore` holds the atomic file write. It creates the parent directory.
+- `LightClient::do_info` is now `server_info` and returns `Result<LightdInfo, Status>`.
+- `zingolib-price` no longer exists. `PriceList` and `Price` are in `ekdromos_common::price`, and
+  the fetch with its `PriceError` is the new `price` module here.
+- `LightWallet::write` takes `&self`.
+- `LightWallet::read` and `LightWallet::read_encrypted` return `WalletError` in place of
+  `io::Error`. A file that cannot be read is the new `WalletError::File`, which holds a
+  `ekdromos_file_format::WalletFileError`.
+- `LightWallet::new`: address derivation errors now surface as `WalletError::KeyError` in every
+  case, and a wallet file naming an account without keys fails with `KeyError::NoAccountKeys`.
+- The wallet history API now uses wallet event terminology. `ValueTransfer`,
+  `ValueTransferKind`, `SentValueTransfer`, `SelfSendValueTransfer`, `ValueTransfers`, and
+  `value_transfers` are now `WalletEvent`, `WalletEventKind`, `SentWalletEvent`,
+  `SelfSendWalletEvent`, `WalletEvents`, and `wallet_events`.
+- `SendType::SendToSelf` now only covers sends to self within the pools the transaction spent
+  from. Sends to self that move value into another pool are `SendType::PoolMove`.
+- Wallet events for value sent to the wallet itself carry the real amount instead of zero, one
+  per pool, including those inside an ordinary send. Outputs to the wallet's own external
+  addresses count, and so does any output carrying a memo; plain change does not. A send to one
+  of the wallet's own transparent addresses inside a send, previously dropped, now has a value
+  wallet event.
+- `TransactionSummary::value` of a `SendToSelf` is the amount sent to self, measured the same way
+  as its wallet events, instead of zero. A `PoolMove` is worth the value moved.
+- An empty text memo, which is what a zero-filled memo field decodes to, is treated as no memo
+  in summaries and wallet events. It no longer turns a send to self into a memo to self.
+- The wallet is watch-only. Proposing, building and broadcasting transactions moved out of the
+  product API into `testutils::send`, behind the `testutils` feature, where the integration
+  tests still use it. `LightClient::propose_send`, `propose_send_all`, `propose_shield`,
+  `max_send_value`, `send_stored_proposal`, `quick_send` and `quick_shield` are only compiled
+  with that feature, and return `testutils::send::error::SendError` instead of
+  `LightClientError`. `zcash_proofs` and the Sapling parameter download are now test-only.
+
+### Removed
+- Zennies for Zingo: the `ZENNIES_FOR_ZINGO_DONATION_ADDRESS`, `ZENNIES_FOR_ZINGO_TESTNET_ADDRESS`,
+  `ZENNIES_FOR_ZINGO_REGTEST_ADDRESS` and `ZENNIES_FOR_ZINGO_AMOUNT` consts,
+  `get_zennies_for_zingo_address`, and the `zennies_for_zingo` argument of
+  `LightClient::propose_send_all` and `LightClient::max_send_value`. A transaction that pays the
+  former donation address is now an ordinary send.
+- `DEVELOPER_DONATION_ADDRESS` const.
+- `git_description`: the build script no longer runs git. A consumer that needs a version string
+  takes it from its own build.
+- `LightClient::save_task`, `wait_for_save`, `check_save_error` and `shutdown_save_task`.
+- `config::ClientConfig`, `config::ClientConfigBuilder`, `config::DEFAULT_WALLET_NAME` and the
+  default wallet directory. The caller selects the wallet path.
+- `WalletConfig::Read` and `WalletError::WalletAlreadyCreated`.
+- `LightClient::wallet_path`, `wallet_dir`, `backup_wallet_file` and `do_delete`. Use
+  `FileStore::path` and `WalletStore::delete`.
+- `LightClientError::FileError`, `ClientError` and `WalletError`.
+- `wallet::legacy`, `wallet::keys::legacy`, `wallet::disk::testing::examples` and
+  `testutils::paths`: wallet files older than layout 41 are no longer readable, so the legacy
+  readers, the example wallet files and the tests that loaded them are gone.
+- `config::ChainType`, `wallet::error::KeyError`, `wallet::keys::unified`, `wallet::WalletSettings`
+  and `wallet::encryption` are re-exports of `ekdromos_common` and `ekdromos_file_format` now.
+- `wallet::traits`: `ReadableWriteable` now lives in `ekdromos_common::serialization`
+- `LightClientError::SendError`, `lightclient::error::SendError` and `TransmissionError`,
+  `wallet::error::CalculateTransactionError`, `ProposeSendError` and `ProposeShieldError`:
+  moved to `testutils::send::error`.
+- `data::proposal` and `data::receivers`: moved to `testutils::send::proposal` and
+  `testutils::send::receivers`.
+- `LightWallet::clear_proposal` and `wallet::utils::get_zcash_params_path`.
+
+## [5.0.0] - 2026-06-10
+
+### Added
+- `lightclient::LightClient::poll_sync_recovery()` — polls the sync task and,
+  if it failed, returns `(SyncRecoveryObservables, String)` with the recommended
+  recovery action and error description. Primary entry point for consumers
+  (CLI, mobile, PC) to handle sync failures.
+- impl TryFrom<&str> for `config::ChainType`
+- `config::InvalidChainType`
+- `lightclient::WalletMeta`: new public struct wrapping `LightWallet` with metadata and immutable wallet data
+  stored outside the lock.
+- `lightclient::LightClient`:
+  - `chain_type` method: lock-free access to `ChainType`
+  - `birthday` method: lock-free access to wallet birthday as `u32`
+  - `mnemonic_phrase` method: lock-free access to the wallet's mnemonic phrase
+  - `wallet_path` method returns wallet file path
+  - `wallet_dir` method returns path to directory which holds wallet file
+  - `wallet` method: returns `&Arc<RwLock<LightWallet>>`, replacing the former public field
+  - `indexer: GrpcIndexer` field: owning the indexer connection directly
+  - `backup_wallet_file` method to replace `ZingoConfig` method
+  - updated `Debug` impl
+- re-export `zingo_common_components::protocol::ActivationHeights` so test crates can unify zingo common types with
+  zingolib lightclient construction
+- `wallet::utils`: added `get_zcash_params_path` fn to replace `ZingoConfig` method.
+- `config::WalletConfig` enum: replaces functionality of `wallet::WalletBase`. now encapsulates all wallet config for creation
+  of a `wallet::Lightwallet` for each variant i.e. from seed or ufvk
+- `testutils::default_test_wallet_settings`
+- `wallet::WalletSettings`: `default` impl
+
+### Changed
+- Upgraded `zingo-netutils` from 3.0.0 to 5.0.1:
+  - proto types now come from `lightwallet-protocol` via `zingo_netutils::lightwallet_protocol`.
+  - `globally-public-transparent` feature gates are enabled.
+- `lightclient::LightClient`:
+  - `new` now installs the rustls ring crypto provider (idempotent) since
+    `GrpcIndexer::new` pre-builds a TLS endpoint at construction time.
+  - `indexer_uri` now returns `&http::Uri` instead of `Option<&http::Uri>`.
+  - `set_indexer_uri` now returns `Result<(), zingo_netutils::GetClientError>` and
+    constructs a new `GrpcIndexer` internally (`set_uri` was removed upstream).
+  - `server_uri`: renamed `indexer_uri`
+  - `set_server`: renamed `set_indexer_uri`
+  - `pub wallet: Arc<RwLock<LightWallet>>` field is now private. replaced by `wallet` method.
+  - `new` constructor: removed `chain_height` parameter which is now within the config
+- `lightclient::error::LightClientError`: removed `TorClientError` variant.
+- `config` module:
+  - `ChainType`:
+    - `Regtest` activation heights tuple variant field changed from zebra type to zingo common components type.
+    - `fmt::Display` impl changed to give full network type names.
+    - `zcash_protocol::consensus::Parameters` impl is no longer public to constrain external types in public API.
+  - `ZingoConfig`:
+    - renamed: `ClientConfig`
+    - `wallet_settings` and `no_of_accounts` fields replaced by `wallet_config` field
+    - `network_type` field renamed `chain_type`
+    - reworked. public fields now private with public getter methods to constrain public API:
+      - `wallet_dir` replaces `get_zingo_wallet_dir`
+      - `chain_type` method replaces `chain` field
+      - `indexer_uri` method replaces `lightwalletd_uri` field and `get_lightwalletd_uri` method
+      - `build` renamed `builder`
+      - `wallet_settings` and `no_of_accounts` methods replaced by `wallet_config` method
+      - `get_zcash_params_path` replaced by `utils::get_zcash_params_path` fn
+      - `backup_existing_wallet` replaced by `LightClient::backup_wallet_file`
+  - `ClientConfigBuilder::build`: default `indexer_uri` is now `DEFAULT_INDEXER_URI`
+    (`https://zec.rocks:443`) instead of an empty URI, since `GrpcIndexer::new`
+    validates the scheme at construction.
+  - `ZingoConfigBuilder`:
+    - renamed: ClientConfigBuilder
+    - reworked. public fields now private with public setter methods to constrain public API:
+      - `create` renamed `build`
+  - `DEFAULT_LIGHTWALLETD_SERVER` const: renamed `DEFAULT_INDEXER_URI`
+  - `DEFAULT_TESTNET_LIGHTWALLETD_SERVER` const: renamed `DEFAULT_INDEXER_URI_TESTNET`
+  - `DEVELOPER_DONATION_ADDRESS` const: moved to lib.rs
+  - `ZENNIES_FOR_ZINGO_DONATION_ADDRESS` const: moved to lib.rs
+  - `ZENNIES_FOR_ZINGO_TESTNET_ADDRESS` const: moved to lib.rs
+  - `ZENNIES_FOR_ZINGO_REGTEST_ADDRESS` const: moved to lib.rs
+  - `ZENNIES_FOR_ZINGO_AMOUNT` const: moved to lib.rs
+  - `get_donation_address_for_chain` fn moved to lib.rs and renamed `get_zennies_for_zingo_address`
+      now takes `ChainType` instead of `&ChainType`
+  - `construct_lightwalletd_uri` fn: now returns result for handling URI errors
+- `wallet::LightWallet`:
+  - `pub network: ChainType` field is now private. Use `LightClient::chain_type()`.
+  - `pub birthday: BlockHeight` field is now private. Use `LightClient::birthday()`.
+  - `new` constructor:
+    - `network` parameter renamed `chain_type`
+    - `wallet_base`, `birthday` and `wallet_settings` fields replaced by `wallet_config` field
+  - new wallet serialization version 41 due to changes to chain type fmt::Display. chain type is now encoded as u8 and output indexes changed to u32.
+  - `update_current_price` method no longer takes `tor_client` parameter.
+- `wallet::keys::unified::UnifiedKeyStore`:
+  - `new_from_seed` method: `network` parameter renamed `chain_type` and now takes `ChainType` instead of `&ChainType`
+  - `new_from_mnemonic` method: `network` parameter renamed `chain_type` and now takes `ChainType` instead of `&ChainType`
+  - `new_from_ufvk` method: `network` parameter renamed `chain_type` and now takes `ChainType` instead of `&ChainType`
+- `wallet::disk`:
+  - serialized version incremented to 41 for serializing output indexes as u32 and chain types as u8 instead of string.
+  - `read` module: `network` parameter renamed `chain_type`
+- `wallet::error::WalletError`: added `WalletAlreadyCreated` variant
+- `wallet::error::KeyError`: added `InvalidMnemonicPhrase` variant
+- `wallet::summary::data`:
+  - `NoteSummary`: `output_index` field is now u32.
+  - `OutgoingNoteSummary`: `output_index` field is now u32.
+  - `CoinSummary`: `output_index` field is now u32.
+  - `OutgoingCoinSummary`: `output_index` field is now u32.
+- `wallet::output::OutputRef`: `output_index` method now returns u32.
+
+### Removed
+- `regtest` feature: production binaries can now be tested in regtest mode.
+- `config` module:
+  - `DEFAULT_LOGFILE_NAME` constant
+  - `ZingoConfig`:
+    - `logfile_name` method
+    - `get_log_config` method
+    - `get_log_path` method
+    - `create_testnet` method
+    - `create_mainnet` method
+    - `create_unconnected` method
+  - `ZingoConfigBuilder`:
+    - `set_logfile_name` method
+  - `ChainFromStingError`: replaced by `InvalidChainType` error struct.
+  - `chain_from_str`: replaced by impl TryFrom<&str> for `ChainType`
+  - `ZingoConfig`:
+    - `get_wallet_with_name_pathbuf`
+    - `get_wallet_with_name_path`
+    - `wallet_with_name_path_exists`
+    - `get_wallet_pathbuf`
+    - `wallet_exists(`
+  - `DEFAULT_LOGFILE_NAME` constant.
+  - `ZingoConfig`:
+    - `logfile_name` field
+    - `logfile_name()` method
+    - `get_log_config()` method
+    - `get_log_path()` method
+  - `ZingoConfigBuilder::set_logfile_name()` method.
+  - `load_clientconfig`: replaced by zingo config builder pattern (`ZingoConfigBuilder`)
+- `wallet::LightWallet`: `mnemonic` method.
+- `testutils::lightclient::new_client_from_save_buffer`
+- `wallet::WalletBase`: no longer public. public functionality replaced by `config::WalletConfig`
+- `lightclient::LightClient`:
+  - `create_from_wallet` constructor: no longer needed as now covered by `new` due to config rework
+  - `create_from_wallet_path` constructor: no longer needed as now covered by `new` due to config rework
+  - `tor_client` method. Tor no longer supported. To be replaced by nym in coming release.
+  - `create_tor_client` method.
+  - `remove_tor_client` method.
+- `testutils::build_fvk_client`
+
+## [4.0.0] - 2026-06-05
+
+### Changed
+- `lightclient::error::LightClientError`: added `SyncLaunchErrror` variant.
+- `data::Receiver`: From impl for Payment is now a TryFrom
+
+## [3.0.1] - 2026-03-26
+
+## [3.0.0] - 2026-03-02
+
+### Added
+- `lightclient::error::TransmissionError`: moved from `wallet::error` and simplified to much fewer variants more specific
+to transmission.
+- `wallet`: publicly re-exported `pepper_sync::config::{PerformanceLevel, SyncConfig, TransparentAddressDiscovery, TransparentAddressDiscoveryScopes}`
+
+### Changed
+- `lightclient::LightClient::new`: no longer recommends the `chain_height` parameter to actually be {chain height - 100}. consumers should input the current chain height.
+- `lightclient::error::LightClientError`:
+  - `SyncError` fmt display altered
+  - `SendError` variant added
+  - `FileError` removed From impl for std::io::error
+- `lightclient::error::SendError` - now includes all error types related to sending such as transmission and proposal errors.
+- `wallet::LightWallet`:
+  - removed `send_progress` field
+  - `remove_unconfirmed_transactions` method renamed to `remove_failed_transactions` and now only removes transactions with the
+new `Failed` status. Also now returns `wallet::error::WalletError`. No longer resets spends as spends are now reset when
+a transaction is updated to `Failed` status. Transactions are automatically updated to `Failed` if transmission fails 4 times or
+if the transaction expires before it is confirmed. Spends locked up in unconfirmed transactions for 3 blocks will also be reset
+to release the funds, restoring balance and allowing funds to be spent in another transaction.
+  - added `clear_proposal` method for removing an unconfirmed proposal from the wallet.
+- `wallet::error::WalletError`:
+  - added `ConversionFailed` variant
+  - added `RemovalError` variant
+  - added `TransactionNotFound` variant
+  - added `TransactionRead` variant
+  - added `BirthdayBelowSapling` variant
+  - `TransactionWrite` removed From impl for std::io::error
+  - `CalculateTxScanError` include fmt display of underlying error in fmt display
+  - `ShardTreeError` fmt display altered
+- `wallet::error::ProposeShieldError` - renamed `Insufficient` variant to `InsufficientFunds`
+- `wallet::utils::interpret_memo_string`: changed name to `memo_bytes_from_string`. No longer decodes hex. Memo text will be displayed as inputted by the user.
+
+### Removed
+- `lightclient::LightClient::resend` - replaced by automatic retries due to issues with the current `resend` or `remove` user flow.
+- `lightclient::LightClient::send_progress`
+- `lightclient::error::QuickSendError`
+- `lightclient::error::QuickShieldError`
+- `lightclient::send_with_proposal` module - contents moved to `send` (parent) module.
+- `wallet::send::SendProgress`
+- `wallet::error::RemovalError` - variants added to `WalletError`
+- `wallet::error::TransmissionError` - moved to `lightclient::error` module
+- `error` module - unused
+
+## [2.1.2] - 2026-01-14

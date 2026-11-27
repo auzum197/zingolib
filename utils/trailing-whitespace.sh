@@ -22,7 +22,7 @@ function fix
 
 function reject
 {
-  local F="$(mktemp --tmpdir zingolib-trailing-whitespace.XXX)"
+  local F="$(mktemp --tmpdir ekdromos-trailing-whitespace.XXX)"
 
   process-well-known-text-files grep -E --with-filename ' +$' \
     | sed 's/$/\\n/' \

@@ -3,7 +3,7 @@ name = "chain-router"
 description = "Traits and types for replaceable chain sources, transports and source routing."
 version = "0.1.0"
 edition = "2024"
-repository = "https://github.com/auzum197/zingolib"
+repository = "https://github.com/auzum197/ekdromos"
 license = "MIT"
 readme = "README.md"
 
