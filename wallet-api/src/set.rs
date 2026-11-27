@@ -467,12 +467,10 @@ mod tests {
     };
 
     use futures::future::BoxFuture;
+    use incrementalmerkletree::frontier::Frontier;
 
     use super::*;
-    use crate::{
-        Bandwidth, Quorum, SourceExposure, SourceHealth,
-        chain::{BlockHash, TreeNode},
-    };
+    use crate::{Bandwidth, Quorum, SourceExposure, SourceHealth, chain::BlockHash};
 
     struct Mock {
         info: SourceInfo,
@@ -540,9 +538,9 @@ mod tests {
                         height: HEIGHT,
                         hash: marked(self.tree),
                         time: 0,
-                        sapling: None,
-                        orchard: None,
-                        ironwood: None,
+                        sapling: Frontier::empty(),
+                        orchard: Frontier::empty(),
+                        ironwood: Frontier::empty(),
                     }),
                     Request::Blocks(_) if self.breaks_streams => {
                         let cut = Err(SourceError::Interrupted("cut".into()));
@@ -560,8 +558,8 @@ mod tests {
                     Request::SubtreeRoots { .. } => {
                         let roots = self.roots.iter().map(|root| {
                             Ok(SubtreeRoot {
-                                root: TreeNode::from([*root; 32]),
-                                completing_block_hash: BlockHash::default(),
+                                root: [*root; 32],
+                                completing_block_hash: BlockHash([0; 32]),
                                 completing_block_height: HEIGHT,
                             })
                         });
@@ -598,7 +596,7 @@ mod tests {
 
     /// A block hash that stands for one version of a tree state.
     fn marked(tree: &str) -> BlockHash {
-        BlockHash::from([tree.as_bytes()[0]; 32])
+        BlockHash([tree.as_bytes()[0]; 32])
     }
     const HEIGHT: BlockHeight = BlockHeight::from_u32(1);
 
@@ -902,10 +900,7 @@ mod tests {
             .unwrap();
         let roots: Vec<_> = roots.value.try_collect().await.unwrap();
         assert_eq!(
-            roots
-                .iter()
-                .map(|root| root.root.as_bytes()[0])
-                .collect::<Vec<_>>(),
+            roots.iter().map(|root| root.root[0]).collect::<Vec<_>>(),
             [1, 2]
         );
 

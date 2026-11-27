@@ -7,7 +7,7 @@ use incrementalmerkletree::{Marking, Position, Retention};
 use orchard::tree::MerkleHashOrchard;
 use sapling_crypto::Node;
 use tokio::sync::mpsc;
-use wallet_api::chain::{CompactBlock, CompactOrchardAction, CompactSaplingOutput};
+use wallet_api::chain::{CompactAction, CompactBlock, CompactOutputDescription};
 use zcash_keys::keys::UnifiedFullViewingKey;
 use zcash_note_encryption::Domain;
 use zcash_primitives::block::BlockHash;
@@ -20,8 +20,8 @@ use crate::{
     error::{ContinuityError, ScanError, ServerError},
     keys::{KeyId, ScanningKeyOps, ScanningKeys},
     utils::{
-        get_compact_action, get_compact_block_hash, get_compact_block_height,
-        get_compact_block_prev_hash, get_compact_output_description, get_compact_tx_txid,
+        get_compact_block_hash, get_compact_block_height, get_compact_block_prev_hash,
+        get_compact_tx_txid,
     },
     wallet::{NullifierMap, OutputId, ScanTarget, TreeBounds, WalletBlock},
     witness::WitnessData,
@@ -126,25 +126,25 @@ where
                 &mut nullifiers,
                 get_compact_block_height(block),
                 transaction,
-            )?;
+            );
 
             witness_data.sapling_leaves_and_retentions.extend(
                 calculate_sapling_leaves_and_retentions(
                     &transaction.outputs,
                     &incoming_sapling_outputs,
-                )?,
+                ),
             );
             witness_data.orchard_leaves_and_retentions.extend(
                 calculate_orchard_leaves_and_retentions(
                     &transaction.actions,
                     &incoming_orchard_outputs,
-                )?,
+                ),
             );
             witness_data.ironwood_leaves_and_retentions.extend(
                 calculate_orchard_leaves_and_retentions(
                     &transaction.ironwood_actions,
                     &incoming_ironwood_outputs,
-                )?,
+                ),
             );
 
             calculate_nullifiers_and_positions(
@@ -231,7 +231,7 @@ where
 {
     let mut runners = BatchRunners::<(), (), ()>::for_keys(trial_decrypt_task_size, scanning_keys);
     for block in compact_blocks {
-        runners.add_block(consensus_parameters, block.clone())?;
+        runners.add_block(consensus_parameters, block.clone());
     }
     runners.flush();
 
@@ -410,83 +410,65 @@ fn calculate_nullifiers_and_positions<D, K, Nf>(
 
 // TODO: unify sapling and orchard leaf and retention fns
 fn calculate_sapling_leaves_and_retentions<D: Domain>(
-    outputs: &[CompactSaplingOutput],
+    outputs: &[CompactOutputDescription],
     incoming_decrypted_outputs: &HashMap<OutputId, DecryptedOutput<D, ()>>,
-) -> Result<Vec<(Node, Retention<BlockHeight>)>, ScanError> {
+) -> Vec<(Node, Retention<BlockHeight>)> {
     let incoming_output_indexes = incoming_decrypted_outputs
         .keys()
         .copied()
         .map(|output_id| output_id.output_index())
         .collect::<Vec<_>>();
 
-    if outputs.is_empty() {
-        Ok(Vec::new())
-    } else {
-        let leaves_and_retentions = outputs
-            .iter()
-            .enumerate()
-            .map(|(output_index, output)| {
-                let note_commitment = get_compact_output_description(output)
-                    .map_err(|_| ScanError::InvalidSaplingOutput)?
-                    .cmu;
-                let leaf = sapling_crypto::Node::from_cmu(&note_commitment);
-                let decrypted: bool = incoming_output_indexes.contains(
-                    &output_index
-                        .try_into()
-                        .expect("output indexes should be valid u32"),
-                );
-                let retention = if decrypted {
-                    Retention::Marked
-                } else {
-                    Retention::Ephemeral
-                };
+    outputs
+        .iter()
+        .enumerate()
+        .map(|(output_index, output)| {
+            let leaf = sapling_crypto::Node::from_cmu(&output.cmu);
+            let decrypted: bool = incoming_output_indexes.contains(
+                &output_index
+                    .try_into()
+                    .expect("output indexes should be valid u32"),
+            );
+            let retention = if decrypted {
+                Retention::Marked
+            } else {
+                Retention::Ephemeral
+            };
 
-                Ok((leaf, retention))
-            })
-            .collect::<Result<_, ScanError>>()?;
-
-        Ok(leaves_and_retentions)
-    }
+            (leaf, retention)
+        })
+        .collect()
 }
 
 fn calculate_orchard_leaves_and_retentions<D: Domain>(
-    actions: &[CompactOrchardAction],
+    actions: &[CompactAction],
     incoming_decrypted_outputs: &HashMap<OutputId, DecryptedOutput<D, ()>>,
-) -> Result<Vec<(MerkleHashOrchard, Retention<BlockHeight>)>, ScanError> {
+) -> Vec<(MerkleHashOrchard, Retention<BlockHeight>)> {
     let incoming_output_indexes = incoming_decrypted_outputs
         .keys()
         .copied()
         .map(|output_id| output_id.output_index())
         .collect::<Vec<_>>();
 
-    if actions.is_empty() {
-        Ok(Vec::new())
-    } else {
-        let leaves_and_retentions = actions
-            .iter()
-            .enumerate()
-            .map(|(output_index, output)| {
-                let note_commitment = get_compact_action(output)
-                    .map_err(|_| ScanError::InvalidOrchardAction)?
-                    .cmx();
-                let leaf = MerkleHashOrchard::from_cmx(&note_commitment);
-                let decrypted: bool = incoming_output_indexes.contains(
-                    &output_index
-                        .try_into()
-                        .expect("output indexes should be valid u32"),
-                );
-                let retention = if decrypted {
-                    Retention::Marked
-                } else {
-                    Retention::Ephemeral
-                };
+    actions
+        .iter()
+        .enumerate()
+        .map(|(output_index, output)| {
+            let leaf = MerkleHashOrchard::from_cmx(&output.cmx());
+            let decrypted: bool = incoming_output_indexes.contains(
+                &output_index
+                    .try_into()
+                    .expect("output indexes should be valid u32"),
+            );
+            let retention = if decrypted {
+                Retention::Marked
+            } else {
+                Retention::Ephemeral
+            };
 
-                Ok((leaf, retention))
-            })
-            .collect::<Result<_, ScanError>>()?;
-
-        Ok(leaves_and_retentions)
-    }
+            (leaf, retention)
+        })
+        .collect()
 }
 
 pub(crate) async fn calculate_block_tree_bounds(
@@ -615,8 +597,8 @@ mod tests {
     fn compact_block_with_ironwood_size(size: u32) -> CompactBlock {
         CompactBlock {
             height: BlockHeight::from_u32(100),
-            hash: [1; 32].into(),
-            prev_hash: [0; 32].into(),
+            hash: BlockHash([1; 32]),
+            prev_hash: BlockHash([0; 32]),
             time: 0,
             transactions: vec![],
             tree_sizes: Some(TreeSizes {

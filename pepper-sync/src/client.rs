@@ -325,7 +325,7 @@ pub(crate) async fn get_frontiers(
 
     let tree_state = recv_fetch_reply(reply_receiver, "TreeState").await?;
 
-    tree_state.try_into().map_err(ServerError::InvalidFrontier)
+    Ok(tree_state.into())
 }
 
 /// Gets the frontiers at `block_height` for the check of a block range. `None` if the check
@@ -339,10 +339,9 @@ pub(crate) async fn get_boundary_frontiers(
         .send(FetchRequest::BoundaryTreeState(reply_sender, block_height))
         .map_err(|_| ServerError::FetcherDropped)?;
 
-    recv_fetch_reply(reply_receiver, "TreeState")
-        .await?
-        .map(|tree_state| tree_state.try_into().map_err(ServerError::InvalidFrontier))
-        .transpose()
+    let tree_state = recv_fetch_reply(reply_receiver, "TreeState").await?;
+
+    Ok(tree_state.map(Into::into))
 }
 
 /// Gets a full transaction for a specified txid.

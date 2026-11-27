@@ -1,146 +1,28 @@
 //! Chain data that a source returns.
 //!
-//! The types state the length and the structure of each value. A source converts its own
-//! format into them and returns [`crate::SourceError::InvalidData`] for a value that does
-//! not fit. The types do not prove that a value is a valid curve point or commitment.
+//! The values are types of the Zcash protocol crates, so a value that exists is valid. A
+//! source converts its own format into them and returns [`crate::SourceError::InvalidData`]
+//! for data that does not convert. The structs in this module only group those values.
 
-use std::{error::Error, fmt};
+use std::fmt;
 
+use incrementalmerkletree::frontier::Frontier;
+use orchard::tree::MerkleHashOrchard;
+use zcash_note_encryption::{COMPACT_NOTE_SIZE, ShieldedOutput};
 use zcash_protocol::{TxId, consensus::BlockHeight};
 
-/// A byte string with a length that its type does not accept.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub struct InvalidLength {
-    expected: usize,
-    actual: usize,
-}
+pub use orchard::note_encryption::CompactAction;
+pub use sapling_crypto::note_encryption::CompactOutputDescription;
+pub use zcash_primitives::block::BlockHash;
+pub use zcash_transparent::bundle::{OutPoint, TxOut};
 
-impl InvalidLength {
-    /// The length that the type accepts.
-    pub fn expected(&self) -> usize {
-        self.expected
-    }
+/// The frontier of the Sapling note commitment tree.
+pub type SaplingFrontier =
+    Frontier<sapling_crypto::Node, { sapling_crypto::NOTE_COMMITMENT_TREE_DEPTH }>;
 
-    /// The length of the rejected byte string.
-    pub fn actual(&self) -> usize {
-        self.actual
-    }
-}
-
-impl fmt::Display for InvalidLength {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "expected {} bytes, found {}", self.expected, self.actual)
-    }
-}
-
-impl Error for InvalidLength {}
-
-macro_rules! byte_array {
-    ($(#[$doc:meta])* $name:ident, $length:literal, $order:ident) => {
-        $(#[$doc])*
-        #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
-        pub struct $name([u8; $length]);
-
-        impl $name {
-            /// The number of bytes in a value.
-            pub const LENGTH: usize = $length;
-
-            /// Creates a value from its bytes.
-            pub const fn from_bytes(bytes: [u8; $length]) -> Self {
-                Self(bytes)
-            }
-
-            /// Returns the bytes.
-            pub const fn as_bytes(&self) -> &[u8; $length] {
-                &self.0
-            }
-        }
-
-        impl Default for $name {
-            fn default() -> Self {
-                Self([0; $length])
-            }
-        }
-
-        impl From<[u8; $length]> for $name {
-            fn from(bytes: [u8; $length]) -> Self {
-                Self(bytes)
-            }
-        }
-
-        impl From<$name> for [u8; $length] {
-            fn from(value: $name) -> Self {
-                value.0
-            }
-        }
-
-        impl AsRef<[u8]> for $name {
-            fn as_ref(&self) -> &[u8] {
-                &self.0
-            }
-        }
-
-        impl TryFrom<&[u8]> for $name {
-            type Error = InvalidLength;
-
-            fn try_from(bytes: &[u8]) -> Result<Self, Self::Error> {
-                bytes.try_into().map(Self).map_err(|_| InvalidLength {
-                    expected: $length,
-                    actual: bytes.len(),
-                })
-            }
-        }
-
-        impl fmt::LowerHex for $name {
-            fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-                byte_array!(@hex $order, self.0, f)
-            }
-        }
-
-        impl fmt::Display for $name {
-            fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-                fmt::LowerHex::fmt(self, f)
-            }
-        }
-
-        impl fmt::Debug for $name {
-            fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-                write!(f, "{}({:x})", stringify!($name), self)
-            }
-        }
-    };
-    (@hex forward, $bytes:expr, $f:expr) => {
-        $bytes.iter().try_for_each(|byte| write!($f, "{byte:02x}"))
-    };
-    (@hex reversed, $bytes:expr, $f:expr) => {
-        $bytes.iter().rev().try_for_each(|byte| write!($f, "{byte:02x}"))
-    };
-}
-
-byte_array!(
-    /// The hash of a block. It prints as hex in reversed byte order, as block explorers do.
-    BlockHash, 32, reversed
-);
-byte_array!(
-    /// The nullifier of a spent note.
-    Nullifier, 32, forward
-);
-byte_array!(
-    /// The commitment of a new note: `cmu` for Sapling, `cmx` for Orchard and Ironwood.
-    NoteCommitment, 32, forward
-);
-byte_array!(
-    /// The ephemeral public key of an output.
-    EphemeralKey, 32, forward
-);
-byte_array!(
-    /// A node of a note commitment tree.
-    TreeNode, 32, forward
-);
-byte_array!(
-    /// The first 52 bytes of a note ciphertext.
-    CompactCiphertext, 52, forward
-);
+/// The frontier of the Orchard or the Ironwood note commitment tree.
+pub type OrchardFrontier =
+    Frontier<MerkleHashOrchard, { orchard::NOTE_COMMITMENT_TREE_DEPTH as u8 }>;
 
 /// The height of a block and its hash.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -180,7 +62,7 @@ pub struct TreeSizes {
 }
 
 /// A transaction with only the data that payment detection needs.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Clone)]
 pub struct CompactTx {
     /// Position of the transaction in its block.
     pub index: u64,
@@ -188,16 +70,16 @@ pub struct CompactTx {
     pub txid: TxId,
     /// Transaction fee in zatoshis.
     pub fee: u32,
-    /// Sapling spends.
-    pub spends: Vec<CompactSaplingSpend>,
+    /// Nullifiers of the Sapling spends.
+    pub spends: Vec<sapling_crypto::Nullifier>,
     /// Sapling outputs.
-    pub outputs: Vec<CompactSaplingOutput>,
+    pub outputs: Vec<CompactOutputDescription>,
     /// Orchard actions.
-    pub actions: Vec<CompactOrchardAction>,
+    pub actions: Vec<CompactAction>,
     /// Ironwood actions.
-    pub ironwood_actions: Vec<CompactOrchardAction>,
-    /// Transparent inputs.
-    pub transparent_inputs: Vec<CompactTxIn>,
+    pub ironwood_actions: Vec<CompactAction>,
+    /// Outpoints that the transparent inputs spend.
+    pub transparent_inputs: Vec<OutPoint>,
     /// Transparent outputs.
     pub transparent_outputs: Vec<TxOut>,
 }
@@ -219,126 +101,72 @@ impl CompactTx {
     }
 }
 
-/// A Sapling spend.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
-pub struct CompactSaplingSpend {
-    /// Nullifier of the spent note.
-    pub nullifier: Nullifier,
+/// The commitment, the ephemeral key and the ciphertext of a compact output.
+type OutputBytes = ([u8; 32], [u8; 32], [u8; COMPACT_NOTE_SIZE]);
+
+/// The bytes of a compact output or action. The protocol types have no equality.
+fn output_bytes<D, O>(output: &O) -> OutputBytes
+where
+    D: zcash_note_encryption::Domain<ExtractedCommitmentBytes = [u8; 32]>,
+    O: ShieldedOutput<D, COMPACT_NOTE_SIZE>,
+{
+    (
+        output.cmstar_bytes(),
+        output.ephemeral_key().0,
+        *output.enc_ciphertext(),
+    )
 }
 
-/// A Sapling output with a truncated ciphertext.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
-pub struct CompactSaplingOutput {
-    /// Note commitment.
-    pub cmu: NoteCommitment,
-    /// Ephemeral public key.
-    pub ephemeral_key: EphemeralKey,
-    /// Truncated note ciphertext.
-    pub ciphertext: CompactCiphertext,
+fn action_bytes(action: &CompactAction) -> ([u8; 32], OutputBytes) {
+    (
+        action.nullifier().to_bytes(),
+        output_bytes::<orchard::note_encryption::OrchardDomain, _>(action),
+    )
 }
 
-/// An Orchard or Ironwood action with a truncated ciphertext.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
-pub struct CompactOrchardAction {
-    /// Nullifier of the spent note.
-    pub nullifier: Nullifier,
-    /// Note commitment of the new note.
-    pub cmx: NoteCommitment,
-    /// Ephemeral public key.
-    pub ephemeral_key: EphemeralKey,
-    /// Truncated note ciphertext.
-    pub ciphertext: CompactCiphertext,
+impl PartialEq for CompactTx {
+    fn eq(&self, other: &Self) -> bool {
+        let outputs = |tx: &Self| -> Vec<_> {
+            tx.outputs
+                .iter()
+                .map(output_bytes::<sapling_crypto::note_encryption::SaplingDomain, _>)
+                .collect()
+        };
+        let actions =
+            |actions: &[CompactAction]| -> Vec<_> { actions.iter().map(action_bytes).collect() };
+
+        self.index == other.index
+            && self.txid == other.txid
+            && self.fee == other.fee
+            && self.spends == other.spends
+            && outputs(self) == outputs(other)
+            && actions(&self.actions) == actions(&other.actions)
+            && actions(&self.ironwood_actions) == actions(&other.ironwood_actions)
+            && self.transparent_inputs == other.transparent_inputs
+            && self.transparent_outputs == other.transparent_outputs
+    }
 }
 
-/// The outpoint that a transparent input spends.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub struct CompactTxIn {
-    /// ID of the transaction that holds the spent output.
-    pub prevout_txid: TxId,
-    /// Index of the spent output.
-    pub prevout_index: u32,
-}
+impl Eq for CompactTx {}
 
-/// A transparent output.
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Default)]
-pub struct TxOut {
-    /// Value in zatoshis.
-    pub value: u64,
-    /// Locking script.
-    pub script_pub_key: Vec<u8>,
-}
-
-/// A frontier with a number of ommers that does not fit its position.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub struct InvalidFrontier {
-    expected: usize,
-    actual: usize,
-}
-
-impl fmt::Display for InvalidFrontier {
+impl fmt::Debug for CompactTx {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(
-            f,
-            "expected {} ommers for the position, found {}",
-            self.expected, self.actual
-        )
+        f.debug_struct("CompactTx")
+            .field("index", &self.index)
+            .field("txid", &self.txid)
+            .field("fee", &self.fee)
+            .field("spends", &self.spends.len())
+            .field("outputs", &self.outputs.len())
+            .field("actions", &self.actions.len())
+            .field("ironwood_actions", &self.ironwood_actions.len())
+            .field("transparent_inputs", &self.transparent_inputs.len())
+            .field("transparent_outputs", &self.transparent_outputs.len())
+            .finish()
     }
 }
 
-impl Error for InvalidFrontier {}
-
-/// The last leaf of a note commitment tree, with the nodes that give the tree root.
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
-pub struct Frontier {
-    position: u64,
-    leaf: TreeNode,
-    ommers: Vec<TreeNode>,
-}
-
-impl Frontier {
-    /// Creates a frontier.
-    ///
-    /// # Errors
-    ///
-    /// Fails if the number of ommers is not the number of one bits in `position`.
-    pub fn new(
-        position: u64,
-        leaf: TreeNode,
-        ommers: Vec<TreeNode>,
-    ) -> Result<Self, InvalidFrontier> {
-        let expected = position.count_ones() as usize;
-        if ommers.len() == expected {
-            Ok(Self {
-                position,
-                leaf,
-                ommers,
-            })
-        } else {
-            Err(InvalidFrontier {
-                expected,
-                actual: ommers.len(),
-            })
-        }
-    }
-
-    /// Position of the last leaf. The tree holds one more leaf than this number.
-    pub fn position(&self) -> u64 {
-        self.position
-    }
-
-    /// The last leaf.
-    pub fn leaf(&self) -> TreeNode {
-        self.leaf
-    }
-
-    /// The left siblings on the path from the leaf to the root, lowest first.
-    pub fn ommers(&self) -> &[TreeNode] {
-        &self.ommers
-    }
-}
-
-/// The note commitment trees at the end of a block. `None` is an empty tree.
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+/// The note commitment trees at the end of a block.
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TreeState {
     /// Block height.
     pub height: BlockHeight,
@@ -347,18 +175,18 @@ pub struct TreeState {
     /// Block time in seconds since the Unix epoch.
     pub time: u32,
     /// Sapling tree.
-    pub sapling: Option<Frontier>,
+    pub sapling: SaplingFrontier,
     /// Orchard tree.
-    pub orchard: Option<Frontier>,
+    pub orchard: OrchardFrontier,
     /// Ironwood tree.
-    pub ironwood: Option<Frontier>,
+    pub ironwood: OrchardFrontier,
 }
 
 /// The root of a completed subtree of a note commitment tree.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct SubtreeRoot {
-    /// Root of the subtree.
-    pub root: TreeNode,
+    /// Root of the subtree. Its type depends on the pool of the request, so it is bytes.
+    pub root: [u8; 32],
     /// Hash of the block that completed the subtree.
     pub completing_block_hash: BlockHash,
     /// Height of the block that completed the subtree.
@@ -395,33 +223,36 @@ pub struct ServerInfo {
 
 #[cfg(test)]
 mod tests {
+    use zcash_note_encryption::EphemeralKeyBytes;
+
     use super::*;
 
-    #[test]
-    fn byte_array_rejects_a_wrong_length() {
-        let error = Nullifier::try_from(&[0u8; 31][..]).unwrap_err();
-        assert_eq!((error.expected(), error.actual()), (32, 31));
-        assert_eq!(error.to_string(), "expected 32 bytes, found 31");
-
-        assert!(CompactCiphertext::try_from(&[0u8; 52][..]).is_ok());
-        assert!(CompactCiphertext::try_from(&[0u8; 32][..]).is_err());
+    fn tx(ciphertext: u8) -> CompactTx {
+        let nullifier = orchard::note::Nullifier::from_bytes(&[0; 32]).unwrap();
+        let cmx = orchard::note::ExtractedNoteCommitment::from_bytes(&[0; 32]).unwrap();
+        CompactTx {
+            outputs: vec![CompactOutputDescription {
+                cmu: sapling_crypto::note::ExtractedNoteCommitment::from_bytes(&[0; 32]).unwrap(),
+                ephemeral_key: EphemeralKeyBytes([0; 32]),
+                enc_ciphertext: [ciphertext; COMPACT_NOTE_SIZE],
+            }],
+            actions: vec![CompactAction::from_parts(
+                nullifier,
+                cmx,
+                EphemeralKeyBytes([0; 32]),
+                [ciphertext; COMPACT_NOTE_SIZE],
+            )],
+            ..CompactTx::new(0, TxId::from_bytes([0; 32]))
+        }
     }
 
     #[test]
-    fn block_hash_prints_in_reversed_byte_order() {
-        let mut bytes = [0u8; 32];
-        bytes[0] = 0xab;
-        assert!(BlockHash::from(bytes).to_string().ends_with("ab"));
-        assert!(Nullifier::from(bytes).to_string().starts_with("ab"));
-        assert!(format!("{:?}", BlockHash::from(bytes)).starts_with("BlockHash(00"));
-    }
+    fn transactions_are_equal_only_with_equal_output_and_action_bytes() {
+        assert_eq!(tx(1), tx(1));
+        assert_ne!(tx(1), tx(2));
 
-    #[test]
-    fn frontier_needs_one_ommer_for_each_one_bit_of_the_position() {
-        let node = TreeNode::default();
-        assert!(Frontier::new(0, node, vec![]).is_ok());
-        assert!(Frontier::new(5, node, vec![node, node]).is_ok());
-        assert!(Frontier::new(5, node, vec![node]).is_err());
-        assert!(Frontier::new(0, node, vec![node]).is_err());
+        let mut no_action = tx(1);
+        no_action.actions.clear();
+        assert_ne!(tx(1), no_action);
     }
 }

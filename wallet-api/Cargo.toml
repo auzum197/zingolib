@@ -9,9 +9,15 @@ readme = "README.md"
 
 [dependencies]
 futures.workspace = true
+incrementalmerkletree.workspace = true
+orchard = { version = "=4.0.0", package = "zakura-orchard", default-features = false, features = ["backend-halo2"] }
+sapling-crypto = { version = "=4.0.0", package = "zakura-sapling-crypto", default-features = false }
 thiserror.workspace = true
 tokio.workspace = true
+zcash_note_encryption.workspace = true
+zcash_primitives = { version = "=4.0.0", package = "zakura-primitives", default-features = false }
 zcash_protocol.workspace = true
+zcash_transparent.workspace = true
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["macros", "rt"] }

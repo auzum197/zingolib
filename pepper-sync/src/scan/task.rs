@@ -884,7 +884,10 @@ impl ScanTask {
 mod tests {
     use std::collections::{BTreeSet, HashMap};
 
-    use wallet_api::chain::{CompactBlock, CompactOrchardAction, CompactSaplingOutput, CompactTx};
+    use wallet_api::chain::{
+        BlockHash, CompactAction, CompactBlock, CompactOutputDescription, CompactTx,
+    };
+    use zcash_note_encryption::EphemeralKeyBytes;
     use zcash_protocol::consensus::BlockHeight;
 
     use crate::sync::{ScanPriority, ScanRange};
@@ -896,15 +899,26 @@ mod tests {
         orchard_actions: usize,
         ironwood_actions: usize,
     ) -> CompactBlock {
+        let output = CompactOutputDescription {
+            cmu: sapling_crypto::note::ExtractedNoteCommitment::from_bytes(&[0; 32]).unwrap(),
+            ephemeral_key: EphemeralKeyBytes([0; 32]),
+            enc_ciphertext: [0; 52],
+        };
+        let action = CompactAction::from_parts(
+            orchard::note::Nullifier::from_bytes(&[0; 32]).unwrap(),
+            orchard::note::ExtractedNoteCommitment::from_bytes(&[0; 32]).unwrap(),
+            EphemeralKeyBytes([0; 32]),
+            [0; 52],
+        );
         CompactBlock {
             height: BlockHeight::from_u32(1),
-            hash: [0; 32].into(),
-            prev_hash: [0; 32].into(),
+            hash: BlockHash([0; 32]),
+            prev_hash: BlockHash([0; 32]),
             time: 0,
             transactions: vec![CompactTx {
-                outputs: vec![CompactSaplingOutput::default(); sapling_outputs],
-                actions: vec![CompactOrchardAction::default(); orchard_actions],
-                ironwood_actions: vec![CompactOrchardAction::default(); ironwood_actions],
+                outputs: vec![output; sapling_outputs],
+                actions: vec![action.clone(); orchard_actions],
+                ironwood_actions: vec![action; ironwood_actions],
                 ..CompactTx::new(0, zcash_protocol::TxId::from_bytes([0; 32]))
             }],
             tree_sizes: None,

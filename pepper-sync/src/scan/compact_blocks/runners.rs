@@ -17,16 +17,12 @@ use zcash_protocol::consensus;
 
 use memuse::DynamicUsage;
 use wallet_api::chain::CompactBlock;
-use zcash_protocol::ShieldedPool;
 
-use crate::error::EncodingInvalid;
 use crate::keys::KeyId;
 use crate::keys::ScanningKeyOps;
 use crate::keys::ScanningKeys;
-use crate::utils::get_compact_action;
 use crate::utils::get_compact_block_hash;
 use crate::utils::get_compact_block_height;
-use crate::utils::get_compact_output_description;
 use crate::utils::get_compact_tx_txid;
 use crate::wallet::OutputId;
 
@@ -110,11 +106,7 @@ where
     }
 
     #[tracing::instrument(skip_all, fields(height = u32::from(block.height)))]
-    pub(crate) fn add_block<P>(
-        &mut self,
-        params: &P,
-        block: CompactBlock,
-    ) -> Result<(), EncodingInvalid>
+    pub(crate) fn add_block<P>(&mut self, params: &P, block: CompactBlock)
     where
         P: consensus::Parameters + Send + 'static,
     {
@@ -129,61 +121,23 @@ where
                 block_hash,
                 txid,
                 |_| SaplingDomain::new(zip212_enforcement),
-                &tx.outputs
-                    .into_iter()
-                    .enumerate()
-                    .map(|(i, output)| {
-                        get_compact_output_description(&output).map_err(|e| EncodingInvalid {
-                            at_height: block_height,
-                            txid,
-                            pool_type: ShieldedPool::Sapling,
-                            index: i,
-                            error: e,
-                        })
-                    })
-                    .collect::<Result<Vec<_>, _>>()?,
+                &tx.outputs,
             );
 
             self.orchard.add_outputs(
                 block_hash,
                 txid,
                 OrchardDomain::for_compact_action,
-                &tx.actions
-                    .into_iter()
-                    .enumerate()
-                    .map(|(i, action)| {
-                        get_compact_action(&action).map_err(|e| EncodingInvalid {
-                            at_height: block_height,
-                            txid,
-                            pool_type: ShieldedPool::Orchard,
-                            index: i,
-                            error: e,
-                        })
-                    })
-                    .collect::<Result<Vec<_>, _>>()?,
+                &tx.actions,
             );
 
             self.ironwood.add_outputs(
                 block_hash,
                 txid,
                 IronwoodDomain::for_compact_action,
-                &tx.ironwood_actions
-                    .into_iter()
-                    .enumerate()
-                    .map(|(i, action)| {
-                        get_compact_action(&action).map_err(|e| EncodingInvalid {
-                            at_height: block_height,
-                            txid,
-                            pool_type: ShieldedPool::Ironwood,
-                            index: i,
-                            error: e,
-                        })
-                    })
-                    .collect::<Result<Vec<_>, _>>()?,
+                &tx.ironwood_actions,
             );
         }
-
-        Ok(())
     }
 }
 
