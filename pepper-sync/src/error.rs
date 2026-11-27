@@ -96,8 +96,10 @@ impl ServerError {
             | ServerError::InvalidTransaction(_)
             | ServerError::InvalidSubtreeRoot
             | ServerError::ChainVerificationError
+            | ServerError::FrontierMismatch { .. }
             | ServerError::GenesisBlockOnly
-            | ServerError::IntegrityRequired => false,
+            | ServerError::IntegrityRequired
+            | ServerError::UnverifiedTreeState => false,
         }
     }
 }
@@ -155,11 +157,12 @@ impl ServerError {
             | ServerError::InvalidFrontier(_)
             | ServerError::InvalidTransaction(_)
             | ServerError::InvalidSubtreeRoot
-            | ServerError::ChainVerificationError => SyncRecoveryObservables::ServerUnavailable,
+            | ServerError::ChainVerificationError
+            | ServerError::FrontierMismatch { .. } => SyncRecoveryObservables::ServerUnavailable,
             // Empty chain — no point retrying anywhere.
-            ServerError::GenesisBlockOnly | ServerError::IntegrityRequired => {
-                SyncRecoveryObservables::Abort
-            }
+            ServerError::GenesisBlockOnly
+            | ServerError::IntegrityRequired
+            | ServerError::UnverifiedTreeState => SyncRecoveryObservables::Abort,
         }
     }
 }
@@ -331,9 +334,27 @@ pub enum ServerError {
     /// Server reports only the genesis block exists.
     #[error("server reports only the genesis block exists.")]
     GenesisBlockOnly,
+    /// The note commitments in a block range do not lead to the tree state at its end.
+    #[error(
+        "the {pool} note commitments in blocks {start} to {end} do not lead to the tree state at {end}."
+    )]
+    FrontierMismatch {
+        /// Shielded pool
+        pool: PoolType,
+        /// First block of the range
+        start: BlockHeight,
+        /// Last block of the range
+        end: BlockHeight,
+    },
     /// The sync strategy accepts only results with assumed integrity.
     #[error("the sync strategy accepts only results with assumed integrity.")]
     IntegrityRequired,
+    /// The sync strategy checks each block range, and the tree states for the check are from one
+    /// unverified source.
+    #[error(
+        "the sync strategy checks each block range, and the tree states for the check are from one unverified source."
+    )]
+    UnverifiedTreeState,
 }
 
 /// Sync mode error.

@@ -3,7 +3,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::ops::Range;
 
-use incrementalmerkletree::{Position, Retention, frontier::Frontier};
+use incrementalmerkletree::{Hashable, Position, Retention, frontier::Frontier};
 use orchard::tree::MerkleHashOrchard;
 use shardtree::LocatedPrunableTree;
 use subtle::CtOption;
@@ -138,6 +138,19 @@ impl FromBytes for sapling_crypto::Node {
     fn from_bytes(array: [u8; 32]) -> CtOption<Self> {
         Self::from_bytes(array)
     }
+}
+
+/// Whether `leaves` appended to `start` give the root of `end`.
+pub(crate) fn frontier_reaches<H, const DEPTH: u8>(
+    start: &Frontier<H, DEPTH>,
+    leaves: &[(H, Retention<BlockHeight>)],
+    end: &Frontier<H, DEPTH>,
+) -> bool
+where
+    H: Hashable + Clone + PartialEq,
+{
+    let mut frontier = start.clone();
+    leaves.iter().all(|(leaf, _)| frontier.append(leaf.clone())) && frontier.root() == end.root()
 }
 
 /// The final note commitment tree state for each shielded pool, as of a particular block height.
@@ -342,5 +355,37 @@ mod tests {
         let range = WINDOW_START - 2_000..WINDOW_START - 1_000;
 
         assert_eq!(heights(range.clone()), vec![range.end - 1]);
+    }
+
+    fn frontier(
+        leaves: &[(MerkleHashOrchard, Retention<BlockHeight>)],
+    ) -> Frontier<MerkleHashOrchard, 32> {
+        let mut frontier = Frontier::empty();
+        for (leaf, _) in leaves {
+            frontier.append(*leaf);
+        }
+        frontier
+    }
+
+    #[test]
+    fn frontier_reaches_the_end_only_with_the_exact_leaves() {
+        let leaves = crate::bench_support::synthetic_orchard_leaves(2, 6, &[]);
+        let (start, end) = (frontier(&leaves[..2]), frontier(&leaves));
+        let range = &leaves[2..];
+        assert!(frontier_reaches(&start, range, &end));
+
+        let hidden = [&range[..1], &range[2..]].concat();
+        assert!(!frontier_reaches(&start, &hidden, &end));
+
+        let added = [range, &leaves[..1]].concat();
+        assert!(!frontier_reaches(&start, &added, &end));
+
+        let mut swapped = range.to_vec();
+        swapped.swap(0, 1);
+        assert!(!frontier_reaches(&start, &swapped, &end));
+
+        assert!(!frontier_reaches(&Frontier::empty(), range, &end));
+        assert!(!frontier_reaches(&start, &[], &end));
+        assert!(frontier_reaches(&end, &[], &end));
     }
 }

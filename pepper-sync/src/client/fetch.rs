@@ -4,7 +4,7 @@ use tokio::sync::mpsc::UnboundedReceiver;
 
 use tracing::instrument;
 use wallet_api::{
-    SourceSet,
+    IntegrityBasis, Request, SourceError, SourceSet,
     chain::{BlockId, TreeState},
 };
 use zcash_protocol::consensus::BlockHeight;
@@ -98,12 +98,15 @@ async fn fetch_from_server(sources: &SourceSet, policy: Policy, fetch_request: F
         }
         FetchRequest::CompactBlockRange(sender, block_range) => {
             tracing::debug!("Fetching compact blocks. {:?}", &block_range);
-            let block_stream = policy.admit(sources.blocks(block_range).await);
+            let checkable = checkable(sources, block_range.end - 1);
+            let block_stream = policy.admit_blocks(sources.blocks(block_range).await, checkable);
             let _ignore_error = sender.send(block_stream);
         }
         FetchRequest::NullifierRange(sender, block_range) => {
             tracing::debug!("Fetching nullifiers. {:?}", &block_range);
-            let block_stream = policy.admit(sources.nullifiers(block_range).await);
+            let checkable = checkable(sources, block_range.end - 1);
+            let block_stream =
+                policy.admit_blocks(sources.nullifiers(block_range).await, checkable);
             let _ignore_error = sender.send(block_stream);
         }
         #[cfg(not(feature = "darkside_test"))]
@@ -121,10 +124,19 @@ async fn fetch_from_server(sources: &SourceSet, policy: Policy, fetch_request: F
             tracing::debug!("Fetching tree state. {:?}", &block_height);
             let _ignore_error = sender.send(get_tree_state(sources, policy, block_height).await);
         }
+        FetchRequest::BoundaryTreeState(sender, block_height) => {
+            tracing::debug!("Fetching boundary tree state. {:?}", &block_height);
+            let tree_state = policy.admit_boundary(sources.tree_state(block_height).await);
+            let _ignore_error = sender.send(tree_state);
+        }
         FetchRequest::Transaction(sender, txid) => {
             tracing::debug!("Fetching transaction. {:?}", txid);
             let transaction = policy.admit(sources.transaction(txid).await);
             let _ignore_error = sender.send(transaction);
+        }
+        FetchRequest::FailedVerification(source) => {
+            tracing::warn!("Blocks from source {} failed verification.", source.0);
+            sources.on_failure(source, &SourceError::FailedVerification);
         }
         FetchRequest::TransparentAddressTxs(sender, (address, block_range)) => {
             tracing::debug!(
@@ -137,6 +149,13 @@ async fn fetch_from_server(sources: &SourceSet, policy: Policy, fetch_request: F
             let _ignore_error = sender.send(raw_transaction_stream);
         }
     }
+}
+
+/// Whether the tree state at `block_height` will have a better basis than one unverified source.
+fn checkable(sources: &SourceSet, block_height: BlockHeight) -> bool {
+    sources
+        .route_info(&Request::TreeState(block_height))
+        .is_ok_and(|route| route.basis != IntegrityBasis::Unverified)
 }
 
 #[instrument(
