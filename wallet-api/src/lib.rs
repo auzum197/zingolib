@@ -13,8 +13,8 @@ pub use futures::future::BoxFuture;
 
 pub use request::{Disclosure, Request, Response, ResponseStream};
 pub use route::{Failover, Quorum, Route, Router};
-pub use set::{Fetched, RouteInfo, SourceSet, TrustBasis};
-pub use source::{Capabilities, ChainSource, SourceError, SourceId, SourceInfo, TrustLevel};
+pub use set::{Fetched, IntegrityBasis, RouteInfo, SourceSet};
+pub use source::{Capabilities, ChainSource, Integrity, SourceError, SourceId, SourceInfo};
 pub use transport::{
     Bandwidth, Connection, Connector, NetworkExposure, SourceExposure, TransportInfo,
 };

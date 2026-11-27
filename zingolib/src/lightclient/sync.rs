@@ -9,7 +9,7 @@ use pepper_sync::error::{SyncError, SyncModeError, SyncRecoveryObservables};
 use pepper_sync::events::SequencedSyncEvent;
 use pepper_sync::wallet::SyncMode;
 use tokio::time::timeout;
-use zingo_netutils::wallet_api::{SourceSet, TrustLevel};
+use zingo_netutils::wallet_api::{Integrity, SourceSet};
 
 use crate::data::PollReport;
 use crate::wallet::error::WalletError;
@@ -31,7 +31,7 @@ impl LightClient {
         }
 
         let client = Arc::new(SourceSet::single(
-            self.indexer.clone().with_trust(TrustLevel::Trusted),
+            self.indexer.clone().with_integrity(Integrity::Assumed),
         ));
         let chain_type = self.chain_type();
         let sync_config = self

@@ -2,7 +2,7 @@
 
 use std::{collections::HashMap, sync::Mutex};
 
-use crate::{Disclosure, Request, SourceError, SourceExposure, SourceId, SourceInfo, TrustLevel};
+use crate::{Disclosure, Integrity, Request, SourceError, SourceExposure, SourceId, SourceInfo};
 
 /// The sources for one request.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -70,7 +70,7 @@ impl HealthLog {
         }
     }
 
-    /// Sources that can serve `request`: fewest failures first, then by trust and privacy.
+    /// Sources that can serve `request`: fewest failures first, then by integrity and privacy.
     fn candidates(&self, request: &Request, sources: &[SourceInfo]) -> Vec<SourceId> {
         let log = self.0.lock().unwrap_or_else(|e| e.into_inner());
         let disclosing = request.disclosure() != Disclosure::None;
@@ -85,12 +85,13 @@ impl HealthLog {
                     Some(Health::Failing(n)) => *n,
                     None => 0,
                 };
-                let preference = match (info.trust, disclosing, info.transport.exposed_to_source) {
-                    (TrustLevel::Trusted, ..) => 0,
-                    (TrustLevel::Untrusted, true, SourceExposure::Nothing) => 1,
-                    (TrustLevel::Untrusted, true, SourceExposure::Pseudonym) => 2,
-                    (TrustLevel::Untrusted, ..) => 3,
-                };
+                let preference =
+                    match (info.integrity, disclosing, info.transport.exposed_to_source) {
+                        (Integrity::Assumed, ..) => 0,
+                        (Integrity::Unverified, true, SourceExposure::Nothing) => 1,
+                        (Integrity::Unverified, true, SourceExposure::Pseudonym) => 2,
+                        (Integrity::Unverified, ..) => 3,
+                    };
                 Some((failures, preference, id))
             })
             .collect();
@@ -99,7 +100,7 @@ impl HealthLog {
     }
 }
 
-/// One source for each request. Trusted sources are first.
+/// One source for each request. Sources with assumed integrity are first.
 #[derive(Debug, Default)]
 pub struct Failover(HealthLog);
 
@@ -117,7 +118,7 @@ impl Router for Failover {
     }
 }
 
-/// Small responses need a quorum, unless a trusted source is available.
+/// Small responses need a quorum, unless a source with assumed integrity is available.
 /// Block ranges and transactions use one source.
 #[derive(Debug)]
 pub struct Quorum {
@@ -142,10 +143,10 @@ impl Router for Quorum {
             request,
             Request::Tip | Request::Block(_) | Request::TreeState(_) | Request::SubtreeRoots { .. }
         );
-        let trusted_first = candidates
+        let assumed_first = candidates
             .first()
-            .is_some_and(|id| sources[id.0].trust == TrustLevel::Trusted);
-        if comparable && !trusted_first {
+            .is_some_and(|id| sources[id.0].integrity == Integrity::Assumed);
+        if comparable && !assumed_first {
             Route::Quorum {
                 of: candidates,
                 need: self.need,

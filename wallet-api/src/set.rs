@@ -6,21 +6,21 @@ use futures::{StreamExt, TryStreamExt, future::join_all, stream};
 use zcash_protocol::{ShieldedPool, TxId, consensus::BlockHeight};
 
 use crate::{
-    ChainSource, Failover, Request, Response, ResponseStream, Route, Router, SourceError, SourceId,
-    SourceInfo, TransportInfo, TrustLevel,
+    ChainSource, Failover, Integrity, Request, Response, ResponseStream, Route, Router,
+    SourceError, SourceId, SourceInfo, TransportInfo,
     chain::{BlockId, CompactBlock, RawTransaction, ServerInfo, SubtreeRoot, TreeState},
 };
 
-/// Why the caller can trust a result.
+/// Why the caller can accept a result.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[non_exhaustive]
-pub enum TrustBasis {
-    /// The result is from a trusted source.
-    TrustedSource,
+pub enum IntegrityBasis {
+    /// The result is from a source with assumed integrity.
+    Assumed,
     /// This number of sources returned the same result.
     Quorum(usize),
-    /// The result is from one untrusted source.
-    UntrustedSource,
+    /// The result is from one unverified source.
+    Unverified,
 }
 
 /// A result and where it came from.
@@ -30,16 +30,16 @@ pub struct Fetched<T> {
     pub value: T,
     /// Its source.
     pub source: SourceId,
-    /// Why it can be trusted.
-    pub basis: TrustBasis,
+    /// Why it can be accepted.
+    pub basis: IntegrityBasis,
 }
 
 /// What a request will get from the current route.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[non_exhaustive]
 pub struct RouteInfo {
-    /// Expected trust basis of the result.
-    pub basis: TrustBasis,
+    /// Expected integrity basis of the result.
+    pub basis: IntegrityBasis,
     /// The weakest transport properties on the route.
     pub transport: TransportInfo,
 }
@@ -105,13 +105,17 @@ impl SourceSet {
         if infos.is_empty() {
             return Err(SourceError::NoSource);
         }
-        let any_trusted = infos.iter().any(|info| info.trust == TrustLevel::Trusted);
-        let all_trusted = infos.iter().all(|info| info.trust == TrustLevel::Trusted);
+        let any_assumed = infos
+            .iter()
+            .any(|info| info.integrity == Integrity::Assumed);
+        let all_assumed = infos
+            .iter()
+            .all(|info| info.integrity == Integrity::Assumed);
         let basis = match quorum {
-            Some(_) if any_trusted => TrustBasis::TrustedSource,
-            Some(need) => TrustBasis::Quorum(need),
-            None if all_trusted => TrustBasis::TrustedSource,
-            None => TrustBasis::UntrustedSource,
+            Some(_) if any_assumed => IntegrityBasis::Assumed,
+            Some(need) => IntegrityBasis::Quorum(need),
+            None if all_assumed => IntegrityBasis::Assumed,
+            None => IntegrityBasis::Unverified,
         };
         let transport = infos[1..].iter().fold(infos[0].transport, |weakest, info| {
             weakest.weakest(info.transport)
@@ -207,10 +211,10 @@ impl SourceSet {
         typed!(self.send(Request::Broadcast(transaction)).await?, Broadcast)
     }
 
-    fn basis(&self, source: SourceId) -> TrustBasis {
-        match self.infos[source.0].trust {
-            TrustLevel::Trusted => TrustBasis::TrustedSource,
-            TrustLevel::Untrusted => TrustBasis::UntrustedSource,
+    fn basis(&self, source: SourceId) -> IntegrityBasis {
+        match self.infos[source.0].integrity {
+            Integrity::Assumed => IntegrityBasis::Assumed,
+            Integrity::Unverified => IntegrityBasis::Unverified,
         }
     }
 
@@ -296,17 +300,17 @@ impl SourceSet {
             }
         }
 
-        let trusted = responses
+        let assumed = responses
             .iter()
-            .position(|(id, _)| self.infos[id.0].trust == TrustLevel::Trusted);
-        let (source, value, basis) = if let Some(position) = trusted {
+            .position(|(id, _)| self.infos[id.0].integrity == Integrity::Assumed);
+        let (source, value, basis) = if let Some(position) = assumed {
             let (source, value) = responses.swap_remove(position);
-            (source, value, TrustBasis::TrustedSource)
+            (source, value, IntegrityBasis::Assumed)
         } else if responses.len() < need {
             return Err(error);
         } else {
             let (source, value) = agreed(&responses, need).ok_or(SourceError::Disagreement)?;
-            (source, value, TrustBasis::Quorum(need))
+            (source, value, IntegrityBasis::Quorum(need))
         };
 
         for (id, response) in &responses {
@@ -435,9 +439,9 @@ mod tests {
         calls: AtomicUsize,
     }
 
-    fn mock(trust: TrustLevel, tip: u32, tree: &'static str) -> Arc<Mock> {
+    fn mock(integrity: Integrity, tip: u32, tree: &'static str) -> Arc<Mock> {
         Arc::new(Mock {
-            info: SourceInfo::new("mock", trust, TransportInfo::direct()),
+            info: SourceInfo::new("mock", integrity, TransportInfo::direct()),
             tip,
             tree,
             roots: &[],
@@ -450,7 +454,7 @@ mod tests {
     }
 
     fn custom(change: impl FnOnce(&mut Mock)) -> Arc<Mock> {
-        let mut source = mock(UNTRUSTED, 10, "a");
+        let mut source = mock(UNVERIFIED, 10, "a");
         change(Arc::get_mut(&mut source).unwrap());
         source
     }
@@ -540,7 +544,7 @@ mod tests {
         )
     }
 
-    const UNTRUSTED: TrustLevel = TrustLevel::Untrusted;
+    const UNVERIFIED: Integrity = Integrity::Unverified;
 
     /// A block hash that stands for one version of a tree state.
     fn marked(tree: &str) -> BlockHash {
@@ -550,12 +554,12 @@ mod tests {
 
     #[tokio::test]
     async fn failover_uses_the_next_source_and_remembers_the_failure() {
-        let (down, up) = (failing(), mock(UNTRUSTED, 10, "a"));
+        let (down, up) = (failing(), mock(UNVERIFIED, 10, "a"));
         let sources = set(&[&down, &up], Failover::default());
 
         let tip = sources.tip().await.unwrap();
         assert_eq!(tip.source, SourceId(1));
-        assert_eq!(tip.basis, TrustBasis::UntrustedSource);
+        assert_eq!(tip.basis, IntegrityBasis::Unverified);
 
         sources.tip().await.unwrap();
         assert_eq!(down.calls.load(Ordering::Relaxed), 1);
@@ -620,7 +624,7 @@ mod tests {
     #[tokio::test]
     async fn route_info_gives_the_weakest_transport_on_the_route() {
         let (direct, private) = (
-            mock(UNTRUSTED, 10, "a"),
+            mock(UNVERIFIED, 10, "a"),
             custom(|source| {
                 let transport = &mut source.info.transport;
                 transport.exposed_to_source = SourceExposure::Nothing;
@@ -647,7 +651,7 @@ mod tests {
         ] {
             let (first, next) = (
                 custom(|source| source.submit_error = Some(error.clone())),
-                mock(UNTRUSTED, 10, "a"),
+                mock(UNVERIFIED, 10, "a"),
             );
             let sources = set(&[&first, &next], Failover::default());
 
@@ -662,7 +666,7 @@ mod tests {
             custom(|source| {
                 source.submit_error = Some(SourceError::Unavailable("no route".into()));
             }),
-            mock(UNTRUSTED, 10, "a"),
+            mock(UNVERIFIED, 10, "a"),
         );
         let sources = set(&[&unreachable, &next], Failover::default());
 
@@ -676,7 +680,7 @@ mod tests {
     async fn stream_error_moves_the_next_request_to_another_source() {
         let (broken, good) = (
             custom(|source| source.breaks_streams = true),
-            mock(UNTRUSTED, 10, "a"),
+            mock(UNVERIFIED, 10, "a"),
         );
         let sources = set(&[&broken, &good], Failover::default());
         let range = HEIGHT..HEIGHT + 5;
@@ -704,15 +708,15 @@ mod tests {
     #[tokio::test]
     async fn quorum_returns_the_majority_response_and_drops_the_other_source() {
         let (a, liar, c) = (
-            mock(UNTRUSTED, 10, "a"),
-            mock(UNTRUSTED, 10, "b"),
-            mock(UNTRUSTED, 10, "a"),
+            mock(UNVERIFIED, 10, "a"),
+            mock(UNVERIFIED, 10, "b"),
+            mock(UNVERIFIED, 10, "a"),
         );
         let sources = set(&[&a, &liar, &c], Quorum::new(2));
 
         let tree_state = sources.tree_state(HEIGHT).await.unwrap();
         assert_eq!(tree_state.value.hash, marked("a"));
-        assert_eq!(tree_state.basis, TrustBasis::Quorum(2));
+        assert_eq!(tree_state.basis, IntegrityBasis::Quorum(2));
 
         sources.tree_state(HEIGHT).await.unwrap();
         assert_eq!(liar.calls.load(Ordering::Relaxed), 1);
@@ -720,7 +724,7 @@ mod tests {
 
     #[tokio::test]
     async fn quorum_fails_without_enough_equal_responses() {
-        let (a, b) = (mock(UNTRUSTED, 10, "a"), mock(UNTRUSTED, 10, "b"));
+        let (a, b) = (mock(UNVERIFIED, 10, "a"), mock(UNVERIFIED, 10, "b"));
         let sources = set(&[&a, &b], Quorum::new(2));
 
         assert_eq!(
@@ -731,7 +735,7 @@ mod tests {
 
     #[tokio::test]
     async fn quorum_fails_with_too_few_responses() {
-        let (a, down) = (mock(UNTRUSTED, 10, "a"), failing());
+        let (a, down) = (mock(UNVERIFIED, 10, "a"), failing());
         let sources = set(&[&a, &down], Quorum::new(2));
 
         assert_eq!(
@@ -743,9 +747,9 @@ mod tests {
     #[tokio::test]
     async fn quorum_tip_is_the_height_that_enough_sources_reached() {
         let (a, b, c) = (
-            mock(UNTRUSTED, 12, "a"),
-            mock(UNTRUSTED, 11, "a"),
-            mock(UNTRUSTED, 10, "a"),
+            mock(UNVERIFIED, 12, "a"),
+            mock(UNVERIFIED, 11, "a"),
+            mock(UNVERIFIED, 10, "a"),
         );
         let sources = set(&[&a, &b, &c], Quorum::new(2));
 
@@ -786,40 +790,40 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn trusted_source_overrules_the_other_sources() {
-        let (a, b, trusted) = (
-            mock(UNTRUSTED, 10, "a"),
-            mock(UNTRUSTED, 10, "a"),
-            mock(TrustLevel::Trusted, 10, "b"),
+    async fn assumed_source_overrules_the_other_sources() {
+        let (a, b, assumed) = (
+            mock(UNVERIFIED, 10, "a"),
+            mock(UNVERIFIED, 10, "a"),
+            mock(Integrity::Assumed, 10, "b"),
         );
-        let sources = set(&[&a, &b, &trusted], AskAll);
+        let sources = set(&[&a, &b, &assumed], AskAll);
 
         let tree_state = sources.tree_state(HEIGHT).await.unwrap();
         assert_eq!(tree_state.value.hash, marked("b"));
-        assert_eq!(tree_state.basis, TrustBasis::TrustedSource);
+        assert_eq!(tree_state.basis, IntegrityBasis::Assumed);
     }
 
     #[tokio::test]
-    async fn quorum_router_prefers_a_trusted_source() {
-        let (a, trusted) = (mock(UNTRUSTED, 10, "a"), mock(TrustLevel::Trusted, 10, "b"));
-        let sources = set(&[&a, &trusted], Quorum::new(2));
+    async fn quorum_router_prefers_an_assumed_source() {
+        let (a, assumed) = (mock(UNVERIFIED, 10, "a"), mock(Integrity::Assumed, 10, "b"));
+        let sources = set(&[&a, &assumed], Quorum::new(2));
 
         let tree_state = sources.tree_state(HEIGHT).await.unwrap();
-        assert_eq!(tree_state.basis, TrustBasis::TrustedSource);
+        assert_eq!(tree_state.basis, IntegrityBasis::Assumed);
         assert_eq!(a.calls.load(Ordering::Relaxed), 0);
     }
 
     #[tokio::test]
     async fn quorum_router_sends_block_ranges_to_one_source() {
-        let (a, b) = (mock(UNTRUSTED, 10, "a"), mock(UNTRUSTED, 10, "a"));
+        let (a, b) = (mock(UNVERIFIED, 10, "a"), mock(UNVERIFIED, 10, "a"));
         let sources = set(&[&a, &b], Quorum::new(2));
 
         let range = HEIGHT..HEIGHT + 5;
         let info = sources.route_info(&Request::Blocks(range.clone())).unwrap();
-        assert_eq!(info.basis, TrustBasis::UntrustedSource);
+        assert_eq!(info.basis, IntegrityBasis::Unverified);
         assert_eq!(
             sources.route_info(&Request::Tip).unwrap().basis,
-            TrustBasis::Quorum(2)
+            IntegrityBasis::Quorum(2)
         );
 
         sources.blocks(range).await.unwrap();

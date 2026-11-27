@@ -17,8 +17,8 @@ use lightwallet_protocol::{
 use orchard::tree::MerkleHashOrchard;
 use tonic::codegen::Service;
 use wallet_api::{
-    ChainSource, Connection, Connector, Request, Response, SourceError, SourceInfo, TransportInfo,
-    TrustLevel, chain,
+    ChainSource, Connection, Connector, Integrity, Request, Response, SourceError, SourceInfo,
+    TransportInfo, chain,
 };
 use zcash_primitives::merkle_tree::{HashSer, read_commitment_tree};
 use zcash_protocol::{ShieldedPool, TxId, consensus::BlockHeight};
@@ -71,9 +71,9 @@ impl GrpcIndexer {
         Ok(Self::from_channel(uri, channel, transport))
     }
 
-    /// Sets the trust level.
-    pub fn with_trust(mut self, trust: TrustLevel) -> Self {
-        self.info.trust = trust;
+    /// Sets the integrity.
+    pub fn with_integrity(mut self, integrity: Integrity) -> Self {
+        self.info.integrity = integrity;
         self
     }
 }
@@ -461,7 +461,7 @@ fn timed<T>(message: T, timeout: Duration) -> tonic::Request<T> {
 }
 
 pub(crate) fn info(uri: &http::Uri, transport: TransportInfo) -> SourceInfo {
-    let mut info = SourceInfo::new(uri.to_string(), TrustLevel::Untrusted, transport);
+    let mut info = SourceInfo::new(uri.to_string(), Integrity::Unverified, transport);
     info.capabilities.address_queries = cfg!(feature = "globally-public-transparent");
     info
 }

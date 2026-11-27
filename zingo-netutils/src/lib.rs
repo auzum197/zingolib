@@ -246,7 +246,7 @@ pub struct GrpcIndexer {
 }
 
 impl GrpcIndexer {
-    /// An untrusted indexer at `uri`, through a default [`TcpConnector`]. The connection
+    /// An unverified indexer at `uri`, through a default [`TcpConnector`]. The connection
     /// opens on the first request.
     pub async fn new(uri: http::Uri) -> Result<Self, GetClientError> {
         Self::with_connector(uri, TcpConnector::default())
