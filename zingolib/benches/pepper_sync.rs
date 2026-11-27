@@ -8,6 +8,9 @@
 //! The sync task is polled every millisecond, so the harness adds at most that much to a
 //! measurement regardless of how the client waits for completion.
 //!
+//! Each client connects through a transport that counts bytes, so each measurement also has the
+//! requests for each kind and the bytes on the wire.
+//!
 //! Run with `cargo bench -p zingolib --bench pepper_sync -- [name filter...]`.
 //!
 //! Environment:
@@ -16,15 +19,30 @@
 //! - `PEPPER_BENCH_OUT`: path of a JSON lines file that receives every measurement.
 //! - `PEPPER_BENCH_VARIANTS`: comma-separated variant names to keep (default all).
 
+use std::collections::BTreeMap;
 use std::io::Write as _;
+use std::pin::Pin;
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Arc, Mutex};
+use std::task::{Context, Poll};
 use std::time::{Duration, Instant};
 
+use chain_router::{
+    AllowedIdentifiers, BoxFuture, Connection, Connector, Integrity, Quorum, RequestEvent,
+    TransportInfo, TxidRule,
+};
+use lightwallet_grpc_client::GrpcIndexer;
 use pepper_sync::config::{PerformanceLevel, SyncConfig, TransparentAddressDiscovery};
 use pepper_sync::events::{SequencedSyncEvent, SyncEvent};
 use pepper_sync::sync::SyncResult;
+use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
+use tokio::net::TcpStream;
 use zcash_protocol::value::Zatoshis;
+use zingolib::config::{Birthday, WalletConfig};
 use zingolib::data::PollReport;
-use zingolib::lightclient::LightClient;
+use zingolib::lightclient::store::MemoryStore;
+use zingolib::lightclient::{Encryption, LightClient};
+use zingolib::testutils::default_test_wallet_settings;
 use zingolib::testutils::mock_indexer::{
     CoinbaseRecipient, MockNet, shielded_coinbase_transaction,
 };
@@ -72,11 +90,23 @@ impl Shape {
     };
 }
 
+/// The sources of a client and what they can receive.
+#[derive(Clone, Copy, Debug)]
+enum Sources {
+    /// One indexer that can receive each wallet identifier.
+    Direct,
+    /// One indexer that can receive a txid only among this number of txids.
+    Decoys(usize),
+    /// Two unverified indexers with a quorum router.
+    Quorum,
+}
+
 #[derive(Clone, Copy, Debug)]
 struct Variant {
     name: &'static str,
     performance: PerformanceLevel,
     discovery: fn() -> TransparentAddressDiscovery,
+    sources: Sources,
 }
 
 impl Variant {
@@ -84,7 +114,110 @@ impl Variant {
         name: "high/minimal",
         performance: PerformanceLevel::High,
         discovery: TransparentAddressDiscovery::minimal,
+        sources: Sources::Direct,
     };
+
+    const fn with_sources(name: &'static str, sources: Sources) -> Self {
+        Self {
+            name,
+            sources,
+            ..Self::DEFAULT
+        }
+    }
+}
+
+/// The requests and the bytes of one client.
+#[derive(Clone, Default)]
+struct Traffic {
+    received: Arc<AtomicU64>,
+    sent: Arc<AtomicU64>,
+    requests: Arc<Mutex<BTreeMap<String, u64>>>,
+}
+
+impl Traffic {
+    /// Returns the totals since the last call and sets them to zero.
+    fn take(&self) -> TrafficTotals {
+        TrafficTotals {
+            received: self.received.swap(0, Ordering::Relaxed),
+            sent: self.sent.swap(0, Ordering::Relaxed),
+            requests: std::mem::take(&mut *self.requests.lock().expect("no panic with the lock")),
+        }
+    }
+}
+
+struct TrafficTotals {
+    received: u64,
+    sent: u64,
+    requests: BTreeMap<String, u64>,
+}
+
+struct CountedStream {
+    stream: TcpStream,
+    traffic: Traffic,
+}
+
+impl AsyncRead for CountedStream {
+    fn poll_read(
+        mut self: Pin<&mut Self>,
+        context: &mut Context<'_>,
+        buffer: &mut ReadBuf<'_>,
+    ) -> Poll<std::io::Result<()>> {
+        let before = buffer.filled().len();
+        let poll = Pin::new(&mut self.stream).poll_read(context, buffer);
+        let read = (buffer.filled().len() - before) as u64;
+        self.traffic.received.fetch_add(read, Ordering::Relaxed);
+        poll
+    }
+}
+
+impl AsyncWrite for CountedStream {
+    fn poll_write(
+        mut self: Pin<&mut Self>,
+        context: &mut Context<'_>,
+        bytes: &[u8],
+    ) -> Poll<std::io::Result<usize>> {
+        let poll = Pin::new(&mut self.stream).poll_write(context, bytes);
+        if let Poll::Ready(Ok(written)) = poll {
+            self.traffic
+                .sent
+                .fetch_add(written as u64, Ordering::Relaxed);
+        }
+        poll
+    }
+
+    fn poll_flush(
+        mut self: Pin<&mut Self>,
+        context: &mut Context<'_>,
+    ) -> Poll<std::io::Result<()>> {
+        Pin::new(&mut self.stream).poll_flush(context)
+    }
+
+    fn poll_shutdown(
+        mut self: Pin<&mut Self>,
+        context: &mut Context<'_>,
+    ) -> Poll<std::io::Result<()>> {
+        Pin::new(&mut self.stream).poll_shutdown(context)
+    }
+}
+
+struct CountingTcp(Traffic);
+
+impl Connector for CountingTcp {
+    fn connect<'a>(
+        &'a self,
+        host: &'a str,
+        port: u16,
+    ) -> BoxFuture<'a, std::io::Result<Box<dyn Connection>>> {
+        Box::pin(async move {
+            let stream = TcpStream::connect((host, port)).await?;
+            let traffic = self.0.clone();
+            Ok(Box::new(CountedStream { stream, traffic }) as Box<dyn Connection>)
+        })
+    }
+
+    fn info(&self) -> TransportInfo {
+        TransportInfo::direct()
+    }
 }
 
 #[derive(Clone)]
@@ -105,21 +238,28 @@ fn scenarios() -> Vec<Scenario> {
     .map(|(name, performance)| Variant {
         name,
         performance,
-        discovery: TransparentAddressDiscovery::minimal,
+        ..Variant::DEFAULT
     })
     .collect();
     let discoveries = vec![
         Variant {
             name: "high/disabled",
-            performance: PerformanceLevel::High,
             discovery: TransparentAddressDiscovery::disabled,
+            ..Variant::DEFAULT
         },
         Variant::DEFAULT,
         Variant {
             name: "high/recovery",
-            performance: PerformanceLevel::High,
             discovery: TransparentAddressDiscovery::recovery,
+            ..Variant::DEFAULT
         },
+    ];
+    let sources = vec![
+        Variant::with_sources("direct", Sources::Direct),
+        Variant::with_sources("decoys/16", Sources::Decoys(16)),
+        Variant::with_sources("decoys/64", Sources::Decoys(64)),
+        Variant::with_sources("decoys/256", Sources::Decoys(256)),
+        Variant::with_sources("quorum", Sources::Quorum),
     ];
 
     vec![
@@ -184,6 +324,22 @@ fn scenarios() -> Vec<Scenario> {
                 ..Shape::MIXED
             },
             variants: discoveries,
+        },
+        Scenario {
+            name: "sources_sparse_wallet",
+            shape: Shape {
+                wallet_note: Some((Pool::Ironwood, 100)),
+                ..Shape::MIXED
+            },
+            variants: sources.clone(),
+        },
+        Scenario {
+            name: "sources_dense_wallet",
+            shape: Shape {
+                wallet_note: Some((Pool::Ironwood, 1)),
+                ..Shape::MIXED
+            },
+            variants: sources,
         },
     ]
 }
@@ -269,14 +425,53 @@ async fn mine(net: &MockNet, shape: &Shape, wallet: &Addresses, foreign: &Addres
     }
 }
 
-async fn client(net: &mut MockNet, variant: &Variant) -> LightClient {
-    let client = net.client(WALLET_SEED).await;
-    client.wallet().write().await.wallet_settings.sync_config = SyncConfig {
+async fn client(net: &MockNet, variant: &Variant) -> (LightClient, Traffic) {
+    let traffic = Traffic::default();
+    let indexer = |integrity, identifiers: AllowedIdentifiers| {
+        GrpcIndexer::with_connector(net.indexer_uri(), CountingTcp(traffic.clone()))
+            .expect("the mock indexer URI is valid")
+            .with_integrity(integrity)
+            .allow_identifiers(identifiers)
+    };
+    let builder = LightClient::builder(net.chain_type());
+    let builder = match variant.sources {
+        Sources::Direct => builder.source(indexer(Integrity::Assumed, AllowedIdentifiers::all())),
+        Sources::Decoys(minimum) => {
+            let identifiers = AllowedIdentifiers {
+                txid: TxidRule::Among(minimum),
+                ..AllowedIdentifiers::all()
+            };
+            builder.source(indexer(Integrity::Assumed, identifiers))
+        }
+        Sources::Quorum => builder
+            .source(indexer(Integrity::Unverified, AllowedIdentifiers::all()))
+            .source(indexer(Integrity::Unverified, AllowedIdentifiers::all()))
+            .router(Quorum::new(2)),
+    };
+    let requests = traffic.requests.clone();
+    let builder = builder.request_events(move |event: &RequestEvent| {
+        let mut requests = requests.lock().expect("no panic with the lock");
+        *requests.entry(format!("{:?}", event.kind)).or_default() += 1;
+    });
+
+    let mut wallet_settings = default_test_wallet_settings();
+    wallet_settings.sync_config = SyncConfig {
         transparent_address_discovery: (variant.discovery)(),
         performance_level: variant.performance,
         ..SyncConfig::default()
     };
-    client
+    let wallet_config = WalletConfig::MnemonicPhrase {
+        mnemonic_phrase: WALLET_SEED.to_string(),
+        no_of_accounts: 1.try_into().expect("one is not zero"),
+        birthday: Birthday::Height(1),
+        wallet_settings,
+    };
+    let client = builder
+        .create(MemoryStore::default(), wallet_config, Encryption::None)
+        .await
+        .expect("the client for the mock chain builds");
+    traffic.take();
+    (client, traffic)
 }
 
 struct Measurement {
@@ -286,6 +481,7 @@ struct Measurement {
     run: usize,
     elapsed: Duration,
     result: SyncResult,
+    traffic: TrafficTotals,
 }
 
 impl Measurement {
@@ -301,6 +497,9 @@ impl Measurement {
             "sapling_outputs": self.result.sapling_outputs_scanned,
             "orchard_outputs": self.result.orchard_outputs_scanned,
             "ironwood_outputs": self.result.ironwood_outputs_scanned,
+            "bytes_received": self.traffic.received,
+            "bytes_sent": self.traffic.sent,
+            "requests": self.traffic.requests,
         })
         .to_string()
     }
@@ -401,7 +600,7 @@ async fn run_scenario(
     wallet: &Addresses,
     foreign: &Addresses,
 ) -> Vec<Measurement> {
-    let mut net = MockNet::launch().await;
+    let net = MockNet::launch().await;
     let generation = Instant::now();
     mine(&net, &scenario.shape, wallet, foreign, blocks).await;
     eprintln!(
@@ -414,7 +613,7 @@ async fn run_scenario(
     let mut clients = Vec::new();
     for variant in &scenario.variants {
         for run in 0..runs {
-            let mut client = client(&mut net, variant).await;
+            let (mut client, traffic) = client(&net, variant).await;
             let (elapsed, result) = timed(&mut client, false).await;
             if run == 0 {
                 let balance = client
@@ -439,13 +638,14 @@ async fn run_scenario(
                 run,
                 elapsed,
                 result,
+                traffic: traffic.take(),
             });
-            clients.push((variant, run, client));
+            clients.push((variant, run, client, traffic));
         }
     }
 
     mine(&net, &scenario.shape, wallet, foreign, blocks / 10).await;
-    for (variant, run, client) in &mut clients {
+    for (variant, run, client, traffic) in &mut clients {
         let (elapsed, result) = timed(client, false).await;
         eprintln!(
             "  {} {} incremental #{run}: {:.2}s ({result})",
@@ -460,9 +660,10 @@ async fn run_scenario(
             run: *run,
             elapsed,
             result,
+            traffic: traffic.take(),
         });
     }
-    for (variant, run, client) in &mut clients {
+    for (variant, run, client, traffic) in &mut clients {
         let (elapsed, result) = timed(client, true).await;
         eprintln!(
             "  {} {} rescan #{run}: {:.2}s ({result})",
@@ -477,6 +678,7 @@ async fn run_scenario(
             run: *run,
             elapsed,
             result,
+            traffic: traffic.take(),
         });
     }
     measurements
@@ -534,8 +736,10 @@ fn main() {
         all.extend(measurements);
     }
 
-    println!("\n| scenario | variant | phase | blocks | outputs (s/o/i) | best s | median s |");
-    println!("| --- | --- | --- | --- | --- | --- | --- |");
+    println!(
+        "\n| scenario | variant | phase | blocks | outputs (s/o/i) | best s | median s | requests | MiB received | MiB sent |"
+    );
+    println!("| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |");
     let mut keys = all
         .iter()
         .map(|m| (m.scenario, m.variant, m.phase))
@@ -552,14 +756,18 @@ fn main() {
             .iter()
             .find(|m| m.scenario == scenario && m.variant == variant && m.phase == phase)
             .expect("the key came from this list");
+        const MIB: f64 = 1024.0 * 1024.0;
         println!(
-            "| {scenario} | {variant} | {phase} | {} | {}/{}/{} | {:.2} | {:.2} |",
+            "| {scenario} | {variant} | {phase} | {} | {}/{}/{} | {:.2} | {:.2} | {} | {:.2} | {:.2} |",
             sample.result.blocks_scanned,
             sample.result.sapling_outputs_scanned,
             sample.result.orchard_outputs_scanned,
             sample.result.ironwood_outputs_scanned,
             seconds[0],
             seconds[seconds.len() / 2],
+            sample.traffic.requests.values().sum::<u64>(),
+            sample.traffic.received as f64 / MIB,
+            sample.traffic.sent as f64 / MIB,
         );
     }
 }
