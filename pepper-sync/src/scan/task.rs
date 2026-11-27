@@ -245,19 +245,16 @@ where
                     }
                     // verification complete, so scanning starts without waiting for another wake
                     self.state.verified();
-                    self.update_batcher(wallet, nullifier_map_limit_exceeded)
-                        .map_err(SyncError::WalletError)?;
+                    self.update_batcher(wallet, nullifier_map_limit_exceeded)?;
                     return Ok(());
                 }
 
                 // scan ranges with `Verify` priority
-                self.update_batcher(wallet, nullifier_map_limit_exceeded)
-                    .map_err(SyncError::WalletError)?;
+                self.update_batcher(wallet, nullifier_map_limit_exceeded)?;
             }
             ScannerState::Scan => {
                 self.update_workers();
-                self.update_batcher(wallet, nullifier_map_limit_exceeded)
-                    .map_err(SyncError::WalletError)?;
+                self.update_batcher(wallet, nullifier_map_limit_exceeded)?;
             }
             ScannerState::Shutdown => (),
         }
@@ -294,7 +291,7 @@ where
         &mut self,
         wallet: &mut W,
         nullifier_map_limit_exceeded: bool,
-    ) -> Result<(), W::Error>
+    ) -> Result<(), SyncError<W::Error>>
     where
         W: SyncWallet + SyncBlocks + SyncNullifiers + SyncTransactions,
     {
@@ -306,7 +303,11 @@ where
                 nullifier_map_limit_exceeded,
             )? {
                 batcher.add_scan_task(scan_task);
-            } else if wallet.get_sync_state()?.scan_complete() {
+            } else if wallet
+                .get_sync_state()
+                .map_err(SyncError::WalletError)?
+                .scan_complete()
+            {
                 self.state.shutdown();
             }
         }

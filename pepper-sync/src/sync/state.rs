@@ -14,7 +14,7 @@ use zcash_protocol::consensus::{self, BlockHeight, NetworkUpgrade};
 use crate::{
     client::{self, FetchRequest},
     engine::SyncStateOps as _,
-    error::{ServerError, SyncError},
+    error::{ScanError, ServerError, SyncError},
     keys::transparent::TransparentAddressId,
     scan::task::ScanTask,
     wallet::{
@@ -64,18 +64,20 @@ pub(crate) fn create_scan_task<W>(
     consensus_parameters: &impl consensus::Parameters,
     wallet: &mut W,
     nullifier_map_limit_exceeded: bool,
-) -> Result<Option<ScanTask>, W::Error>
+) -> Result<Option<ScanTask>, SyncError<W::Error>>
 where
     W: SyncWallet + SyncBlocks + SyncNullifiers + SyncTransactions,
 {
     let Some(selected_range) = wallet
-        .get_sync_state_mut()?
+        .get_sync_state_mut()
+        .map_err(SyncError::WalletError)?
         .select_scan_range(consensus_parameters, nullifier_map_limit_exceeded)
     else {
         return Ok(None);
     };
     let chain_height = wallet
-        .get_sync_state()?
+        .get_sync_state()
+        .map_err(SyncError::WalletError)?
         .last_known_chain_height()
         .expect("the scan ranges hold the selected range");
 
@@ -101,24 +103,31 @@ where
         .ok();
 
     let scan_targets = wallet
-        .get_sync_state()?
+        .get_sync_state()
+        .map_err(SyncError::WalletError)?
         .find_scan_targets(selected_range.block_range());
     let transparent_addresses: HashMap<String, TransparentAddressId> = wallet
-        .get_transparent_addresses()?
+        .get_transparent_addresses()
+        .map_err(SyncError::WalletError)?
         .iter()
         .map(|(id, address)| (address.clone(), *id))
         .collect();
 
     let known_transactions = wallet
-        .get_wallet_transactions()?
+        .get_wallet_transactions()
+        .map_err(SyncError::WalletError)?
         .values()
         .filter(|transaction| !transaction.status().is_confirmed())
-        .filter_map(|transaction| {
+        .map(|transaction| {
+            let txid = transaction.txid();
             let mut bytes = Vec::new();
-            transaction.transaction().write(&mut bytes).ok()?;
-            Some((transaction.txid(), bytes))
+            transaction
+                .transaction()
+                .write(&mut bytes)
+                .map_err(|_| ScanError::InvalidWalletTransaction { txid })?;
+            Ok((txid, bytes))
         })
-        .collect();
+        .collect::<Result<_, ScanError>>()?;
 
     Ok(Some(ScanTask::from_parts(
         selected_range,

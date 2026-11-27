@@ -118,18 +118,21 @@ pub(crate) async fn scan_transactions(
             continue;
         }
 
+        let txid = scan_target.txid;
         let known = known_transactions
-            .get(&scan_target.txid)
+            .get(&txid)
             .filter(|_| {
                 wallet_blocks
                     .get(&scan_target.block_height)
-                    .is_some_and(|block| block.txids().contains(&scan_target.txid))
+                    .is_some_and(|block| block.txids().contains(&txid))
             })
-            .and_then(|bytes| {
+            .map(|bytes| {
                 let branch_id =
                     consensus::BranchId::for_height(consensus_parameters, scan_target.block_height);
-                Transaction::read(&bytes[..], branch_id).ok()
-            });
+                Transaction::read(&bytes[..], branch_id)
+                    .map_err(|_| ScanError::InvalidWalletTransaction { txid })
+            })
+            .transpose()?;
         let (transaction, block_height) = match (known, decoy_minimum) {
             (Some(transaction), _) => (transaction, scan_target.block_height),
             (None, Some(minimum)) => {
@@ -800,4 +803,71 @@ fn collect_outpoints<A: TransparentAuthorization>(
                 },
             );
         });
+}
+
+#[cfg(test)]
+mod tests {
+    use zcash_primitives::block::BlockHash;
+    use zcash_protocol::consensus::MAIN_NETWORK;
+
+    use super::*;
+    use crate::{engine::WalletBlockOps as _, wallet::TreeBounds};
+
+    #[tokio::test]
+    async fn unreadable_wallet_copy_of_a_transaction_is_an_error() {
+        let txid = TxId::from_bytes([1; 32]);
+        let height = BlockHeight::from_u32(2_000_000);
+        let bounds = TreeBounds {
+            sapling_initial_tree_size: 0,
+            sapling_final_tree_size: 0,
+            orchard_initial_tree_size: 0,
+            orchard_final_tree_size: 0,
+            ironwood_initial_tree_size: 0,
+            ironwood_final_tree_size: 0,
+        };
+        let block = WalletBlock::from_parts(
+            height,
+            BlockHash([0; 32]),
+            BlockHash([0; 32]),
+            0,
+            vec![txid],
+            bounds,
+        );
+        let target = ScanTarget {
+            block_height: height,
+            txid,
+            narrow_scan_area: false,
+        };
+        let (sender, mut receiver) = mpsc::unbounded_channel();
+        let requests = tokio::spawn(async move {
+            let mut other_requests = 0;
+            while let Some(request) = receiver.recv().await {
+                match request {
+                    FetchRequest::DecoyMinimum(reply) => drop(reply.send(None)),
+                    _ => other_requests += 1,
+                }
+            }
+            other_requests
+        });
+
+        let scanned = scan_transactions(
+            sender,
+            &MAIN_NETWORK,
+            &HashMap::new(),
+            BTreeSet::from([target]),
+            DecryptedNoteData::new(),
+            &BTreeMap::from([(height, block)]),
+            &mut BTreeMap::new(),
+            HashMap::new(),
+            &HashMap::from([(txid, vec![0xff])]),
+            height,
+        )
+        .await;
+
+        assert!(matches!(
+            scanned,
+            Err(ScanError::InvalidWalletTransaction { txid: invalid }) if invalid == txid
+        ));
+        assert_eq!(requests.await.unwrap(), 0);
+    }
 }
