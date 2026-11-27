@@ -1201,7 +1201,8 @@ mod sources {
     use pepper_sync::AssumedOnly;
     use pepper_sync::error::{ServerError, SyncError};
     use wallet_api::{
-        BoxFuture, Connection, Connector, Integrity, Quorum, SourceExposure, TransportInfo,
+        BoxFuture, Connection, Connector, Integrity, Quorum, RequestEvent, RequestKind,
+        SourceExposure, SourceId, TransportInfo,
     };
 
     use super::*;
@@ -1279,6 +1280,26 @@ mod sources {
         assert!(dials.load(Ordering::Relaxed) > 0);
         let transport = client.source_set().sources().first().unwrap().transport;
         assert_eq!(transport.exposed_to_source, SourceExposure::Nothing);
+    }
+
+    #[tokio::test]
+    async fn indexer_short_form_gives_an_event_for_each_request() {
+        let net = MockNet::launch().await;
+        net.generate_blocks(10).await;
+        let events = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let copy = events.clone();
+        let builder = LightClient::builder(net.chain_type())
+            .indexer(net.indexer_uri(), Integrity::Assumed)
+            .unwrap()
+            .request_events(move |event: &RequestEvent| copy.lock().unwrap().push(event.clone()));
+        let mut client = create(builder).await;
+
+        client.sync_and_await().await.unwrap();
+
+        let events = events.lock().unwrap();
+        assert!(events.iter().any(|event| event.kind == RequestKind::Blocks));
+        assert!(events.iter().all(|event| event.result.is_ok()));
+        assert!(events.iter().all(|event| event.source == SourceId(0)));
     }
 
     #[tokio::test]

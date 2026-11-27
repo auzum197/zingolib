@@ -11,13 +11,14 @@ use zcash_primitives::transaction::TxId;
 use zcash_protocol::consensus::{BlockHeight, NetworkUpgrade, Parameters as _};
 use zcash_transparent::address::TransparentAddress;
 
-use lightwallet_grpc_client::GrpcIndexer;
+use lightwallet_grpc_client::{GrpcIndexer, TcpConnector};
 use pepper_sync::{
     SyncStrategy, error::SyncError, events::SyncEmitter, keys::transparent::TransparentAddressId,
     sync::SyncResult, wallet::SyncMode,
 };
 use wallet_api::{
-    ChainSource, Failover, Integrity, Router, SourceError, SourceSet, chain::ServerInfo,
+    ChainSource, EventReceiver, Failover, Integrity, RequestEvent, Router, SourceError, SourceSet,
+    chain::ServerInfo,
 };
 
 use crate::{
@@ -100,6 +101,7 @@ pub enum Unlock {
 pub struct LightClient {
     sources: Arc<SourceSet>,
     strategy: Arc<dyn SyncStrategy<ChainType, LightWallet>>,
+    events: Option<Arc<dyn EventReceiver>>,
     wallet: WalletMeta,
     sync_mode: watch::Sender<SyncMode>,
     sync_handle: Option<JoinHandle<Result<SyncResult, SyncError<WalletError>>>>,
@@ -114,12 +116,41 @@ pub struct LightClientBuilder {
     sources: Vec<Arc<dyn ChainSource>>,
     router: Arc<dyn Router>,
     strategy: Arc<dyn SyncStrategy<ChainType, LightWallet>>,
+    events: Option<Arc<dyn EventReceiver>>,
+}
+
+fn source_set(
+    sources: Vec<Arc<dyn ChainSource>>,
+    router: Arc<dyn Router>,
+    events: &Option<Arc<dyn EventReceiver>>,
+) -> SourceSet {
+    let sources = SourceSet::new(sources, router);
+    match events.clone() {
+        Some(events) => sources.with_events(move |event: &RequestEvent| events.on_event(event)),
+        None => sources,
+    }
 }
 
 impl LightClientBuilder {
     /// Adds a chain source. The order of the calls is the order of preference.
     pub fn source(mut self, source: impl ChainSource + 'static) -> Self {
         self.sources.push(Arc::new(source));
+        self
+    }
+
+    /// Adds an indexer at `uri` with the default connector.
+    pub fn indexer(
+        self,
+        uri: http::Uri,
+        integrity: Integrity,
+    ) -> Result<Self, lightwallet_grpc_client::GetClientError> {
+        let indexer = GrpcIndexer::with_connector(uri, TcpConnector::default())?;
+        Ok(self.source(indexer.with_integrity(integrity)))
+    }
+
+    /// Sends one [`RequestEvent`] to `receiver` for each request to a source.
+    pub fn request_events(mut self, receiver: impl EventReceiver + 'static) -> Self {
+        self.events = Some(Arc::new(receiver));
         self
     }
 
@@ -149,7 +180,7 @@ impl LightClientBuilder {
             return Err(CreateError::AlreadyExists);
         }
         let chain_type = self.chain_type;
-        let sources = SourceSet::new(self.sources, self.router);
+        let sources = source_set(self.sources, self.router, &self.events);
         let birthday = wallet_config.birthday_mut();
         if *birthday == Birthday::ChainTip {
             let chain_tip = u32::from(sources.tip().await?.value.height);
@@ -167,7 +198,13 @@ impl LightClientBuilder {
             store.write(&bytes)?;
         }
 
-        Ok(LightClient::assemble(store, sources, self.strategy, wallet))
+        Ok(LightClient::assemble(
+            store,
+            sources,
+            self.strategy,
+            self.events,
+            wallet,
+        ))
     }
 
     /// Opens the wallet held by `store`. `unlock` must match how the wallet was stored.
@@ -191,9 +228,15 @@ impl LightClientBuilder {
                 )) => OpenError::DecryptionFailed,
                 e => OpenError::Wallet(e),
             })?;
-        let sources = SourceSet::new(self.sources, self.router);
+        let sources = source_set(self.sources, self.router, &self.events);
 
-        Ok(LightClient::assemble(store, sources, self.strategy, wallet))
+        Ok(LightClient::assemble(
+            store,
+            sources,
+            self.strategy,
+            self.events,
+            wallet,
+        ))
     }
 }
 
@@ -209,6 +252,7 @@ impl LightClient {
             sources: Vec::new(),
             router: Arc::new(Failover::default()),
             strategy: Arc::new(pepper_sync::Auto),
+            events: None,
         }
     }
 
@@ -225,7 +269,7 @@ impl LightClient {
         encryption: Encryption,
     ) -> Result<Self, CreateError> {
         Self::builder(chain_type)
-            .source(Self::assumed_indexer(indexer_uri).await?)
+            .indexer(indexer_uri, Integrity::Assumed)?
             .create(store, wallet_config, encryption)
             .await
     }
@@ -240,23 +284,16 @@ impl LightClient {
         unlock: Unlock,
     ) -> Result<Self, OpenError> {
         Self::builder(chain_type)
-            .source(Self::assumed_indexer(indexer_uri).await?)
+            .indexer(indexer_uri, Integrity::Assumed)?
             .open(store, unlock)
             .await
-    }
-
-    async fn assumed_indexer(
-        indexer_uri: http::Uri,
-    ) -> Result<GrpcIndexer, lightwallet_grpc_client::GetClientError> {
-        Ok(GrpcIndexer::new(indexer_uri)
-            .await?
-            .with_integrity(Integrity::Assumed))
     }
 
     fn assemble(
         store: impl WalletStore,
         sources: SourceSet,
         strategy: Arc<dyn SyncStrategy<ChainType, LightWallet>>,
+        events: Option<Arc<dyn EventReceiver>>,
         wallet: LightWallet,
     ) -> Self {
         let (sync_events, _root_receiver) =
@@ -273,6 +310,7 @@ impl LightClient {
         LightClient {
             sources: Arc::new(sources),
             strategy,
+            events,
             wallet,
             sync_mode: watch::Sender::new(SyncMode::NotRunning),
             sync_handle: None,
@@ -315,7 +353,12 @@ impl LightClient {
         &mut self,
         server: http::Uri,
     ) -> Result<(), lightwallet_grpc_client::GetClientError> {
-        self.sources = Arc::new(SourceSet::single(Self::assumed_indexer(server).await?));
+        let indexer = GrpcIndexer::with_connector(server, TcpConnector::default())?;
+        self.sources = Arc::new(source_set(
+            vec![Arc::new(indexer.with_integrity(Integrity::Assumed))],
+            Arc::new(Failover::default()),
+            &self.events,
+        ));
         Ok(())
     }
 
