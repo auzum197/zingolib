@@ -1,6 +1,6 @@
 //! Pepper sync error module
 
-use std::{array::TryFromSliceError, convert::Infallible};
+use std::convert::Infallible;
 
 use shardtree::error::ShardTreeError;
 use zcash_primitives::{block::BlockHash, transaction::TxId};
@@ -200,12 +200,6 @@ pub enum ScanError {
     /// Invalid encoding of a compact output or action
     #[error("{0}")]
     EncodingError(#[from] EncodingInvalid),
-    /// Invalid sapling nullifier
-    #[error("invalid sapling nullifier. {0}")]
-    InvalidSaplingNullifier(#[from] TryFromSliceError),
-    /// Invalid orchard nullifier length
-    #[error("invalid orchard nullifier length. should be 32 bytes, found {0}")]
-    InvalidOrchardNullifierLength(usize),
     /// Invalid orchard nullifier
     #[error("invalid orchard nullifier")]
     InvalidOrchardNullifier,
@@ -264,8 +258,6 @@ pub struct EncodingInvalid {
 /// An error indicating that a field of a compact format structure could not be parsed.
 #[derive(Clone, Debug)]
 pub enum CompactFormatError {
-    /// A byte slice had an invalid length for the expected field.
-    InvalidLength(std::array::TryFromSliceError),
     /// A field value did not represent a valid protocol element.
     InvalidValue,
 }
@@ -273,7 +265,6 @@ pub enum CompactFormatError {
 impl std::fmt::Display for CompactFormatError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            CompactFormatError::InvalidLength(e) => write!(f, "Invalid compact format field: {e}"),
             CompactFormatError::InvalidValue => {
                 write!(f, "Compact format field is not a valid protocol element")
             }
@@ -315,7 +306,7 @@ pub enum ContinuityError {
 pub enum ServerError {
     /// Server request failed.
     #[error("server request failed. {0}")]
-    RequestFailed(#[from] tonic::Status),
+    RequestFailed(#[from] wallet_api::SourceError),
     /// Server returned invalid frontier.
     #[error("server returned invalid frontier. {0}")]
     InvalidFrontier(std::io::Error),
@@ -393,7 +384,8 @@ mod tests {
 
             #[test]
             fn request_failed() {
-                let e = ServerError::RequestFailed(tonic::Status::deadline_exceeded("timeout"));
+                let e =
+                    ServerError::RequestFailed(wallet_api::SourceError::Timeout("timeout".into()));
                 assert!(!e.recommend_same_server());
             }
 
@@ -431,7 +423,8 @@ mod tests {
             #[test]
             fn server_request_failed() {
                 let e: TestSyncError =
-                    ServerError::RequestFailed(tonic::Status::deadline_exceeded("timeout")).into();
+                    ServerError::RequestFailed(wallet_api::SourceError::Timeout("timeout".into()))
+                        .into();
                 assert!(!e.recommend_same_server());
             }
 
@@ -490,7 +483,8 @@ mod tests {
 
             #[test]
             fn request_failed() {
-                let e = ServerError::RequestFailed(tonic::Status::deadline_exceeded("timeout"));
+                let e =
+                    ServerError::RequestFailed(wallet_api::SourceError::Timeout("timeout".into()));
                 assert_eq!(
                     e.recovery_recommendation(),
                     SyncRecoveryObservables::ServerUnavailable
@@ -500,7 +494,8 @@ mod tests {
             #[test]
             fn sync_error_from_request_failed() {
                 let e: TestSyncError =
-                    ServerError::RequestFailed(tonic::Status::unavailable("down")).into();
+                    ServerError::RequestFailed(wallet_api::SourceError::Unavailable("down".into()))
+                        .into();
                 assert_eq!(
                     e.recovery_recommendation(),
                     SyncRecoveryObservables::ServerUnavailable

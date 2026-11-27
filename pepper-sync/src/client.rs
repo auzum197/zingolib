@@ -8,11 +8,10 @@ use tokio_util::sync::CancellationToken;
 use zcash_primitives::transaction::{Transaction, TxId};
 use zcash_protocol::consensus::{self, BlockHeight};
 
-use zingo_netutils::{
-    Indexer, TransparentIndexer,
-    lightwallet_protocol::{
-        BlockId, CompactBlock, GetAddressUtxosReply, RawTransaction, TreeState,
-    },
+use futures::TryStreamExt as _;
+use wallet_api::{
+    ResponseStream, SourceError, SourceSet,
+    chain::{BlockId, CompactBlock, RawTransaction, TreeState},
 };
 
 use crate::{
@@ -21,7 +20,9 @@ use crate::{
 };
 
 #[cfg(not(feature = "darkside_test"))]
-use zingo_netutils::lightwallet_protocol::SubtreeRoot;
+use wallet_api::chain::SubtreeRoot;
+#[cfg(not(feature = "darkside_test"))]
+use zcash_protocol::ShieldedPool;
 
 pub(crate) mod fetch;
 
@@ -33,7 +34,7 @@ const FETCH_REPLY_TIMEOUT: Duration = Duration::from_secs(10);
 const STREAM_MSG_TIMEOUT: Duration = Duration::from_secs(15);
 
 async fn recv_fetch_reply<T>(
-    rx: oneshot::Receiver<Result<T, tonic::Status>>,
+    rx: oneshot::Receiver<Result<T, SourceError>>,
     what: &'static str,
 ) -> Result<T, ServerError> {
     match tokio::time::timeout(FETCH_REPLY_TIMEOUT, rx).await {
@@ -41,20 +42,18 @@ async fn recv_fetch_reply<T>(
             let inner = res.map_err(|_| ServerError::FetcherDropped)?;
             inner.map_err(Into::into)
         }
-        Err(_) => {
-            Err(tonic::Status::deadline_exceeded(format!("fetch {what} reply timeout")).into())
-        }
+        Err(_) => Err(SourceError::Timeout(format!("fetch {what} reply timeout")).into()),
     }
 }
 
 #[cfg(not(feature = "darkside_test"))]
 async fn next_stream_item<T>(
-    stream: &mut tonic::Streaming<T>,
+    stream: &mut ResponseStream<T>,
     what: &'static str,
-) -> Result<Option<T>, tonic::Status> {
-    match tokio::time::timeout(STREAM_MSG_TIMEOUT, stream.message()).await {
+) -> Result<Option<T>, SourceError> {
+    match tokio::time::timeout(STREAM_MSG_TIMEOUT, stream.try_next()).await {
         Ok(res) => res,
-        Err(_) => Err(tonic::Status::deadline_exceeded(format!(
+        Err(_) => Err(SourceError::Timeout(format!(
             "{what} stream message timeout"
         ))),
     }
@@ -63,49 +62,39 @@ async fn next_stream_item<T>(
 /// Fetch requests are created and sent to the [`crate::client::fetch::fetch`] task when a connection to the server is required.
 ///
 /// Each variant includes a [`tokio::sync::oneshot::Sender`] for returning the fetched data to the requester.
-#[derive(Debug)]
 pub enum FetchRequest {
     /// Gets the height of the blockchain from the server.
-    ChainTip(oneshot::Sender<Result<BlockId, tonic::Status>>),
+    ChainTip(oneshot::Sender<Result<BlockId, SourceError>>),
     /// Gets  a compact block of the given block height.
     CompactBlock(
-        oneshot::Sender<Result<CompactBlock, tonic::Status>>,
+        oneshot::Sender<Result<CompactBlock, SourceError>>,
         BlockHeight,
     ),
     /// Gets the specified range of compact blocks from the server (end exclusive).
     CompactBlockRange(
-        oneshot::Sender<Result<tonic::Streaming<CompactBlock>, tonic::Status>>,
+        oneshot::Sender<Result<ResponseStream<CompactBlock>, SourceError>>,
         Range<BlockHeight>,
     ),
     /// Gets the specified range of nullifiers from the server (end exclusive).
     NullifierRange(
-        oneshot::Sender<Result<tonic::Streaming<CompactBlock>, tonic::Status>>,
+        oneshot::Sender<Result<ResponseStream<CompactBlock>, SourceError>>,
         Range<BlockHeight>,
     ),
     /// Gets the tree states for a specified block height.
-    TreeState(
-        oneshot::Sender<Result<TreeState, tonic::Status>>,
-        BlockHeight,
-    ),
+    TreeState(oneshot::Sender<Result<TreeState, SourceError>>, BlockHeight),
     /// Get a full transaction by txid.
-    Transaction(oneshot::Sender<Result<RawTransaction, tonic::Status>>, TxId),
-    /// Get a list of unspent transparent output metadata for a given list of transparent addresses and start height.
-    #[allow(dead_code)]
-    UtxoMetadata(
-        oneshot::Sender<Result<Vec<GetAddressUtxosReply>, tonic::Status>>,
-        (Vec<String>, BlockHeight),
-    ),
+    Transaction(oneshot::Sender<Result<RawTransaction, SourceError>>, TxId),
     /// Get a list of transactions for a given transparent address and block range.
     TransparentAddressTxs(
-        oneshot::Sender<Result<tonic::Streaming<RawTransaction>, tonic::Status>>,
+        oneshot::Sender<Result<ResponseStream<RawTransaction>, SourceError>>,
         (String, Range<BlockHeight>),
     ),
     /// Get a stream of shards.
     #[cfg(not(feature = "darkside_test"))]
     SubtreeRoots(
-        oneshot::Sender<Result<tonic::Streaming<SubtreeRoot>, tonic::Status>>,
+        oneshot::Sender<Result<ResponseStream<SubtreeRoot>, SourceError>>,
         u32,
-        i32,
+        ShieldedPool,
         u32,
     ),
 }
@@ -123,11 +112,11 @@ pub(crate) async fn get_chain_height(
     let chain_tip = match tokio::time::timeout(FETCH_REPLY_TIMEOUT, reply_receiver).await {
         Ok(res) => res.map_err(|_| ServerError::FetcherDropped)??,
         Err(_) => {
-            return Err(tonic::Status::deadline_exceeded("fetch ChainTip reply timeout").into());
+            return Err(SourceError::Timeout("fetch ChainTip reply timeout".into()).into());
         }
     };
 
-    Ok(BlockHeight::from_u32(chain_tip.height as u32))
+    Ok(chain_tip.height)
 }
 
 /// Gets the compact block of the given block height from the server.
@@ -145,9 +134,7 @@ pub(crate) async fn get_compact_block(
     let block = match tokio::time::timeout(FETCH_REPLY_TIMEOUT, reply_receiver).await {
         Ok(res) => res.map_err(|_| ServerError::FetcherDropped)??,
         Err(_) => {
-            return Err(
-                tonic::Status::deadline_exceeded("fetch CompactBlock reply timeout").into(),
-            );
+            return Err(SourceError::Timeout("fetch CompactBlock reply timeout".into()).into());
         }
     };
 
@@ -160,7 +147,7 @@ pub(crate) async fn get_compact_block(
 pub(crate) async fn get_compact_block_range(
     fetch_request_sender: UnboundedSender<FetchRequest>,
     block_range: Range<BlockHeight>,
-) -> Result<tonic::Streaming<CompactBlock>, ServerError> {
+) -> Result<ResponseStream<CompactBlock>, ServerError> {
     let (reply_sender, reply_receiver) = oneshot::channel();
     fetch_request_sender
         .send(FetchRequest::CompactBlockRange(reply_sender, block_range))
@@ -170,7 +157,7 @@ pub(crate) async fn get_compact_block_range(
         Ok(res) => res.map_err(|_| ServerError::FetcherDropped)??,
         Err(_) => {
             return Err(
-                tonic::Status::deadline_exceeded("fetch CompactBlockRange reply timeout").into(),
+                SourceError::Timeout("fetch CompactBlockRange reply timeout".into()).into(),
             );
         }
     };
@@ -186,7 +173,7 @@ pub(crate) async fn get_compact_block_range(
 pub(crate) async fn get_nullifier_range(
     fetch_request_sender: UnboundedSender<FetchRequest>,
     block_range: Range<BlockHeight>,
-) -> Result<tonic::Streaming<CompactBlock>, ServerError> {
+) -> Result<ResponseStream<CompactBlock>, ServerError> {
     let (reply_sender, reply_receiver) = oneshot::channel();
     fetch_request_sender
         .send(FetchRequest::NullifierRange(reply_sender, block_range))
@@ -195,9 +182,7 @@ pub(crate) async fn get_nullifier_range(
     let block_stream = match tokio::time::timeout(FETCH_REPLY_TIMEOUT, reply_receiver).await {
         Ok(res) => res.map_err(|_| ServerError::FetcherDropped)??,
         Err(_) => {
-            return Err(
-                tonic::Status::deadline_exceeded("fetch NullifierRange reply timeout").into(),
-            );
+            return Err(SourceError::Timeout("fetch NullifierRange reply timeout".into()).into());
         }
     };
 
@@ -212,7 +197,7 @@ pub(crate) async fn get_nullifier_range(
 pub(crate) async fn get_subtree_roots(
     fetch_request_sender: UnboundedSender<FetchRequest>,
     mut start_index: u32,
-    shielded_protocol: i32,
+    pool: ShieldedPool,
     max_entries: u32,
 ) -> Result<Vec<SubtreeRoot>, ServerError> {
     let mut subtree_roots = Vec::new();
@@ -225,7 +210,7 @@ pub(crate) async fn get_subtree_roots(
             .send(FetchRequest::SubtreeRoots(
                 reply_sender,
                 start_index,
-                shielded_protocol,
+                pool,
                 max_entries,
             ))
             .map_err(|_| ServerError::FetcherDropped)?;
@@ -235,10 +220,8 @@ pub(crate) async fn get_subtree_roots(
         while let Some(subtree_root) =
             match next_stream_item(&mut subtree_root_stream, "SubtreeRoots").await {
                 Ok(s) => s,
-                Err(e)
-                    if (e.code() == tonic::Code::DeadlineExceeded
-                        || e.message().contains("Unexpected EOF decoding stream."))
-                        && retry_count < MAX_RETRIES =>
+                Err(SourceError::Timeout(_) | SourceError::Interrupted(_))
+                    if retry_count < MAX_RETRIES =>
                 {
                     tokio::time::sleep(Duration::from_secs(3)).await;
                     retry_count += 1;
@@ -289,8 +272,9 @@ pub(crate) async fn get_transaction_and_block_height(
 
     let raw_transaction = recv_fetch_reply(reply_receiver, "Transaction").await?;
 
-    let block_height =
-        BlockHeight::from_u32(u32::try_from(raw_transaction.height).expect("should be valid u32"));
+    let block_height = raw_transaction
+        .mined_height
+        .unwrap_or(BlockHeight::from_u32(0));
 
     let transaction = Transaction::read(
         &raw_transaction.data[..],
@@ -299,31 +283,6 @@ pub(crate) async fn get_transaction_and_block_height(
     .map_err(ServerError::InvalidTransaction)?;
 
     Ok((transaction, block_height))
-}
-
-/// Gets unspent transparent output metadata for a list of `transparent addresses` from the specified `start_height`.
-///
-/// Requires [`crate::client::fetch::fetch`] to be running concurrently, connected via the `fetch_request` channel.
-#[allow(dead_code)]
-pub(crate) async fn get_utxo_metadata(
-    fetch_request_sender: UnboundedSender<FetchRequest>,
-    transparent_addresses: Vec<String>,
-    start_height: BlockHeight,
-) -> Result<Vec<GetAddressUtxosReply>, ServerError> {
-    if transparent_addresses.is_empty() {
-        return Ok(Vec::new());
-    }
-
-    let (reply_sender, reply_receiver) = oneshot::channel();
-
-    fetch_request_sender
-        .send(FetchRequest::UtxoMetadata(
-            reply_sender,
-            (transparent_addresses, start_height),
-        ))
-        .map_err(|_| ServerError::FetcherDropped)?;
-
-    recv_fetch_reply(reply_receiver, "UtxoMetadata").await
 }
 
 /// Gets transactions relevant to a given `transparent address` in the specified `block_range`.
@@ -355,10 +314,8 @@ pub(crate) async fn get_transparent_address_transactions(
         while let Some(raw_tx) =
             match next_stream_item(&mut raw_transaction_stream, "TransparentAddressTxs").await {
                 Ok(s) => s,
-                Err(e)
-                    if (e.code() == tonic::Code::DeadlineExceeded
-                        || e.message().contains("Unexpected EOF decoding stream."))
-                        && retry_count < MAX_RETRIES =>
+                Err(SourceError::Timeout(_) | SourceError::Interrupted(_))
+                    if retry_count < MAX_RETRIES =>
                 {
                     tokio::time::sleep(Duration::from_secs(3)).await;
                     retry_count += 1;
@@ -377,9 +334,9 @@ pub(crate) async fn get_transparent_address_transactions(
     let transactions = raw_transactions
         .into_iter()
         .map(|raw_transaction| {
-            let block_height = BlockHeight::from_u32(
-                u32::try_from(raw_transaction.height).expect("should be valid u32"),
-            );
+            let block_height = raw_transaction
+                .mined_height
+                .unwrap_or(BlockHeight::from_u32(0));
 
             let transaction = Transaction::read(
                 &raw_transaction.data[..],
@@ -397,18 +354,17 @@ pub(crate) async fn get_transparent_address_transactions(
 /// Gets stream of mempool transactions until the next block is mined.
 ///
 /// Returns [`MempoolError::ShutdownWithoutStream`] if `shutdown` is cancelled before the stream opens.
-pub(crate) async fn get_mempool_transaction_stream<C>(
-    client: &mut C,
+pub(crate) async fn get_mempool_transaction_stream(
+    sources: &SourceSet,
     shutdown: &CancellationToken,
-) -> Result<tonic::Streaming<RawTransaction>, MempoolError>
-where
-    C: Clone + Indexer + TransparentIndexer + Sync + Send + 'static,
-{
+) -> Result<ResponseStream<RawTransaction>, MempoolError> {
     tracing::debug!("Fetching mempool stream");
     tokio::select! {
         biased;
-        mempool_stream_response = fetch::get_mempool_stream(client) => {
-            mempool_stream_response.map_err(|e| MempoolError::ServerError(ServerError::RequestFailed(e)))
+        mempool_stream_response = sources.mempool() => {
+            mempool_stream_response
+                .map(|stream| stream.value)
+                .map_err(|e| MempoolError::ServerError(ServerError::RequestFailed(e)))
         }
         _ = shutdown.cancelled() => Err(MempoolError::ShutdownWithoutStream),
     }

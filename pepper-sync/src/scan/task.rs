@@ -12,10 +12,11 @@ use tokio::{
     task::JoinSet,
 };
 
+use futures::TryStreamExt as _;
+use wallet_api::{SourceError, chain::CompactBlock};
 use zcash_keys::keys::UnifiedFullViewingKey;
 use zcash_primitives::transaction::TxId;
 use zcash_protocol::consensus::{self, BlockHeight};
-use zingo_netutils::lightwallet_protocol::CompactBlock;
 use zip32::AccountId;
 
 use crate::{
@@ -162,7 +163,7 @@ where
             Ok(joined) => joined,
             Err(_) => {
                 self.tasks.shutdown().await;
-                Err(tonic::Status::deadline_exceeded("scanner shutdown timeout").into())
+                Err(SourceError::Timeout("scanner shutdown timeout".into()).into())
             }
         }
     }
@@ -393,29 +394,23 @@ where
                     match tokio::time::timeout(STREAM_OPEN_TIMEOUT, open_fut).await {
                         Ok(res) => res?,
                         Err(_) => {
-                            return Err(
-                                tonic::Status::deadline_exceeded("open stream timeout").into()
-                            );
+                            return Err(SourceError::Timeout("open stream timeout".into()).into());
                         }
                     }
                 };
 
                 loop {
-                    let msg_res: Result<Option<CompactBlock>, tonic::Status> =
-                        match tokio::time::timeout(STREAM_MSG_TIMEOUT, block_stream.message()).await
+                    let msg_res: Result<Option<CompactBlock>, SourceError> =
+                        match tokio::time::timeout(STREAM_MSG_TIMEOUT, block_stream.try_next())
+                            .await
                         {
                             Ok(res) => res,
-                            Err(_) => {
-                                Err(tonic::Status::deadline_exceeded("stream message timeout"))
-                            }
+                            Err(_) => Err(SourceError::Timeout("stream message timeout".into())),
                         };
 
                     let maybe_block = match msg_res {
                         Ok(b) => b,
-                        Err(e)
-                            if e.code() == tonic::Code::DeadlineExceeded
-                                || e.message().contains("Unexpected EOF decoding stream.") =>
-                        {
+                        Err(SourceError::Timeout(_) | SourceError::Interrupted(_)) => {
                             tokio::time::sleep(Duration::from_secs(3)).await;
 
                             let retry_range = retry_height..scan_task.scan_range.block_range().end;
@@ -436,23 +431,23 @@ where
                                 match tokio::time::timeout(STREAM_OPEN_TIMEOUT, reopen_fut).await {
                                     Ok(res) => res?,
                                     Err(_) => {
-                                        return Err(tonic::Status::deadline_exceeded(
-                                            "open stream timeout (retry)",
+                                        return Err(SourceError::Timeout(
+                                            "open stream timeout (retry)".into(),
                                         )
                                         .into());
                                     }
                                 };
 
-                            let first_msg_res: Result<Option<CompactBlock>, tonic::Status> =
+                            let first_msg_res: Result<Option<CompactBlock>, SourceError> =
                                 match tokio::time::timeout(
                                     STREAM_MSG_TIMEOUT,
-                                    block_stream.message(),
+                                    block_stream.try_next(),
                                 )
                                 .await
                                 {
                                     Ok(res) => res,
-                                    Err(_) => Err(tonic::Status::deadline_exceeded(
-                                        "stream message timeout after retry",
+                                    Err(_) => Err(SourceError::Timeout(
+                                        "stream message timeout after retry".into(),
                                     )),
                                 };
 
@@ -472,15 +467,17 @@ where
 
                     if fetch_nullifiers_only {
                         sapling_nullifier_count += compact_block
-                            .vtx
+                            .transactions
                             .iter()
                             .fold(0, |acc, transaction| acc + transaction.spends.len());
                         orchard_nullifier_count += compact_block
-                            .vtx
+                            .transactions
                             .iter()
                             .fold(0, |acc, transaction| acc + transaction.actions.len());
-                        ironwood_nullifier_count +=
-                            compact_block.vtx.iter().fold(0, |acc, transaction| {
+                        ironwood_nullifier_count += compact_block
+                            .transactions
+                            .iter()
+                            .fold(0, |acc, transaction| {
                                 acc + transaction.ironwood_actions.len()
                             });
                     } else {
@@ -521,15 +518,17 @@ where
                         }
 
                         sapling_output_count += compact_block
-                            .vtx
+                            .transactions
                             .iter()
                             .fold(0, |acc, transaction| acc + transaction.outputs.len());
                         orchard_output_count += compact_block
-                            .vtx
+                            .transactions
                             .iter()
                             .fold(0, |acc, transaction| acc + transaction.actions.len());
-                        ironwood_output_count +=
-                            compact_block.vtx.iter().fold(0, |acc, transaction| {
+                        ironwood_output_count += compact_block
+                            .transactions
+                            .iter()
+                            .fold(0, |acc, transaction| {
                                 acc + transaction.ironwood_actions.len()
                             });
                     }
@@ -680,10 +679,10 @@ where
                     Ok(res) => res,
                     Err(_) => {
                         // Best-effort: maps timeout into existing error types.
-                        Err(ServerError::from(tonic::Status::deadline_exceeded(
-                            "scan task timeout",
-                        ))
-                        .into())
+                        Err(
+                            ServerError::from(SourceError::Timeout("scan task timeout".into()))
+                                .into(),
+                        )
                     }
                 };
 
@@ -747,7 +746,7 @@ impl ScanTask {
             .iter()
             .fold((0u32, 0u32, 0u32), |acc, block| {
                 block
-                    .vtx
+                    .transactions
                     .iter()
                     .fold(acc, |(sapling, orchard, ironwood), transaction| {
                         (
@@ -868,10 +867,8 @@ impl ScanTask {
 mod tests {
     use std::collections::{BTreeSet, HashMap};
 
+    use wallet_api::chain::{CompactBlock, CompactOrchardAction, CompactSaplingOutput, CompactTx};
     use zcash_protocol::consensus::BlockHeight;
-    use zingo_netutils::lightwallet_protocol::{
-        CompactBlock, CompactOrchardAction, CompactSaplingOutput, CompactTx,
-    };
 
     use crate::sync::{ScanPriority, ScanRange};
 
@@ -883,13 +880,17 @@ mod tests {
         ironwood_actions: usize,
     ) -> CompactBlock {
         CompactBlock {
-            vtx: vec![CompactTx {
+            height: BlockHeight::from_u32(1),
+            hash: [0; 32].into(),
+            prev_hash: [0; 32].into(),
+            time: 0,
+            transactions: vec![CompactTx {
                 outputs: vec![CompactSaplingOutput::default(); sapling_outputs],
                 actions: vec![CompactOrchardAction::default(); orchard_actions],
                 ironwood_actions: vec![CompactOrchardAction::default(); ironwood_actions],
-                ..Default::default()
+                ..CompactTx::new(0, zcash_protocol::TxId::from_bytes([0; 32]))
             }],
-            ..Default::default()
+            tree_sizes: None,
         }
     }
 

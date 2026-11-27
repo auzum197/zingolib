@@ -7,13 +7,11 @@ use incrementalmerkletree::{Marking, Position, Retention};
 use orchard::tree::MerkleHashOrchard;
 use sapling_crypto::Node;
 use tokio::sync::mpsc;
+use wallet_api::chain::{CompactBlock, CompactOrchardAction, CompactSaplingOutput};
 use zcash_keys::keys::UnifiedFullViewingKey;
 use zcash_note_encryption::Domain;
 use zcash_primitives::block::BlockHash;
 use zcash_protocol::consensus::{self, BlockHeight};
-use zingo_netutils::lightwallet_protocol::{
-    CompactBlock, CompactOrchardAction, CompactSaplingOutput,
-};
 use zip32::AccountId;
 
 use crate::{
@@ -85,7 +83,7 @@ where
 
         let block_height = get_compact_block_height(block);
 
-        for transaction in &block.vtx {
+        for transaction in &block.transactions {
             let incoming_sapling_outputs = runners.sapling.collect_results(
                 get_compact_block_hash(block),
                 get_compact_tx_txid(transaction),
@@ -197,7 +195,7 @@ where
             get_compact_block_hash(block),
             get_compact_block_prev_hash(block),
             block.time,
-            block.vtx.iter().map(get_compact_tx_txid).collect(),
+            block.transactions.iter().map(get_compact_tx_txid).collect(),
             TreeBounds {
                 sapling_initial_tree_size,
                 sapling_final_tree_size,
@@ -307,19 +305,17 @@ fn check_tree_size(
     compact_block: &CompactBlock,
     wallet_block: &WalletBlock,
 ) -> Result<(), ScanError> {
-    if let Some(chain_metadata) = &compact_block.chain_metadata {
-        if chain_metadata.sapling_commitment_tree_size
-            != wallet_block.tree_bounds().sapling_final_tree_size
-        {
+    if let Some(tree_sizes) = &compact_block.tree_sizes {
+        if tree_sizes.sapling != wallet_block.tree_bounds().sapling_final_tree_size {
             #[cfg(feature = "darkside_test")]
             {
                 tracing::error!(
                     "darkside compact block sapling tree size incorrect.\nwallet block: {}\ncompact_block: {}",
                     wallet_block.tree_bounds().sapling_final_tree_size,
                     compact_block
-                        .chain_metadata
+                        .tree_sizes
                         .expect("should exist in this scope")
-                        .sapling_commitment_tree_size
+                        .sapling
                 );
                 return Ok(());
             }
@@ -327,22 +323,20 @@ fn check_tree_size(
             #[cfg(not(feature = "darkside_test"))]
             return Err(ScanError::IncorrectTreeSize {
                 shielded_protocol: PoolType::Shielded(ShieldedPool::Sapling),
-                block_metadata_size: chain_metadata.sapling_commitment_tree_size,
+                block_metadata_size: tree_sizes.sapling,
                 calculated_size: wallet_block.tree_bounds().sapling_final_tree_size,
             });
         }
-        if chain_metadata.orchard_commitment_tree_size
-            != wallet_block.tree_bounds().orchard_final_tree_size
-        {
+        if tree_sizes.orchard != wallet_block.tree_bounds().orchard_final_tree_size {
             #[cfg(feature = "darkside_test")]
             {
                 tracing::error!(
                     "darkside compact block orchard tree size incorrect.\nwallet block: {}\ncompact_block: {}",
                     wallet_block.tree_bounds().orchard_final_tree_size,
                     compact_block
-                        .chain_metadata
+                        .tree_sizes
                         .expect("should exist in this scope")
-                        .orchard_commitment_tree_size
+                        .orchard
                 );
                 return Ok(());
             }
@@ -350,7 +344,7 @@ fn check_tree_size(
             #[cfg(not(feature = "darkside_test"))]
             return Err(ScanError::IncorrectTreeSize {
                 shielded_protocol: PoolType::Shielded(ShieldedPool::Orchard),
-                block_metadata_size: chain_metadata.orchard_commitment_tree_size,
+                block_metadata_size: tree_sizes.orchard,
                 calculated_size: wallet_block.tree_bounds().orchard_final_tree_size,
             });
         }
@@ -362,7 +356,7 @@ fn check_tree_size(
         // neither of those cases: both sides are actively tracking the pool, so
         // the mismatch is corruption and is rejected exactly as for the other
         // pools.
-        let metadata_size = chain_metadata.ironwood_commitment_tree_size;
+        let metadata_size = tree_sizes.ironwood;
         let calculated_size = wallet_block.tree_bounds().ironwood_final_tree_size;
         if metadata_size != 0 && calculated_size != 0 && metadata_size != calculated_size {
             #[cfg(feature = "darkside_test")]
@@ -501,12 +495,8 @@ pub(crate) async fn calculate_block_tree_bounds(
     compact_block: &CompactBlock,
 ) -> Result<TreeBounds, ServerError> {
     let (sapling_final_tree_size, orchard_final_tree_size, ironwood_final_tree_size) =
-        if let Some(chain_metadata) = compact_block.chain_metadata {
-            (
-                chain_metadata.sapling_commitment_tree_size,
-                chain_metadata.orchard_commitment_tree_size,
-                chain_metadata.ironwood_commitment_tree_size,
-            )
+        if let Some(tree_sizes) = compact_block.tree_sizes {
+            (tree_sizes.sapling, tree_sizes.orchard, tree_sizes.ironwood)
         } else {
             let sapling_activation_height = consensus_parameters
                 .activation_height(consensus::NetworkUpgrade::Sapling)
@@ -543,21 +533,21 @@ pub(crate) async fn calculate_block_tree_bounds(
         };
 
     let sapling_output_count: u32 = compact_block
-        .vtx
+        .transactions
         .iter()
         .map(|tx| tx.outputs.len())
         .sum::<usize>()
         .try_into()
         .expect("Sapling output count cannot exceed a u32");
     let orchard_output_count: u32 = compact_block
-        .vtx
+        .transactions
         .iter()
         .map(|tx| tx.actions.len())
         .sum::<usize>()
         .try_into()
         .expect("Sapling output count cannot exceed a u32");
     let ironwood_output_count: u32 = compact_block
-        .vtx
+        .transactions
         .iter()
         .map(|tx| tx.ironwood_actions.len())
         .sum::<usize>()
@@ -600,7 +590,7 @@ fn set_checkpoint_retentions<L>(
 
 #[cfg(all(test, not(feature = "darkside_test")))]
 mod tests {
-    use zingo_netutils::lightwallet_protocol::ChainMetadata;
+    use wallet_api::chain::TreeSizes;
 
     use super::*;
 
@@ -624,16 +614,15 @@ mod tests {
 
     fn compact_block_with_ironwood_size(size: u32) -> CompactBlock {
         CompactBlock {
-            height: 100,
-            hash: vec![1; 32],
-            prev_hash: vec![0; 32],
+            height: BlockHeight::from_u32(100),
+            hash: [1; 32].into(),
+            prev_hash: [0; 32].into(),
             time: 0,
-            header: vec![],
-            vtx: vec![],
-            chain_metadata: Some(ChainMetadata {
-                sapling_commitment_tree_size: 10,
-                orchard_commitment_tree_size: 10,
-                ironwood_commitment_tree_size: size,
+            transactions: vec![],
+            tree_sizes: Some(TreeSizes {
+                sapling: 10,
+                orchard: 10,
+                ironwood: size,
             }),
         }
     }

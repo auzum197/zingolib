@@ -3,24 +3,18 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::ops::Range;
 
-use incrementalmerkletree::{
-    Position, Retention,
-    frontier::{CommitmentTree, Frontier},
-};
+use incrementalmerkletree::{Position, Retention, frontier::Frontier};
 use orchard::tree::MerkleHashOrchard;
-use sapling_crypto::Node;
 use shardtree::LocatedPrunableTree;
-use zcash_primitives::{block::BlockHash, merkle_tree::read_commitment_tree};
+use subtle::CtOption;
+use wallet_api::chain::{self, TreeState};
+use zcash_primitives::block::BlockHash;
 use zcash_protocol::consensus::BlockHeight;
-use zingo_netutils::lightwallet_protocol::TreeState;
 
 use crate::sync::SHARDTREE_CHECKPOINT_ROLLING_WINDOW_SIZE;
 
 #[cfg(not(feature = "darkside_test"))]
-use {
-    crate::error::ServerError, shardtree::store::ShardStore, subtle::CtOption,
-    zingo_netutils::lightwallet_protocol::SubtreeRoot,
-};
+use {crate::error::ServerError, shardtree::store::ShardStore, wallet_api::chain::SubtreeRoot};
 
 pub(crate) use zingolib_common::wallet::SHARD_HEIGHT;
 
@@ -110,14 +104,9 @@ where
         >,
 {
     for (index, tree_root) in subtree_roots.into_iter().enumerate() {
-        let node = <S::H as FromBytes>::from_bytes(
-            tree_root
-                .root_hash
-                .try_into()
-                .map_err(|_| ServerError::InvalidSubtreeRoot)?,
-        )
-        .into_option()
-        .ok_or(ServerError::InvalidSubtreeRoot)?;
+        let node = <S::H as FromBytes>::from_bytes(*tree_root.root.as_bytes())
+            .into_option()
+            .ok_or(ServerError::InvalidSubtreeRoot)?;
         let shard = LocatedPrunableTree::with_root_value(
             incrementalmerkletree::Address::from_parts(
                 incrementalmerkletree::Level::new(SHARD_HEIGHT),
@@ -132,7 +121,6 @@ where
 }
 
 /// Allows generic construction of a shardtree node from raw byte representation
-#[cfg(not(feature = "darkside_test"))]
 pub(crate) trait FromBytes
 where
     Self: Sized,
@@ -140,14 +128,12 @@ where
     fn from_bytes(array: [u8; 32]) -> CtOption<Self>;
 }
 
-#[cfg(not(feature = "darkside_test"))]
 impl FromBytes for orchard::tree::MerkleHashOrchard {
     fn from_bytes(array: [u8; 32]) -> CtOption<Self> {
         Self::from_bytes(&array)
     }
 }
 
-#[cfg(not(feature = "darkside_test"))]
 impl FromBytes for sapling_crypto::Node {
     fn from_bytes(array: [u8; 32]) -> CtOption<Self> {
         Self::from_bytes(array)
@@ -246,92 +232,40 @@ impl TryFrom<TreeState> for Frontiers {
     type Error = std::io::Error;
 
     fn try_from(value: TreeState) -> Result<Self, Self::Error> {
-        let mut hash_bytes = hex::decode(&value.hash).map_err(|e| {
-            std::io::Error::new(
-                std::io::ErrorKind::InvalidData,
-                format!("Block hash is not valid hex: {e:?}"),
-            )
-        })?;
-        // Zcashd hex strings for block hashes are byte-reversed.
-        hash_bytes.reverse();
-
         Ok(Frontiers::new(
-            value.height.try_into().map_err(|_| {
-                std::io::Error::new(std::io::ErrorKind::InvalidData, "Invalid block height")
-            })?,
-            BlockHash::try_from_slice(&hash_bytes).ok_or_else(|| {
-                std::io::Error::new(
-                    std::io::ErrorKind::InvalidData,
-                    "Invalid block hash length.",
-                )
-            })?,
-            get_sapling_tree(&value)?.to_frontier(),
-            get_orchard_tree(&value)?.to_frontier(),
-            get_ironwood_tree(&value)?.to_frontier(),
+            value.height,
+            BlockHash(*value.hash.as_bytes()),
+            frontier(value.sapling.as_ref())?,
+            frontier(value.orchard.as_ref())?,
+            frontier(value.ironwood.as_ref())?,
         ))
     }
 }
 
-/// Deserializes and returns the Sapling note commitment tree field of the tree state.
-pub(crate) fn get_sapling_tree(
-    tree_state: &TreeState,
-) -> std::io::Result<CommitmentTree<Node, { sapling_crypto::NOTE_COMMITMENT_TREE_DEPTH }>> {
-    if tree_state.sapling_tree.is_empty() {
-        Ok(CommitmentTree::empty())
-    } else {
-        let sapling_tree_bytes = hex::decode(&tree_state.sapling_tree).map_err(|e| {
-            std::io::Error::new(
-                std::io::ErrorKind::InvalidData,
-                format!("Hex decoding of Sapling tree bytes failed: {e:?}"),
-            )
-        })?;
-        read_commitment_tree::<Node, _, { sapling_crypto::NOTE_COMMITMENT_TREE_DEPTH }>(
-            &sapling_tree_bytes[..],
-        )
-    }
-}
+/// Converts the nodes of a frontier into tree hashes. No frontier is an empty tree.
+fn frontier<H: FromBytes, const DEPTH: u8>(
+    frontier: Option<&chain::Frontier>,
+) -> std::io::Result<Frontier<H, DEPTH>> {
+    let Some(frontier) = frontier else {
+        return Ok(Frontier::empty());
+    };
+    let invalid = |reason: String| std::io::Error::new(std::io::ErrorKind::InvalidData, reason);
+    let node = |node: &chain::TreeNode| {
+        H::from_bytes(*node.as_bytes())
+            .into_option()
+            .ok_or_else(|| invalid(format!("tree node {node} is not a valid hash")))
+    };
 
-/// Deserializes and returns the Orchard note commitment tree field of the tree state.
-pub(crate) fn get_orchard_tree(
-    tree_state: &TreeState,
-) -> std::io::Result<CommitmentTree<MerkleHashOrchard, { orchard::NOTE_COMMITMENT_TREE_DEPTH as u8 }>>
-{
-    if tree_state.orchard_tree.is_empty() {
-        Ok(CommitmentTree::empty())
-    } else {
-        let orchard_tree_bytes = hex::decode(&tree_state.orchard_tree).map_err(|e| {
-            std::io::Error::new(
-                std::io::ErrorKind::InvalidData,
-                format!("Hex decoding of Orchard tree bytes failed: {e:?}"),
-            )
-        })?;
-        read_commitment_tree::<MerkleHashOrchard, _, { orchard::NOTE_COMMITMENT_TREE_DEPTH as u8 }>(
-            &orchard_tree_bytes[..],
-        )
-    }
-}
-
-/// Deserializes and returns the Ironwood note commitment tree field of the
-/// tree state. An empty field means the tree is empty, which covers both
-/// pre-activation heights and servers that do not serve the ironwood tree
-/// state yet.
-pub(crate) fn get_ironwood_tree(
-    tree_state: &TreeState,
-) -> std::io::Result<CommitmentTree<MerkleHashOrchard, { orchard::NOTE_COMMITMENT_TREE_DEPTH as u8 }>>
-{
-    if tree_state.ironwood_tree.is_empty() {
-        Ok(CommitmentTree::empty())
-    } else {
-        let ironwood_tree_bytes = hex::decode(&tree_state.ironwood_tree).map_err(|e| {
-            std::io::Error::new(
-                std::io::ErrorKind::InvalidData,
-                format!("Hex decoding of Ironwood tree bytes failed: {e:?}"),
-            )
-        })?;
-        read_commitment_tree::<MerkleHashOrchard, _, { orchard::NOTE_COMMITMENT_TREE_DEPTH as u8 }>(
-            &ironwood_tree_bytes[..],
-        )
-    }
+    Frontier::from_parts(
+        Position::from(frontier.position()),
+        node(&frontier.leaf())?,
+        frontier
+            .ommers()
+            .iter()
+            .map(node)
+            .collect::<Result<_, _>>()?,
+    )
+    .map_err(|e| invalid(format!("{e:?}")))
 }
 
 // checkpoints are held for the top SHARDTREE_CHECKPOINT_ROLLING_WINDOW_SIZE blocks of the chain only: a re-org is

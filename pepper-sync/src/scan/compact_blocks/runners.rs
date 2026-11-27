@@ -16,8 +16,8 @@ use zcash_primitives::{
 use zcash_protocol::consensus;
 
 use memuse::DynamicUsage;
+use wallet_api::chain::CompactBlock;
 use zcash_protocol::ShieldedPool;
-use zingo_netutils::lightwallet_protocol::CompactBlock;
 
 use crate::error::EncodingInvalid;
 use crate::keys::KeyId;
@@ -109,7 +109,7 @@ where
         self.ironwood.flush();
     }
 
-    #[tracing::instrument(skip_all, fields(height = block.height))]
+    #[tracing::instrument(skip_all, fields(height = u32::from(block.height)))]
     pub(crate) fn add_block<P>(
         &mut self,
         params: &P,
@@ -122,7 +122,7 @@ where
         let block_height = get_compact_block_height(&block);
         let zip212_enforcement = zip212_enforcement(params, block_height);
 
-        for tx in block.vtx {
+        for tx in block.transactions {
             let txid = get_compact_tx_txid(&tx);
 
             self.sapling.add_outputs(

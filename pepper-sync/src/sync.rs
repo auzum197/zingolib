@@ -8,15 +8,15 @@ use std::time::{Duration, Instant, SystemTime};
 use tokio::sync::{RwLock, mpsc, watch};
 use tokio_util::sync::CancellationToken;
 
+use futures::TryStreamExt as _;
 use incrementalmerkletree::{Marking, Retention};
 use orchard::tree::MerkleHashOrchard;
 use shardtree::store::ShardStore;
+use wallet_api::{SourceError, SourceSet, chain::RawTransaction};
 use zcash_keys::keys::UnifiedFullViewingKey;
 use zcash_primitives::transaction::{Transaction, TxId};
 use zcash_protocol::ShieldedPool;
 use zcash_protocol::consensus::{self, BlockHeight};
-use zingo_netutils::lightwallet_protocol::RawTransaction;
-use zingo_netutils::{Indexer, TransparentIndexer};
 use zip32::AccountId;
 
 use zingolib_common::status::ConfirmationStatus;
@@ -47,7 +47,7 @@ use crate::witness::LocatedTreeData;
 #[cfg(not(feature = "darkside_test"))]
 use crate::witness;
 #[cfg(not(feature = "darkside_test"))]
-use zingo_netutils::lightwallet_protocol::SubtreeRoot;
+use wallet_api::chain::SubtreeRoot;
 
 #[cfg(not(feature = "darkside_test"))]
 pub(crate) mod transparent;
@@ -144,8 +144,8 @@ impl std::fmt::Display for SyncResult {
 /// `events` announces committed sync events to subscribers as they happen (see [`crate::events`]).
 /// Build one with [`SyncEmitter::new`], typically sized by
 /// [`crate::config::SyncConfig::event_channel_capacity`].
-pub async fn sync<C, P, W>(
-    client: C,
+pub async fn sync<P, W>(
+    sources: Arc<SourceSet>,
     consensus_parameters: &P,
     wallet: Arc<RwLock<W>>,
     sync_mode: watch::Sender<SyncMode>,
@@ -153,7 +153,6 @@ pub async fn sync<C, P, W>(
     events: SyncEmitter,
 ) -> Result<SyncResult, SyncError<W::Error>>
 where
-    C: Clone + Indexer + TransparentIndexer + Sync + Send + 'static,
     P: consensus::Parameters + Sync + Send + 'static,
     W: SyncWallet
         + SyncBlocks
@@ -172,11 +171,10 @@ where
     tracing::info!("Starting sync...");
 
     let (fetch_request_sender, fetch_request_receiver) = mpsc::unbounded_channel();
-    let client_clone = client.clone();
-    let fetcher_handle =
-        tokio::spawn(
-            async move { client::fetch::fetch(fetch_request_receiver, client_clone).await },
-        );
+    let fetcher_handle = tokio::spawn(client::fetch::fetch(
+        fetch_request_receiver,
+        sources.clone(),
+    ));
 
     let (mempool_transaction_sender, mut mempool_transaction_receiver) = mpsc::channel(100);
     let shutdown_mempool = CancellationToken::new();
@@ -187,7 +185,7 @@ where
     let mempool_tip_cell = tip_cell.clone();
     let mempool_handle = tokio::spawn(async move {
         mempool_monitor(
-            client,
+            sources,
             mempool_transaction_sender,
             mempool_shutdown,
             mempool_events,
@@ -1667,9 +1665,24 @@ where
         .expect("infallible")
         .len() as u32;
     let (sapling_subtree_roots, orchard_subtree_roots, ironwood_subtree_roots) = futures::join!(
-        client::get_subtree_roots(fetch_request_sender.clone(), sapling_start_index, 0, 0),
-        client::get_subtree_roots(fetch_request_sender.clone(), orchard_start_index, 1, 0),
-        client::get_subtree_roots(fetch_request_sender, ironwood_start_index, 2, 0)
+        client::get_subtree_roots(
+            fetch_request_sender.clone(),
+            sapling_start_index,
+            ShieldedPool::Sapling,
+            0
+        ),
+        client::get_subtree_roots(
+            fetch_request_sender.clone(),
+            orchard_start_index,
+            ShieldedPool::Orchard,
+            0
+        ),
+        client::get_subtree_roots(
+            fetch_request_sender,
+            ironwood_start_index,
+            ShieldedPool::Ironwood,
+            0
+        )
     );
 
     let sapling_subtree_roots = sapling_subtree_roots?;
@@ -1683,12 +1696,9 @@ where
     {
         match ironwood_subtree_roots {
             Ok(roots) => roots,
-            Err(ServerError::RequestFailed(status))
-                if matches!(
-                    status.code(),
-                    tonic::Code::Unimplemented | tonic::Code::InvalidArgument
-                ) =>
-            {
+            Err(ServerError::RequestFailed(
+                status @ (SourceError::Unsupported(_) | SourceError::Rejected(_)),
+            )) => {
                 tracing::warn!("server does not serve ironwood subtree roots: {status}");
                 Vec::new()
             }
@@ -1745,14 +1755,9 @@ where
 fn subtree_completing_heights(
     subtree_roots: &[SubtreeRoot],
 ) -> impl Iterator<Item = BlockHeight> + '_ {
-    subtree_roots.iter().map(|subtree_root| {
-        BlockHeight::from_u32(
-            subtree_root
-                .completing_block_height
-                .try_into()
-                .expect("overflow should never occur"),
-        )
-    })
+    subtree_roots
+        .iter()
+        .map(|subtree_root| subtree_root.completing_block_height)
 }
 
 async fn add_initial_frontier<W>(
@@ -1826,27 +1831,24 @@ where
 /// If the mempool stream message is `None` (a block was mined) or the request failed, setup a new mempool stream.
 /// Once `shutdown` is cancelled, the transactions the stream already delivered are still sent, then the monitor
 /// returns without opening another stream.
-async fn mempool_monitor<C>(
-    mut client: C,
+async fn mempool_monitor(
+    sources: Arc<SourceSet>,
     mempool_transaction_sender: mpsc::Sender<RawTransaction>,
     shutdown: CancellationToken,
     events: SyncEmitter,
     tip_cell: Arc<Mutex<u64>>,
-) -> Result<(), MempoolError>
-where
-    C: Clone + Indexer + TransparentIndexer + Sync + Send + 'static,
-{
+) -> Result<(), MempoolError> {
     'main: loop {
         if shutdown.is_cancelled() {
             break;
         }
-        let response = client::get_mempool_transaction_stream(&mut client, &shutdown).await;
+        let response = client::get_mempool_transaction_stream(&sources, &shutdown).await;
 
         match response {
             Ok(mut mempool_stream) => loop {
                 tokio::select! {
                     biased;
-                    mempool_stream_message = mempool_stream.message() => {
+                    mempool_stream_message = mempool_stream.try_next() => {
                         match mempool_stream_message.unwrap_or(None) {
                             Some(raw_transaction) => {
                                  let _ignore_error = mempool_transaction_sender
@@ -1857,11 +1859,11 @@ where
                                 // the stream resets when a block is mined, making this the
                                 // lowest-latency tip signal. fetched on an idle path.
                                 tokio::select! {
-                                    tip = client.get_latest_block(Duration::from_secs(10)) => match tip {
+                                    tip = sources.tip() => match tip {
                                         Ok(block_id) => emit_tip_if_advanced(
                                             &events,
                                             &tip_cell,
-                                            BlockHeight::from_u32(block_id.height as u32),
+                                            block_id.value.height,
                                         ),
                                         Err(e) => tracing::warn!(
                                             "Failed to fetch chain tip after mempool stream reset: {e}."

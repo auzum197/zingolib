@@ -20,9 +20,8 @@ test-features = ["zingolib-common/test-features"]
 
 [dependencies]
 # Zingo
-lightwallet-protocol.workspace = true
 zingolib-common.workspace = true
-zingo-netutils.workspace = true
+wallet-api.workspace = true
 
 # Zcash
 incrementalmerkletree.workspace = true
@@ -30,9 +29,6 @@ orchard.workspace = true
 sapling-crypto.workspace = true
 shardtree.workspace = true
 zcash_address.workspace = true
-zcash_client_backend = { workspace = true, features = [
-    "lightwalletd-tonic",
-] }
 zcash_keys.workspace = true
 zcash_note_encryption.workspace = true
 zcash_primitives.workspace = true
@@ -49,11 +45,10 @@ subtle.workspace = true
 
 # Async
 futures.workspace = true
-tokio.workspace = true
+tokio = { workspace = true, features = ["macros", "rt", "sync", "time"] }
 tokio-util.workspace = true
 
 # Client
-tonic.workspace = true
 
 # Logging
 tracing.workspace = true
@@ -69,7 +64,6 @@ rayon.workspace = true
 thiserror.workspace = true
 
 # Serialization
-hex.workspace = true
 
 # Documentation
 simple-mermaid.workspace = true

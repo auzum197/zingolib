@@ -1,5 +1,4 @@
 use std::{
-    array::TryFromSliceError,
     collections::{BTreeMap, BTreeSet, HashMap},
     time::{Duration, Instant},
 };
@@ -9,10 +8,10 @@ use task::ScanTask;
 use tokio::sync::mpsc;
 
 use incrementalmerkletree::Position;
+use wallet_api::chain::{CompactBlock, CompactTx};
 use zcash_keys::keys::UnifiedFullViewingKey;
 use zcash_primitives::transaction::TxId;
 use zcash_protocol::consensus::{self, BlockHeight};
-use zingo_netutils::lightwallet_protocol::{CompactBlock, CompactTx};
 use zip32::AccountId;
 
 use crate::{
@@ -158,12 +157,12 @@ where
         .first()
         .expect("compacts blocks should not be empty")
         .height
-        != u64::from(scan_range.block_range().start)
+        != scan_range.block_range().start
         || compact_blocks
             .last()
             .expect("compacts blocks should not be empty")
             .height
-            != u64::from(scan_range.block_range().end - 1)
+            != scan_range.block_range().end - 1
     {
         panic!("compact blocks do not match scan range!")
     }
@@ -171,7 +170,7 @@ where
     if scan_range.priority() == ScanPriority::ScannedWithoutMapping {
         let mut nullifiers = NullifierMap::new();
         for block in &compact_blocks {
-            for transaction in &block.vtx {
+            for transaction in &block.transactions {
                 collect_nullifiers(
                     &mut nullifiers,
                     get_compact_block_height(block),
@@ -312,9 +311,7 @@ fn collect_nullifiers(
     transaction
         .spends
         .iter()
-        .map(|spend| sapling_crypto::Nullifier::from_slice(spend.nf.as_slice()))
-        .collect::<Result<Vec<sapling_crypto::Nullifier>, TryFromSliceError>>()?
-        .into_iter()
+        .map(|spend| sapling_crypto::Nullifier(*spend.nullifier.as_bytes()))
         .for_each(|nullifier| {
             nullifier_map.sapling.insert(
                 nullifier,
@@ -329,13 +326,9 @@ fn collect_nullifiers(
         .actions
         .iter()
         .map(|action| {
-            orchard::note::Nullifier::from_bytes(
-                action.nullifier.as_slice().try_into().map_err(|_| {
-                    ScanError::InvalidOrchardNullifierLength(action.nullifier.len())
-                })?,
-            )
-            .into_option()
-            .ok_or(ScanError::InvalidOrchardNullifier)
+            orchard::note::Nullifier::from_bytes(action.nullifier.as_bytes())
+                .into_option()
+                .ok_or(ScanError::InvalidOrchardNullifier)
         })
         .collect::<Result<Vec<orchard::note::Nullifier>, ScanError>>()?
         .into_iter()
@@ -353,13 +346,9 @@ fn collect_nullifiers(
         .ironwood_actions
         .iter()
         .map(|action| {
-            orchard::note::Nullifier::from_bytes(
-                action.nullifier.as_slice().try_into().map_err(|_| {
-                    ScanError::InvalidOrchardNullifierLength(action.nullifier.len())
-                })?,
-            )
-            .into_option()
-            .ok_or(ScanError::InvalidOrchardNullifier)
+            orchard::note::Nullifier::from_bytes(action.nullifier.as_bytes())
+                .into_option()
+                .ok_or(ScanError::InvalidOrchardNullifier)
         })
         .collect::<Result<Vec<orchard::note::Nullifier>, ScanError>>()?
         .into_iter()
