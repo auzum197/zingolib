@@ -1203,7 +1203,9 @@ mod sources {
     };
     use lightwallet_grpc_client::GrpcIndexer;
     use pepper_sync::AssumedOnly;
+    use pepper_sync::config::TransparentAddressDiscovery;
     use pepper_sync::error::{ServerError, SyncError};
+    use pepper_sync::sync::SyncResult;
 
     use super::*;
     use crate::config::{Birthday, WalletConfig};
@@ -1323,26 +1325,69 @@ mod sources {
         assert_eq!(u32::from(synced.sync_end_height), net.chain_height().await);
     }
 
-    #[tokio::test]
-    async fn sync_stops_if_no_source_allows_a_wallet_identifier() {
+    /// The result of one sync through an indexer that allows `identifiers`, and the requests
+    /// that the sync sent.
+    async fn sync_through(
+        identifiers: &[WalletIdentifier],
+        discovery: TransparentAddressDiscovery,
+    ) -> (Result<SyncResult, LightClientError>, Vec<RequestKind>) {
         let net = MockNet::launch().await;
         net.generate_blocks(10).await;
         let events = Arc::new(std::sync::Mutex::new(Vec::new()));
         let copy = events.clone();
         let builder = LightClient::builder(net.chain_type())
-            .indexer(net.indexer_uri(), Integrity::Assumed, &[])
+            .indexer(net.indexer_uri(), Integrity::Assumed, identifiers)
             .unwrap()
             .request_events(move |event: &RequestEvent| copy.lock().unwrap().push(event.kind));
-        let mut client = create(builder).await;
+        let mut wallet_settings = default_test_wallet_settings();
+        wallet_settings.sync_config.transparent_address_discovery = discovery;
+        let wallet_config = WalletConfig::NewSeed {
+            no_of_accounts: 1.try_into().unwrap(),
+            birthday: Birthday::Height(1),
+            wallet_settings,
+        };
+        let mut client = builder
+            .create(MemoryStore::default(), wallet_config, Encryption::None)
+            .await
+            .unwrap();
+        events.lock().unwrap().clear();
 
-        let error = client.sync_and_await().await.unwrap_err();
-        assert!(matches!(
-            error,
+        let synced = client.sync_and_await().await;
+        let sent = events.lock().unwrap().clone();
+        (synced, sent)
+    }
+
+    fn not_allowed(error: LightClientError) -> Option<WalletIdentifier> {
+        match error {
             LightClientError::SyncError(SyncError::ServerError(ServerError::RequestFailed(
-                SourceError::IdentifierNotAllowed(WalletIdentifier::TransparentAddress)
-            )))
-        ));
-        let sent = events.lock().unwrap();
+                SourceError::IdentifierNotAllowed(identifier),
+            ))) => Some(identifier),
+            _ => None,
+        }
+    }
+
+    #[tokio::test]
+    async fn sync_fails_before_any_request_if_no_source_allows_a_needed_identifier() {
+        use WalletIdentifier::{TransparentAddress, Txid};
+
+        for (allowed, missing) in [(TransparentAddress, Txid), (Txid, TransparentAddress)] {
+            let (synced, sent) =
+                sync_through(&[allowed], TransparentAddressDiscovery::minimal()).await;
+            assert_eq!(not_allowed(synced.unwrap_err()), Some(missing));
+            assert!(sent.is_empty(), "{sent:?}");
+        }
+    }
+
+    #[tokio::test]
+    async fn sync_needs_no_transparent_address_if_discovery_is_off() {
+        let (synced, sent) = sync_through(
+            &[WalletIdentifier::Txid],
+            TransparentAddressDiscovery::disabled(),
+        )
+        .await;
+
+        synced.unwrap();
+        assert!(sent.contains(&RequestKind::Blocks));
         assert!(!sent.contains(&RequestKind::AddressTransactions));
     }
 

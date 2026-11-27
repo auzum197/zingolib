@@ -8,7 +8,7 @@ use std::time::{Duration, Instant, SystemTime};
 use tokio::sync::{RwLock, mpsc, watch};
 use tokio_util::sync::CancellationToken;
 
-use chain_router::{SourceSet, chain::RawTransaction};
+use chain_router::{SourceSet, WalletIdentifier, chain::RawTransaction};
 use futures::TryStreamExt as _;
 use incrementalmerkletree::{Marking, Retention};
 use orchard::tree::MerkleHashOrchard;
@@ -195,6 +195,13 @@ where
 {
     if *sync_mode.borrow() != SyncMode::NotRunning {
         return Err(SyncModeError::SyncAlreadyRunning.into());
+    }
+    if let Some(identifier) = needed_identifiers(&config)
+        .into_iter()
+        .find(|identifier| !sources.allows(*identifier))
+    {
+        let not_allowed = chain_router::SourceError::IdentifierNotAllowed(identifier);
+        return Err(ServerError::RequestFailed(not_allowed).into());
     }
     sync_mode.send_replace(SyncMode::Running);
     let mut sync_mode_changes = sync_mode.subscribe();
@@ -497,6 +504,17 @@ where
     fetcher_handle.await.expect("task panicked");
 
     Ok(build_sync_result(sync_status, &initial_sync_state))
+}
+
+/// The wallet identifiers that sync sends to a source.
+fn needed_identifiers(config: &SyncConfig) -> Vec<WalletIdentifier> {
+    let scopes = &config.transparent_address_discovery.scopes;
+    let discovery = cfg!(not(feature = "darkside_test"))
+        && (scopes.external || scopes.internal || scopes.refund);
+
+    std::iter::once(WalletIdentifier::Txid)
+        .chain(discovery.then_some(WalletIdentifier::TransparentAddress))
+        .collect()
 }
 
 /// Builds a [`self::SyncResult`], recomputing this session's counts from the cumulative scanned
