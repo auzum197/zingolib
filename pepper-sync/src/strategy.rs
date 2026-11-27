@@ -127,9 +127,16 @@ macro_rules! strategy {
     };
 }
 
-/// Accepts results from any source.
+/// Checks the note commitments of a block range against the tree state at its end, unless
+/// a source with assumed integrity sent the blocks. Does not run the check if the tree states
+/// are from one unverified source.
 #[derive(Debug, Clone, Copy, Default)]
 pub struct Auto;
+
+/// Does the check of [`Auto`] on every block range. Fails if the tree states are from one
+/// unverified source.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct Verified;
 
 /// Does no extra checks and fails on a result that is not from a source with assumed integrity.
 #[derive(Debug, Clone, Copy, Default)]
@@ -137,3 +144,4 @@ pub struct AssumedOnly;
 
 strategy!(Auto, Policy::Auto);
 strategy!(AssumedOnly, Policy::AssumedOnly);
+strategy!(Verified, Policy::Verified);

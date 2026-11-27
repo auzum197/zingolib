@@ -1310,3 +1310,167 @@ mod sources {
         assert!(error.to_string().contains("sources disagree"), "{error}");
     }
 }
+
+mod verification {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::{Arc, Mutex};
+
+    use pepper_sync::Verified;
+    use pepper_sync::error::{ServerError, SyncError};
+    use wallet_api::{
+        BoxFuture, ChainSource, Integrity, Request, Response, Route, Router, SourceError, SourceId,
+        SourceInfo,
+    };
+    use zingo_netutils::GrpcIndexer;
+
+    use super::*;
+    use crate::config::{Birthday, WalletConfig};
+    use crate::lightclient::error::LightClientError;
+    use crate::lightclient::store::MemoryStore;
+    use crate::lightclient::{Encryption, LightClient, LightClientBuilder};
+    use crate::testutils::default_test_wallet_settings;
+
+    /// Sends block ranges to the second source and all other requests to the first source.
+    #[derive(Default)]
+    struct BlocksFromSecond(Mutex<Vec<SourceId>>);
+
+    impl Router for &'static BlocksFromSecond {
+        fn select_route(&self, request: &Request, _sources: &[SourceInfo]) -> Route {
+            match request {
+                Request::Blocks(_) => Route::Failover(vec![SourceId(1)]),
+                _ => Route::Failover(vec![SourceId(0)]),
+            }
+        }
+
+        fn on_failure(&self, source: SourceId, error: &SourceError) {
+            if matches!(error, SourceError::FailedVerification) {
+                self.0.lock().unwrap().push(source);
+            }
+        }
+    }
+
+    async fn indexer(net: &MockNet) -> GrpcIndexer {
+        GrpcIndexer::new(net.indexer_uri()).await.unwrap()
+    }
+
+    struct CountingTreeStates(GrpcIndexer, Arc<AtomicUsize>);
+
+    impl ChainSource for CountingTreeStates {
+        fn info(&self) -> &SourceInfo {
+            self.0.info()
+        }
+
+        fn execute(&self, request: Request) -> BoxFuture<'_, Result<Response, SourceError>> {
+            if matches!(request, Request::TreeState(_)) {
+                self.1.fetch_add(1, Ordering::Relaxed);
+            }
+            self.0.execute(request)
+        }
+    }
+
+    /// The number of tree state requests in one sync from one source with `integrity`.
+    async fn tree_state_requests(net: &MockNet, integrity: Integrity) -> usize {
+        let count = Arc::new(AtomicUsize::new(0));
+        let source =
+            CountingTreeStates(indexer(net).await.with_integrity(integrity), count.clone());
+        let mut client = create(LightClient::builder(net.chain_type()).source(source)).await;
+        client.sync_and_await().await.unwrap();
+        count.load(Ordering::Relaxed)
+    }
+
+    #[tokio::test]
+    async fn auto_strategy_does_not_check_blocks_against_tree_states_from_one_unverified_source() {
+        let mut net = MockNet::launch().await;
+        net.create_faucet().await;
+        net.generate_blocks(5).await;
+
+        let unverified = tree_state_requests(&net, Integrity::Unverified).await;
+        assert_eq!(
+            unverified,
+            tree_state_requests(&net, Integrity::Assumed).await
+        );
+    }
+
+    #[tokio::test]
+    async fn verified_strategy_fails_if_the_tree_states_are_from_one_unverified_source() {
+        let mut net = MockNet::launch().await;
+        net.create_faucet().await;
+        let builder = LightClient::builder(net.chain_type())
+            .source(indexer(&net).await)
+            .sync(Verified);
+        let mut client = create(builder).await;
+
+        let error = client.sync_and_await().await.unwrap_err();
+        assert!(matches!(
+            error,
+            LightClientError::SyncError(SyncError::ServerError(ServerError::UnverifiedTreeState))
+        ));
+    }
+
+    async fn create(builder: LightClientBuilder) -> LightClient {
+        create_from(builder, 1).await
+    }
+
+    async fn create_from(builder: LightClientBuilder, birthday: u32) -> LightClient {
+        let wallet_config = WalletConfig::NewSeed {
+            no_of_accounts: 1.try_into().unwrap(),
+            birthday: Birthday::Height(birthday),
+            wallet_settings: default_test_wallet_settings(),
+        };
+        builder
+            .create(MemoryStore::default(), wallet_config, Encryption::None)
+            .await
+            .unwrap()
+    }
+
+    #[tokio::test]
+    async fn verified_strategy_starts_from_the_tree_state_below_the_first_block() {
+        let mut net = MockNet::launch().await;
+        net.create_faucet().await;
+        net.generate_blocks(5).await;
+        let builder = LightClient::builder(net.chain_type())
+            .source(indexer(&net).await.with_integrity(Integrity::Assumed))
+            .sync(Verified);
+        let mut client = create_from(builder, net.chain_height().await - 2).await;
+
+        let synced = client.sync_and_await().await.unwrap();
+        assert_eq!(u32::from(synced.sync_end_height), net.chain_height().await);
+    }
+
+    #[tokio::test]
+    async fn verified_strategy_syncs_blocks_that_match_the_tree_state() {
+        let mut net = MockNet::launch().await;
+        net.create_faucet().await;
+        net.generate_blocks(5).await;
+        let builder = LightClient::builder(net.chain_type())
+            .source(indexer(&net).await.with_integrity(Integrity::Assumed))
+            .sync(Verified);
+        let mut client = create(builder).await;
+
+        let synced = client.sync_and_await().await.unwrap();
+        assert_eq!(u32::from(synced.sync_end_height), net.chain_height().await);
+        assert!(synced.orchard_outputs_scanned + synced.ironwood_outputs_scanned > 0);
+    }
+
+    #[tokio::test]
+    async fn blocks_that_hide_outputs_stop_sync_and_their_source_is_reported() {
+        let mut honest = MockNet::launch().await;
+        honest.create_faucet().await;
+        let liar = MockNet::launch().await;
+        liar.generate_blocks(honest.chain_height().await).await;
+        let router: &'static BlocksFromSecond = Box::leak(Box::default());
+        let assumed = indexer(&honest).await.with_integrity(Integrity::Assumed);
+        let builder = LightClient::builder(honest.chain_type())
+            .source(assumed)
+            .source(indexer(&liar).await)
+            .router(router);
+        let mut client = create(builder).await;
+
+        let error = client.sync_and_await().await.unwrap_err();
+        assert!(
+            error.to_string().contains("do not lead to the tree state"),
+            "{error}"
+        );
+        assert_eq!(*router.0.lock().unwrap(), [SourceId(1)]);
+    }
+}

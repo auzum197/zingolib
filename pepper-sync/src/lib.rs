@@ -123,7 +123,7 @@ pub(crate) mod witness;
 
 pub use events::{CommitTiming, ScanTiming, SequencedSyncEvent, SyncEmitter, SyncEvent};
 use shardtree::store::ShardStore;
-pub use strategy::{AssumedOnly, Auto, SyncContext, SyncStrategy};
+pub use strategy::{AssumedOnly, Auto, SyncContext, SyncStrategy, Verified};
 pub use sync::add_scan_targets;
 pub use sync::reset_spends;
 pub use sync::scan_pending_transaction;
