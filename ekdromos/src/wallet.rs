@@ -352,7 +352,7 @@ impl LightWallet {
     /// passphrase with a new one, using the default
     /// ([`encryption::Argon2Params::default`]) KDF parameters.
     ///
-    /// Memory-constrained callers (e.g. mobile) should prefer
+    /// Memory-constrained callers should prefer
     /// [`Self::set_passphrase_with_params`] with
     /// [`encryption::Argon2Params::with_memory_mib`] and a smaller memory cost.
     pub fn set_passphrase(

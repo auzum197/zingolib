@@ -190,7 +190,7 @@ impl LightClient {
     /// Polls the sync task and, if it failed, returns the recommended
     /// recovery action alongside the error description.
     ///
-    /// This is the primary entry point for consumers (CLI, mobile, PC)
+    /// This is the primary entry point for consumers
     /// that need to decide whether to retry, switch servers, or give up
     /// after a sync failure.
     ///

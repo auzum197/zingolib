@@ -5,7 +5,6 @@
         "memory": "16gb",
         "storage": "32gb"
     },
-    "postCreateCommand": "ln -s /usr/bin/lightwalletd /usr/bin/zcashd /usr/bin/zcash-cli ./zingocli/regtest/bin/",
     "customizations": {
         "vscode": {
             "extensions": [

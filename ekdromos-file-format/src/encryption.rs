@@ -37,20 +37,6 @@
 //! version number (currently small values like 41). `MAGIC` read as a `u64-LE` is
 //! `0x31_30_63_6e_45_69_4c_5a`, far outside any real version, so an encrypted file can never
 //! be mistaken for a plaintext one and vice versa.
-//!
-//! ## Mobile / FFI integration contract
-//! The UniFFI `WalletEngine` that zingo-mobile exposes lives outside this repository. It
-//! wraps the public ekdromos API. The passphrase is passed as a plain `String` throughout
-//! (ekdromos wraps it in a [`SecretString`] internally), so the FFI layer needs no `secrecy`
-//! dependency. To support encryption from mobile, that layer should:
-//! - **Create encrypted:** call `LightClient::create` with
-//!   `Encryption::Passphrase(EncryptionConfig::with_params(passphrase, params))`. On a
-//!   memory-constrained device pass `Argon2Params::with_memory_mib(N)` with a smaller `N`
-//!   (e.g. 19 to 32) instead of the 64 MiB default.
-//! - **Open encrypted:** call `LightClient::open` with `Unlock::Passphrase(passphrase)`. The
-//!   passphrase decrypts the file, whose KDF parameters are read from the header.
-//! - **Save:** `LightWallet::save` already returns encrypted bytes once a
-//!   passphrase is set, no change required.
 
 use argon2::{Algorithm, Argon2, Params, Version};
 use chacha20poly1305::{
