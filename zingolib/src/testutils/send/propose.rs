@@ -21,9 +21,7 @@ use pepper_sync::keys::transparent::TransparentScope;
 use super::error::{ProposeSendError, ProposeShieldError};
 use super::proposal::{ProportionalFeeProposal, ProportionalFeeShieldProposal, ZingoProposal};
 use super::receivers::{Receiver, transaction_request_from_receivers};
-use crate::ZENNIES_FOR_ZINGO_AMOUNT;
 use crate::config::ChainType;
-use crate::get_zennies_for_zingo_address;
 use crate::lightclient::LightClient;
 use crate::wallet::LightWallet;
 use crate::wallet::error::WalletError;
@@ -199,16 +197,6 @@ impl LightWallet {
 }
 
 impl LightClient {
-    fn append_zingo_zenny_receiver(&self, receivers: &mut Vec<Receiver>) {
-        let zfz_address = get_zennies_for_zingo_address(self.chain_type());
-        let dev_donation_receiver = Receiver::new(
-            crate::utils::conversion::address_from_str(zfz_address).expect("Hard coded str"),
-            Zatoshis::from_u64(ZENNIES_FOR_ZINGO_AMOUNT).expect("Hard coded u64."),
-            None,
-        );
-        receivers.push(dev_donation_receiver);
-    }
-
     /// Creates and stores a proposal from a transaction request.
     pub async fn propose_send(
         &mut self,
@@ -230,20 +218,14 @@ impl LightClient {
     pub async fn propose_send_all(
         &mut self,
         address: ZcashAddress,
-        zennies_for_zingo: bool,
         memo: Option<zcash_protocol::memo::MemoBytes>,
         account_id: zip32::AccountId,
     ) -> Result<ProportionalFeeProposal, ProposeSendError> {
-        let max_send_value = self
-            .max_send_value(address.clone(), zennies_for_zingo, account_id)
-            .await?;
+        let max_send_value = self.max_send_value(address.clone(), account_id).await?;
         if max_send_value == Zatoshis::ZERO {
             return Err(ProposeSendError::ZeroValueSendAll);
         }
-        let mut receivers = vec![Receiver::new(address, max_send_value, memo)];
-        if zennies_for_zingo {
-            self.append_zingo_zenny_receiver(&mut receivers);
-        }
+        let receivers = vec![Receiver::new(address, max_send_value, memo)];
         let request = transaction_request_from_receivers(receivers)
             .map_err(ProposeSendError::TransactionRequestFailed)?;
         let _ignore_error = self.pause_sync();
@@ -278,8 +260,6 @@ impl LightClient {
     /// the given `address`. If the wallet is still syncing, the spendable balance may be less than the confirmed
     /// balance - minus the fee - due to notes being above the minimum confirmation threshold or not being able to
     /// construct a witness from the current state of the wallet's note commitment tree.
-    /// If `zennies_for_zingo` is set true, an additional payment of `1_000_000` ZAT to the `ZingoLabs` developer address
-    /// will be taken into account.
     ///
     /// # Error
     ///
@@ -288,7 +268,6 @@ impl LightClient {
     pub async fn max_send_value(
         &self,
         address: ZcashAddress,
-        zennies_for_zingo: bool,
         account_id: zip32::AccountId,
     ) -> Result<Zatoshis, ProposeSendError> {
         let mut wallet = self.wallet().write().await;
@@ -296,10 +275,7 @@ impl LightClient {
         let mut spendable_balance = confirmed_balance;
 
         loop {
-            let mut receivers = vec![Receiver::new(address.clone(), spendable_balance, None)];
-            if zennies_for_zingo {
-                self.append_zingo_zenny_receiver(&mut receivers);
-            }
+            let receivers = vec![Receiver::new(address.clone(), spendable_balance, None)];
             let request = transaction_request_from_receivers(receivers)?;
             let trial_proposal = wallet.create_send_proposal(request, account_id);
 

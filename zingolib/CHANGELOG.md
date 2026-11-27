@@ -81,6 +81,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `LightClientError`. `zcash_proofs` and the Sapling parameter download are now test-only.
 
 ### Removed
+- Zennies for Zingo: the `ZENNIES_FOR_ZINGO_DONATION_ADDRESS`, `ZENNIES_FOR_ZINGO_TESTNET_ADDRESS`,
+  `ZENNIES_FOR_ZINGO_REGTEST_ADDRESS` and `ZENNIES_FOR_ZINGO_AMOUNT` consts,
+  `get_zennies_for_zingo_address`, and the `zennies_for_zingo` argument of
+  `LightClient::propose_send_all` and `LightClient::max_send_value`. A transaction that pays the
+  former donation address is now an ordinary send.
+- `DEVELOPER_DONATION_ADDRESS` const.
 - `LightClient::save_task`, `wait_for_save`, `check_save_error` and `shutdown_save_task`.
 - `config::ClientConfig`, `config::ClientConfigBuilder`, `config::DEFAULT_WALLET_NAME` and the
   default wallet directory. The caller selects the wallet path.

@@ -10,7 +10,6 @@ use pepper_sync::wallet::{
 use super::LightWallet;
 use super::error::{FeeError, SpendError};
 use super::summary::data::{SendType, TransactionKind};
-use crate::get_zennies_for_zingo_address;
 use crate::wallet::error::WalletError;
 
 impl LightWallet {
@@ -119,8 +118,6 @@ impl LightWallet {
         &self,
         transaction: &WalletTransaction,
     ) -> Result<TransactionKind, SpendError> {
-        let zfz_address = get_zennies_for_zingo_address(self.chain_type);
-
         let transparent_spends = self.find_spends::<TransparentCoin>(transaction, false)?;
         let sapling_spends = self.find_spends::<SaplingNote>(transaction, false)?;
         let orchard_spends = self.find_spends::<OrchardNote>(transaction, false)?;
@@ -158,9 +155,6 @@ impl LightWallet {
                     self.is_sapling_address_in_unified_addresses(&outgoing_note.note().recipient())
                         .is_some()
                         || outgoing_note.key_id().scope == zip32::Scope::Internal
-                        || outgoing_note
-                            .encoded_recipient_full_unified_address(&self.chain_type)
-                            .is_some_and(|unified_address| unified_address == *zfz_address)
                 })
             && transaction
                 .outgoing_orchard_notes()
@@ -169,9 +163,6 @@ impl LightWallet {
                     self.is_orchard_address_in_unified_addresses(&outgoing_note.note().recipient())
                         .is_some()
                         || outgoing_note.key_id().scope == zip32::Scope::Internal
-                        || outgoing_note
-                            .encoded_recipient_full_unified_address(&self.chain_type)
-                            .is_some_and(|unified_address| unified_address == *zfz_address)
                 })
             && transaction
                 .outgoing_ironwood_notes()
@@ -180,9 +171,6 @@ impl LightWallet {
                     self.is_orchard_address_in_unified_addresses(&outgoing_note.note().recipient())
                         .is_some()
                         || outgoing_note.key_id().scope == zip32::Scope::Internal
-                        || outgoing_note
-                            .encoded_recipient_full_unified_address(&self.chain_type)
-                            .is_some_and(|unified_address| unified_address == *zfz_address)
                 })
         {
             // every output went back to the wallet: it is a move if value landed in a pool the

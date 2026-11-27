@@ -388,9 +388,6 @@ impl LightWallet {
                         });
                     }
                     wallet_events.append(&mut self_events);
-
-                    // in the case Zennies For Zingo! is active
-                    wallet_events.append(&mut self.create_send_wallet_events(&transaction)?);
                 }
                 TransactionKind::Received => {
                     // Create one received event for each receiving pool.

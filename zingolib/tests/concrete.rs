@@ -143,17 +143,13 @@ mod fast {
     use zingo_common_components::protocol::ActivationHeights;
     use zingolib::testutils::scenarios::increase_height_and_wait_for_client;
     use zingolib::{
-        ZENNIES_FOR_ZINGO_REGTEST_ADDRESS,
         config::{Birthday, WalletConfig},
         testutils::{
             chain_generics::conduct_chain::ConductChain,
             default_test_wallet_settings,
             lightclient::{from_inputs, get_base_address},
         },
-        wallet::{
-            keys::unified::{ReceiverSelection, UnifiedAddressId},
-            summary::data::{SelfSendWalletEvent, SentWalletEvent, WalletEventKind},
-        },
+        wallet::keys::unified::{ReceiverSelection, UnifiedAddressId},
     };
     use zingolib_common::status::ConfirmationStatus;
     use zip32::AccountId;
@@ -315,7 +311,6 @@ mod fast {
         recipient
             .propose_send_all(
                 address_from_str(&get_base_address_macro!(&recipient, "sapling")).unwrap(),
-                false,
                 None,
                 zip32::AccountId::ZERO,
             )
@@ -323,32 +318,6 @@ mod fast {
             .unwrap();
 
         recipient.send_stored_proposal(true).await.unwrap();
-    }
-
-    #[tokio::test]
-    async fn create_send_to_self_with_zfz_active() {
-        let (_local_net, _faucet, mut recipient, _txid) =
-            scenarios::faucet_funded_recipient_default(5_000_000).await;
-
-        recipient
-            .propose_send_all(
-                address_from_str(&get_base_address_macro!(&recipient, "unified")).unwrap(),
-                true,
-                None,
-                zip32::AccountId::ZERO,
-            )
-            .await
-            .unwrap();
-
-        recipient.send_stored_proposal(true).await.unwrap();
-
-        let wallet_events = &recipient.wallet_events(true).await.unwrap();
-
-        assert!(wallet_events.iter().any(|event| event.kind
-            == WalletEventKind::Sent(SentWalletEvent::SendToSelf(SelfSendWalletEvent::Basic))));
-        assert!(wallet_events.iter().any(|event| event.kind
-            == WalletEventKind::Sent(SentWalletEvent::Send)
-            && event.recipient_address == Some(ZENNIES_FOR_ZINGO_REGTEST_ADDRESS.to_string())));
     }
 
     /// This tests checks that `messages_containing` returns an empty vector when empty memos are included.
@@ -3120,39 +3089,6 @@ mod send_all {
 
     use super::*;
     #[tokio::test]
-    async fn toggle_zennies_for_zingo() {
-        let (local_net, mut faucet, mut recipient) = scenarios::faucet_recipient_default().await;
-
-        let initial_funds = 2_000_000;
-        let zennies_magnitude = 1_000_000;
-        let expected_fee = 15_000; // 1 orchard note in, and 3 out
-        from_inputs::quick_send(
-            &mut faucet,
-            vec![(
-                &get_base_address_macro!(&recipient, "unified"),
-                initial_funds,
-                None,
-            )],
-        )
-        .await
-        .unwrap();
-        increase_height_and_wait_for_client(&local_net, &mut recipient, 1)
-            .await
-            .unwrap();
-        let external_uaddress =
-            address_from_str(&get_base_address_macro!(faucet, "unified")).unwrap();
-        let expected_balance =
-            Zatoshis::from_u64(initial_funds - zennies_magnitude - expected_fee).unwrap();
-        assert_eq!(
-            recipient
-                .max_send_value(external_uaddress, true, zip32::AccountId::ZERO)
-                .await
-                .unwrap(),
-            expected_balance
-        );
-    }
-
-    #[tokio::test]
     async fn ptfm_general() {
         let (local_net, mut faucet, mut recipient, _) =
             scenarios::faucet_funded_recipient_default(100_000).await;
@@ -3202,7 +3138,6 @@ mod send_all {
         recipient
             .propose_send_all(
                 address_from_str(&get_base_address_macro!(faucet, "sapling")).unwrap(),
-                false,
                 None,
                 zip32::AccountId::ZERO,
             )
@@ -3244,7 +3179,6 @@ mod send_all {
         let proposal_error = recipient
             .propose_send_all(
                 address_from_str(&get_base_address_macro!(faucet, "sapling")).unwrap(),
-                false,
                 None,
                 zip32::AccountId::ZERO,
             )
@@ -3272,7 +3206,6 @@ mod send_all {
         let proposal_error = recipient
             .propose_send_all(
                 address_from_str(&get_base_address_macro!(faucet, "unified")).unwrap(),
-                false,
                 None,
                 zip32::AccountId::ZERO,
             )
