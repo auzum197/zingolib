@@ -1,6 +1,6 @@
 //! Requests to a chain source and their responses.
 
-use std::{fmt, ops::Range};
+use std::{collections::HashSet, fmt, ops::Range};
 
 use futures::stream::BoxStream;
 use zcash_protocol::{ShieldedPool, TxId, consensus::BlockHeight};
@@ -40,6 +40,8 @@ pub enum Request {
     },
     /// A full transaction by txid.
     Transaction(TxId),
+    /// Full transactions by txid, in the same order.
+    Transactions(Vec<TxId>),
     /// Transactions of a transparent address in a block range.
     AddressTransactions {
         /// Encoded transparent address.
@@ -65,11 +67,6 @@ pub enum WalletIdentifier {
     SentTransaction,
 }
 
-impl WalletIdentifier {
-    /// Every wallet identifier.
-    pub const ALL: [Self; 3] = [Self::Txid, Self::TransparentAddress, Self::SentTransaction];
-}
-
 impl Request {
     /// The type of this request.
     pub fn kind(&self) -> RequestKind {
@@ -82,16 +79,26 @@ impl Request {
             Request::TreeState(_) => RequestKind::TreeState,
             Request::SubtreeRoots { .. } => RequestKind::SubtreeRoots,
             Request::Transaction(_) => RequestKind::Transaction,
+            Request::Transactions(_) => RequestKind::Transactions,
             Request::AddressTransactions { .. } => RequestKind::AddressTransactions,
             Request::Mempool => RequestKind::Mempool,
             Request::Broadcast(_) => RequestKind::Broadcast,
         }
     }
 
+    /// The number of different txids in this request.
+    pub fn txid_count(&self) -> usize {
+        match self {
+            Request::Transaction(_) => 1,
+            Request::Transactions(txids) => txids.iter().collect::<HashSet<_>>().len(),
+            _ => 0,
+        }
+    }
+
     /// The wallet identifier that this request exposes to the source.
     pub fn wallet_identifier(&self) -> Option<WalletIdentifier> {
         match self {
-            Request::Transaction(_) => Some(WalletIdentifier::Txid),
+            Request::Transaction(_) | Request::Transactions(_) => Some(WalletIdentifier::Txid),
             Request::AddressTransactions { .. } => Some(WalletIdentifier::TransparentAddress),
             Request::Broadcast(_) => Some(WalletIdentifier::SentTransaction),
             _ => None,

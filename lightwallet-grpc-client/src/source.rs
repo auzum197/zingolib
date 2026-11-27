@@ -8,8 +8,8 @@ use std::{
 };
 
 use chain_router::{
-    ChainSource, Connection, Connector, Integrity, Request, Response, SourceError, SourceInfo,
-    TransportInfo, WalletIdentifier,
+    AllowedIdentifiers, ChainSource, Connection, Connector, Integrity, Request, Response,
+    SourceError, SourceInfo, TransportInfo,
     chain::{self, BlockHash, CompactAction, CompactOutputDescription, OutPoint, TxOut},
 };
 use futures::{StreamExt, TryStreamExt, future::BoxFuture};
@@ -82,8 +82,8 @@ impl GrpcIndexer {
     }
 
     /// Sets the wallet identifiers that the indexer can receive. The default is none.
-    pub fn allow_identifiers(mut self, identifiers: &[WalletIdentifier]) -> Self {
-        self.info.allowed_identifiers = identifiers.to_vec();
+    pub fn allow_identifiers(mut self, identifiers: AllowedIdentifiers) -> Self {
+        self.info.allowed_identifiers = identifiers;
         self
     }
 }
@@ -123,6 +123,14 @@ fn block_range(range: std::ops::Range<BlockHeight>) -> BlockRange {
         start: Some(block_id(range.start)),
         end: Some(block_id(range.end - 1)),
         pool_types: vec![],
+    }
+}
+
+fn tx_filter(txid: TxId) -> TxFilter {
+    TxFilter {
+        block: None,
+        index: 0,
+        hash: txid.as_ref().to_vec(),
     }
 }
 
@@ -419,16 +427,25 @@ impl ChainSource for GrpcIndexer {
                     .await
                     .map(|roots| Ok(Response::SubtreeRoots(stream(roots, subtree_root)))),
                 Request::Transaction(txid) => client
-                    .get_transaction(
-                        TxFilter {
-                            block: None,
-                            index: 0,
-                            hash: txid.as_ref().to_vec(),
-                        },
-                        UNARY_TIMEOUT,
-                    )
+                    .get_transaction(tx_filter(txid), UNARY_TIMEOUT)
                     .await
                     .map(|tx| raw_transaction(tx).map(Response::Transaction)),
+                Request::Transactions(txids) => {
+                    let count = txids.len().max(1);
+                    let transactions = futures::stream::iter(txids)
+                        .map(move |txid| {
+                            let mut client = client.clone();
+                            async move {
+                                let transaction = client
+                                    .get_transaction(tx_filter(txid), UNARY_TIMEOUT)
+                                    .await
+                                    .map_err(source_error)?;
+                                raw_transaction(transaction)
+                            }
+                        })
+                        .buffered(count);
+                    return Ok(Response::Transactions(transactions.boxed()));
+                }
                 #[cfg(feature = "globally-public-transparent")]
                 Request::AddressTransactions { address, range } => {
                     use crate::TransparentIndexer as _;

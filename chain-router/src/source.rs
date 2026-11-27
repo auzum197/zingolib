@@ -18,6 +18,69 @@ pub enum Integrity {
     Unverified,
 }
 
+/// When a source can receive the ID of a wallet transaction.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum TxidRule {
+    /// The source gets no txid.
+    Never,
+    /// The source gets a txid only in a request with at least this number of different txids.
+    Among(usize),
+    /// The source gets a txid alone.
+    Alone,
+}
+
+/// The wallet identifiers that a source can receive.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct AllowedIdentifiers {
+    /// When the source can receive a txid.
+    pub txid: TxidRule,
+    /// The source can receive a transparent address.
+    pub transparent_address: bool,
+    /// The source can receive a transaction that the wallet sends.
+    pub sent_transaction: bool,
+}
+
+impl AllowedIdentifiers {
+    /// No wallet identifier.
+    pub const fn none() -> Self {
+        Self {
+            txid: TxidRule::Never,
+            transparent_address: false,
+            sent_transaction: false,
+        }
+    }
+
+    /// Each wallet identifier.
+    pub const fn all() -> Self {
+        Self {
+            txid: TxidRule::Alone,
+            transparent_address: true,
+            sent_transaction: true,
+        }
+    }
+
+    /// Whether the source can receive `identifier` in a request that has only that identifier.
+    pub fn allows(&self, identifier: WalletIdentifier) -> bool {
+        match identifier {
+            WalletIdentifier::Txid => self.txid == TxidRule::Alone,
+            WalletIdentifier::TransparentAddress => self.transparent_address,
+            WalletIdentifier::SentTransaction => self.sent_transaction,
+        }
+    }
+
+    /// Whether the source can receive `request`.
+    pub fn allows_request(&self, request: &Request) -> bool {
+        match (request.wallet_identifier(), self.txid) {
+            (None, _) => true,
+            (Some(WalletIdentifier::Txid), TxidRule::Among(minimum)) => {
+                matches!(request, Request::Transactions(_)) && request.txid_count() >= minimum
+            }
+            (Some(identifier), _) => self.allows(identifier),
+        }
+    }
+}
+
 /// The requests that a source supports.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[non_exhaustive]
@@ -72,7 +135,7 @@ pub struct SourceInfo {
     /// Supported requests.
     pub capabilities: Capabilities,
     /// Wallet identifiers that the source can receive.
-    pub allowed_identifiers: Vec<WalletIdentifier>,
+    pub allowed_identifiers: AllowedIdentifiers,
 }
 
 impl SourceInfo {
@@ -83,7 +146,7 @@ impl SourceInfo {
             integrity,
             transport,
             capabilities: Capabilities::all(),
-            allowed_identifiers: Vec::new(),
+            allowed_identifiers: AllowedIdentifiers::none(),
         }
     }
 }
