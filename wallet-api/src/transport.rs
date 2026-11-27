@@ -25,7 +25,7 @@ impl TransportInfo {
     /// A direct link that hides nothing and has no cost.
     pub const fn direct() -> Self {
         Self {
-            exposed_to_source: SourceExposure::Address,
+            exposed_to_source: SourceExposure::IpAddress,
             exposed_to_network: NetworkExposure {
                 content: true,
                 destination: true,
@@ -61,8 +61,8 @@ impl TransportInfo {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 #[non_exhaustive]
 pub enum SourceExposure {
-    /// The network address of the client.
-    Address,
+    /// The IP address of the client.
+    IpAddress,
     /// The fact that requests come from one client, without its address.
     Pseudonym,
     /// Nothing that connects one request to another.

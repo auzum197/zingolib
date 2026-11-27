@@ -53,18 +53,16 @@ pub enum Request {
     Broadcast(Vec<u8>),
 }
 
-/// Wallet data that a request exposes to the source.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// A value in a request that identifies activity of the wallet.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[non_exhaustive]
-pub enum Disclosure {
-    /// Nothing about the wallet.
-    None,
-    /// A transaction the wallet has interest in.
+pub enum WalletIdentifier {
+    /// The ID of a transaction of the wallet.
     Txid,
-    /// An address of the wallet.
-    Address,
-    /// A transaction the wallet sends.
-    Spend,
+    /// A transparent address of the wallet.
+    TransparentAddress,
+    /// A transaction that the wallet sends.
+    SentTransaction,
 }
 
 impl Request {
@@ -85,13 +83,13 @@ impl Request {
         }
     }
 
-    /// Wallet data that this request exposes to the source.
-    pub fn disclosure(&self) -> Disclosure {
+    /// The wallet identifier that this request exposes to the source.
+    pub fn wallet_identifier(&self) -> Option<WalletIdentifier> {
         match self {
-            Request::Transaction(_) => Disclosure::Txid,
-            Request::AddressTransactions { .. } => Disclosure::Address,
-            Request::Broadcast(_) => Disclosure::Spend,
-            _ => Disclosure::None,
+            Request::Transaction(_) => Some(WalletIdentifier::Txid),
+            Request::AddressTransactions { .. } => Some(WalletIdentifier::TransparentAddress),
+            Request::Broadcast(_) => Some(WalletIdentifier::SentTransaction),
+            _ => None,
         }
     }
 }

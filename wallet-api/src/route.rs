@@ -5,7 +5,7 @@ use std::{
     sync::{Arc, Mutex},
 };
 
-use crate::{Disclosure, Integrity, Request, SourceError, SourceExposure, SourceId, SourceInfo};
+use crate::{Integrity, Request, SourceError, SourceExposure, SourceId, SourceInfo};
 
 /// The sources for one request.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -102,7 +102,7 @@ impl HealthLog {
     /// Sources that can serve `request`: fewest failures first, then by integrity and privacy.
     fn candidates(&self, request: &Request, sources: &[SourceInfo]) -> Vec<SourceId> {
         let log = self.0.lock().unwrap_or_else(|e| e.into_inner());
-        let disclosing = request.disclosure() != Disclosure::None;
+        let identifying = request.wallet_identifier().is_some();
         let mut ranked: Vec<_> = sources
             .iter()
             .enumerate()
@@ -114,13 +114,16 @@ impl HealthLog {
                     Some(SourceHealth::Failing(n)) => *n,
                     Some(SourceHealth::Healthy) | None => 0,
                 };
-                let preference =
-                    match (info.integrity, disclosing, info.transport.exposed_to_source) {
-                        (Integrity::Assumed, ..) => 0,
-                        (Integrity::Unverified, true, SourceExposure::Nothing) => 1,
-                        (Integrity::Unverified, true, SourceExposure::Pseudonym) => 2,
-                        (Integrity::Unverified, ..) => 3,
-                    };
+                let preference = match (
+                    info.integrity,
+                    identifying,
+                    info.transport.exposed_to_source,
+                ) {
+                    (Integrity::Assumed, ..) => 0,
+                    (Integrity::Unverified, true, SourceExposure::Nothing) => 1,
+                    (Integrity::Unverified, true, SourceExposure::Pseudonym) => 2,
+                    (Integrity::Unverified, ..) => 3,
+                };
                 Some((failures, preference, id))
             })
             .collect();
