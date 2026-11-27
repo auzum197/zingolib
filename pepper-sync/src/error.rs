@@ -223,6 +223,12 @@ pub enum ScanError {
         /// Txid returned
         txid_returned: TxId,
     },
+    /// The copy of a transaction in the wallet cannot be written or read.
+    #[error("the copy of transaction {txid} in the wallet cannot be written or read.")]
+    InvalidWalletTransaction {
+        /// Txid of the transaction
+        txid: TxId,
+    },
     /// Decrypted note nullifier and position data not found.
     #[error("decrypted note nullifier and position data not found. output id: {0:?}")]
     DecryptedNoteDataNotFound(OutputId),
