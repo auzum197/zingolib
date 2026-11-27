@@ -36,9 +36,13 @@ pub enum SendError {
 /// The indexer refused or mangled a transaction.
 #[derive(Debug, thiserror::Error)]
 pub enum TransmissionError {
-    /// Transmission failed.
-    #[error("Transmission failed. {0}")]
-    TransmissionFailed(String),
+    /// No source took the transaction. It has `Failed` status.
+    #[error("No source can receive transaction {0}.")]
+    NotSubmitted(TxId),
+    /// A source took the transaction and replied with an error. The transaction has
+    /// `Transmitted` status, and sync sets its status from the mempool and the chain.
+    #[error("Transaction {0} was submitted and its outcome is not known. {1}")]
+    OutcomeUnknown(TxId, String),
     /// Transaction to transmit does not have `Calculated` status: {0}
     #[error("Transaction to transmit does not have `Calculated` status: {0}")]
     IncorrectTransactionStatus(TxId),

@@ -10,6 +10,7 @@ use zcash_client_backend::zip321::TransactionRequest;
 use zcash_primitives::transaction::{TxId, fees::zip317};
 use zcash_protocol::consensus::Parameters as _;
 
+use chain_router::SourceError;
 use ekdromos_common::status::ConfirmationStatus;
 
 use super::error::{CalculateTransactionError, SendError, TransmissionError};
@@ -212,6 +213,9 @@ impl LightClient {
 
     /// Tranmits calculated transactions stored in the wallet matching txids of `calculated_txids` in the given order.
     /// Returns list of txids for successfully transmitted transactions.
+    ///
+    /// An error reply from a source does not set a transaction to `Failed`. The transaction gets
+    /// `Transmitted` status and the error is [`TransmissionError::OutcomeUnknown`].
     async fn transmit_transactions(
         &mut self,
         calculated_txids: NonEmpty<TxId>,
@@ -247,40 +251,31 @@ impl LightClient {
                 })?;
 
             let mut retry_count = 0;
-            let txid_from_server = loop {
-                let transmission_result = self
+            let reply = loop {
+                match self
                     .source_set()
                     .submit_transaction(transaction_bytes.clone())
                     .await
-                    .map(|sent| sent.value)
-                    .map_err(|e| {
-                        SendError::TransmissionError(TransmissionError::TransmissionFailed(
-                            format!("{e:?}"),
-                        ))
-                    });
-
-                match transmission_result {
-                    Ok(txid) => {
-                        break Ok(txid);
+                {
+                    Err(SourceError::NoSource | SourceError::IdentifierNotAllowed(_)) => {
+                        pepper_sync::set_transactions_failed(
+                            &mut wallet.wallet_transactions,
+                            vec![*txid],
+                        );
+                        wallet.mark_dirty();
+                        return Err(TransmissionError::NotSubmitted(*txid).into());
                     }
-                    Err(e) => {
-                        if retry_count >= MAX_RETRIES {
-                            pepper_sync::set_transactions_failed(
-                                &mut wallet.wallet_transactions,
-                                vec![*txid],
-                            );
-                            wallet.mark_dirty();
-                            break Err(e);
-                        } else {
-                            retry_count += 1;
-                            tokio::time::sleep(std::time::Duration::from_secs(1)).await;
-
-                            continue;
-                        }
+                    Err(_) if retry_count < MAX_RETRIES => {
+                        retry_count += 1;
+                        tokio::time::sleep(std::time::Duration::from_secs(1)).await;
                     }
+                    reply => break reply,
                 }
-            }?;
+            };
 
+            // A source took the bytes, so the transaction can be in the mempool even when the
+            // reply is an error. Sync sets the status from the mempool and the chain, and sets
+            // `Failed` if the transaction is not in a block at its expiry height.
             wallet
                 .wallet_transactions
                 .get_mut(txid)
@@ -288,6 +283,9 @@ impl LightClient {
                 .update_status(ConfirmationStatus::Transmitted(height), crate::utils::now());
             wallet.mark_dirty();
 
+            let txid_from_server = reply
+                .map_err(|e| TransmissionError::OutcomeUnknown(*txid, e.to_string()))?
+                .value;
             if txid_from_server != *txid {
                 return Err(SendError::TransmissionError(
                     TransmissionError::IncorrectTxidFromServer(*txid, txid_from_server),

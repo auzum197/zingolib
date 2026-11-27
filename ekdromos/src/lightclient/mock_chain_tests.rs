@@ -7,8 +7,11 @@
 //! Every port here is an OFFLINE TWIN: the live original stays in
 //! `ekdromos/tests/concrete.rs` as the control group.
 
+use ekdromos_common::status::ConfirmationStatus;
+use nonempty::NonEmpty;
 use pepper_sync::wallet::IronwoodNote;
 use zcash_address::ZcashAddress;
+use zcash_primitives::transaction::TxId;
 use zcash_protocol::PoolType;
 use zcash_protocol::ShieldedPool;
 use zcash_protocol::consensus::BlockHeight;
@@ -18,7 +21,7 @@ use crate::check_client_balances;
 use crate::testutils::chain_generics::conduct_chain::ConductChain as _;
 use crate::testutils::lightclient::{from_inputs, get_base_address};
 use crate::testutils::mock_indexer::{MockNet, faucet_funding_transaction};
-use crate::testutils::send::error::ProposeSendError;
+use crate::testutils::send::error::{ProposeSendError, SendError, TransmissionError};
 use crate::testutils::synthetic_wallet::SyntheticWalletBuilder;
 use crate::wallet::keys::unified::ReceiverSelection;
 
@@ -859,21 +862,22 @@ async fn from_t_z_o_tz_to_zo_tzo_to_orchard() {
     assert_eq!(get_fees_paid_by_client(&client).await, total_expected_fee);
 }
 
-/// Deterministic reproduction of issue #2450 (no live original: the
-/// live shape is a load-dependent flake, three libtonode tests
-/// failing whenever a slow validator response crosses the wallet's
-/// send timeout). The first submission is accepted into the mock
-/// mempool but its response is lost. The wallet's retry then receives
-/// the validator's duplicate rejection, verbatim as zainod surfaces it
-/// (zingolabs/zaino#1392). That rejection is proof of successful
-/// transmission: the send must return Ok, the transaction must not be
-/// marked Failed, and it must confirm with ordinary balance
-/// arithmetic.
-#[ignore = "needs upstream zingolib 852537e09, which treats a duplicate-in-mempool rejection as transmission success"]
+/// The transaction of a send whose reply was an error. Fails the test if the send returned
+/// anything but [`TransmissionError::OutcomeUnknown`].
+fn txid_of_unknown_outcome(sent: Result<NonEmpty<TxId>, SendError>) -> TxId {
+    match sent {
+        Err(SendError::TransmissionError(TransmissionError::OutcomeUnknown(txid, _))) => txid,
+        other => panic!("expected an unknown outcome, got {other:?}"),
+    }
+}
+
+/// The first submission gets into the mock mempool and its reply is lost. Each resubmission
+/// gets the duplicate rejection of the validator. The replies say the send failed, but the
+/// transaction is live: it must stay `Transmitted`, keep its notes spent, and confirm when sync
+/// gets the block.
 #[tokio::test]
-async fn send_survives_lost_response_and_duplicate_rejection() {
+async fn lost_reply_leaves_the_transaction_transmitted_until_sync_confirms_it() {
     use crate::testutils::mock_indexer::LostSendDestination;
-    use ekdromos_common::status::ConfirmationStatus;
 
     let mut net = MockNet::launch().await;
     let mut recipient = net
@@ -889,54 +893,35 @@ async fn send_survives_lost_response_and_duplicate_rejection() {
 
     net.chain.write().await.lose_next_send_response = Some(LostSendDestination::Mempool);
 
-    let txids = from_inputs::quick_send(
-        &mut recipient,
-        vec![(&external_address(PoolType::ORCHARD), 20_000, None)],
-    )
-    .await
-    .expect("a duplicate-in-mempool rejection proves transmission succeeded");
-
-    // The wallet must not record the live transaction as Failed.
-    {
-        let wallet = recipient.wallet().read().await;
-        for txid in txids.iter() {
-            let status = wallet
-                .wallet_transactions
-                .get(txid)
-                .expect("the transmitted transaction stays in the wallet")
-                .status();
-            assert!(
-                !matches!(status, ConfirmationStatus::Failed(_)),
-                "transaction {txid} marked Failed while live in the mempool"
-            );
-        }
-    }
+    let txid = txid_of_unknown_outcome(
+        from_inputs::quick_send(
+            &mut recipient,
+            vec![(&external_address(PoolType::ORCHARD), 20_000, None)],
+        )
+        .await,
+    );
+    assert!(matches!(
+        recipient.wallet().read().await.wallet_transactions[&txid].status(),
+        ConfirmationStatus::Transmitted(_)
+    ));
 
     net.chain.write().await.mine_mempool();
     recipient.sync_and_await().await.unwrap();
-    // Identical arithmetic to `funded_send_confirms_on_the_mock_chain`:
-    // the lost response and duplicate rejection must not perturb it.
+    assert!(
+        recipient.wallet().read().await.wallet_transactions[&txid]
+            .status()
+            .is_confirmed()
+    );
+    // Identical arithmetic to `funded_send_confirms_on_the_mock_chain`.
     check_client_balances!(recipient, i: 70_000 o: 0 s: 0 t: 0);
 }
 
-/// Twin of [`send_survives_lost_response_and_duplicate_rejection`] for
-/// the validator's earlier phase: the lost-response submission is
-/// still in the download/verification queue when the retry arrives, so
-/// the rejection reads "transaction dropped because it is already
-/// queued for download" (zebra's pre-acceptance duplicate check),
-/// observed live in the 2026-07-11 container runs, where verification
-/// lagged the send by seconds under load. That rejection proves
-/// delivery but not minability, so the wallet must hold success until
-/// its probes see the storage-backed mempool rejection, and only then
-/// return Ok, keeping send-Ok ⇒ minable-now. The mock answers two
-/// queued rejections before promoting, so the probe loop is exercised
-/// deterministically. Mining immediately after the send must therefore
-/// confirm the transaction.
-#[ignore = "needs upstream zingolib 96c7e2833, which holds send success on a queued-for-download rejection as transmission success"]
+/// Twin of [`lost_reply_leaves_the_transaction_transmitted_until_sync_confirms_it`] for a
+/// validator that still verifies the first submission when the resubmissions arrive. The
+/// rejection text is different and the result must be the same.
 #[tokio::test]
-async fn send_survives_lost_response_and_queued_duplicate_rejection() {
+async fn lost_reply_while_queued_leaves_the_transaction_transmitted_until_sync_confirms_it() {
     use crate::testutils::mock_indexer::LostSendDestination;
-    use ekdromos_common::status::ConfirmationStatus;
 
     let mut net = MockNet::launch().await;
     let mut recipient = net
@@ -956,35 +941,76 @@ async fn send_survives_lost_response_and_queued_duplicate_rejection() {
         chain.queued_rejections_before_promotion = 2;
     }
 
-    let txids = from_inputs::quick_send(
-        &mut recipient,
-        vec![(&external_address(PoolType::ORCHARD), 20_000, None)],
-    )
-    .await
-    .expect("probing resubmissions reach the storage-backed verdict");
+    let txid = txid_of_unknown_outcome(
+        from_inputs::quick_send(
+            &mut recipient,
+            vec![(&external_address(PoolType::ORCHARD), 20_000, None)],
+        )
+        .await,
+    );
+    assert!(matches!(
+        recipient.wallet().read().await.wallet_transactions[&txid].status(),
+        ConfirmationStatus::Transmitted(_)
+    ));
 
-    // The wallet must not record the delivered transaction as Failed.
-    {
-        let wallet = recipient.wallet().read().await;
-        for txid in txids.iter() {
-            let status = wallet
-                .wallet_transactions
-                .get(txid)
-                .expect("the transmitted transaction stays in the wallet")
-                .status();
-            assert!(
-                !matches!(status, ConfirmationStatus::Failed(_)),
-                "transaction {txid} marked Failed while queued for download"
-            );
-        }
-    }
-
-    // send-Ok means minable NOW: mining immediately (the very race
-    // that broke test_scanning_in_watch_only_mode live) must include
-    // the transaction, with no verification-delay allowance.
     net.chain.write().await.mine_mempool();
     recipient.sync_and_await().await.unwrap();
+    assert!(
+        recipient.wallet().read().await.wallet_transactions[&txid]
+            .status()
+            .is_confirmed()
+    );
     check_client_balances!(recipient, i: 70_000 o: 0 s: 0 t: 0);
+}
+
+/// The other outcome: the indexer drops every submission, so the transaction is never in the
+/// mempool or a block. It stays `Transmitted` until the chain is at its expiry height, then sync
+/// sets it to `Failed` and the notes are spendable again.
+#[tokio::test]
+async fn dropped_transaction_fails_at_its_expiry_height() {
+    let mut net = MockNet::launch().await;
+    let mut recipient = net
+        .client(ekdromos_test_vectors::seeds::HOSPITAL_MUSEUM_SEED)
+        .await;
+    let recipient_ua =
+        get_base_address(&recipient, PoolType::Shielded(ShieldedPool::Orchard)).await;
+
+    net.chain.write().await.mine_empty_blocks(1);
+    fund(&net, vec![(&recipient_ua, 100_000, None)], 1).await;
+    recipient.sync_and_await().await.unwrap();
+
+    net.chain.write().await.reject_all_sends = true;
+
+    let txid = txid_of_unknown_outcome(
+        from_inputs::quick_send(
+            &mut recipient,
+            vec![(&external_address(PoolType::ORCHARD), 20_000, None)],
+        )
+        .await,
+    );
+    let expiry_height = {
+        let wallet = recipient.wallet().read().await;
+        let transaction = &wallet.wallet_transactions[&txid];
+        assert!(matches!(
+            transaction.status(),
+            ConfirmationStatus::Transmitted(_)
+        ));
+        u32::from(transaction.transaction().expiry_height())
+    };
+
+    let chain_height = net.chain_height().await;
+    net.chain
+        .write()
+        .await
+        .mine_empty_blocks(expiry_height - chain_height);
+    recipient.sync_and_await().await.unwrap();
+
+    assert!(
+        recipient.wallet().read().await.wallet_transactions[&txid]
+            .status()
+            .is_failed()
+    );
+    check_client_balances!(recipient, i: 100_000 o: 0 s: 0 t: 0);
 }
 
 mod strict_chain {

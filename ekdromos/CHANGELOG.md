@@ -28,6 +28,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `moved_to` in the JSON of a transaction summary: the destination pool of a pool move, or null.
 
 ### Changed
+- An error reply to a submitted transaction no longer sets the transaction to `Failed`. The
+  transaction gets `Transmitted` status and the send returns
+  `TransmissionError::OutcomeUnknown` with the txid. Sync sets `Mempool` or `Confirmed` when it
+  gets the transaction, and `Failed` at the expiry height. `TransmissionError::NotSubmitted`
+  is the error when no source can take the transaction. Both replace `TransmissionFailed`.
 - The crate is named `ekdromos`, formerly `zingolib`. Its import path is `ekdromos`.
 - `wallet::zcb_traits::ZingoAccount` is named `EkdromosAccount`.
 - `testutils::scenarios::ClientBuilder::zingo_datadir` is named `wallet_datadir`.
