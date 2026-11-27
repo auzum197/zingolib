@@ -11,6 +11,7 @@ use zcash_primitives::transaction::TxId;
 use zcash_protocol::consensus::{BlockHeight, NetworkUpgrade, Parameters as _};
 use zcash_transparent::address::TransparentAddress;
 
+use lightwallet_grpc_client::GrpcIndexer;
 use pepper_sync::{
     SyncStrategy, error::SyncError, events::SyncEmitter, keys::transparent::TransparentAddressId,
     sync::SyncResult, wallet::SyncMode,
@@ -18,7 +19,6 @@ use pepper_sync::{
 use wallet_api::{
     ChainSource, Failover, Integrity, Router, SourceError, SourceSet, chain::ServerInfo,
 };
-use zingo_netutils::GrpcIndexer;
 
 use crate::{
     config::{Birthday, ChainType, WalletConfig},
@@ -247,7 +247,7 @@ impl LightClient {
 
     async fn assumed_indexer(
         indexer_uri: http::Uri,
-    ) -> Result<GrpcIndexer, zingo_netutils::GetClientError> {
+    ) -> Result<GrpcIndexer, lightwallet_grpc_client::GetClientError> {
         Ok(GrpcIndexer::new(indexer_uri)
             .await?
             .with_integrity(Integrity::Assumed))
@@ -314,7 +314,7 @@ impl LightClient {
     pub async fn set_indexer_uri(
         &mut self,
         server: http::Uri,
-    ) -> Result<(), zingo_netutils::GetClientError> {
+    ) -> Result<(), lightwallet_grpc_client::GetClientError> {
         self.sources = Arc::new(SourceSet::single(Self::assumed_indexer(server).await?));
         Ok(())
     }

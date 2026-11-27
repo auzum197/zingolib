@@ -30,8 +30,7 @@ use std::time::Duration;
 use tokio::sync::{RwLock, mpsc};
 use tokio_stream::Stream;
 
-use tonic::{Code, Request, Response, Status};
-use zingo_netutils::lightwallet_protocol::{
+use lightwallet_grpc_client::lightwallet_protocol::{
     Address, AddressList, Balance, BlockId, BlockRange, ChainMetadata, ChainSpec, CompactBlock,
     CompactOrchardAction, CompactSaplingOutput, CompactSaplingSpend, CompactTx, CompactTxIn,
     CompactTxStreamer, CompactTxStreamerServer, Duration as ProtoDuration, Empty,
@@ -39,6 +38,7 @@ use zingo_netutils::lightwallet_protocol::{
     GetSubtreeRootsArg, LightdInfo, PingResponse, RawTransaction, SendResponse, SubtreeRoot,
     TransparentAddressBlockFilter, TreeState, TxFilter, TxOut as CompactTxOut,
 };
+use tonic::{Code, Request, Response, Status};
 
 use incrementalmerkletree::frontier::CommitmentTree;
 use orchard::tree::MerkleHashOrchard;

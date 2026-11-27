@@ -2,8 +2,8 @@
 
 use std::sync::Arc;
 
+use lightwallet_grpc_client::GetClientError;
 use pepper_sync::error::{SyncError, SyncModeError};
-use zingo_netutils::GetClientError;
 
 use crate::wallet::error::WalletError;
 

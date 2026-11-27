@@ -1197,12 +1197,12 @@ mod sources {
     use std::sync::Arc;
     use std::sync::atomic::{AtomicUsize, Ordering};
 
+    use lightwallet_grpc_client::GrpcIndexer;
     use pepper_sync::AssumedOnly;
     use pepper_sync::error::{ServerError, SyncError};
     use wallet_api::{
         BoxFuture, Connection, Connector, Integrity, Quorum, SourceExposure, TransportInfo,
     };
-    use zingo_netutils::GrpcIndexer;
 
     use super::*;
     use crate::config::{Birthday, WalletConfig};
@@ -1315,13 +1315,13 @@ mod verification {
     use std::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::{Arc, Mutex};
 
+    use lightwallet_grpc_client::GrpcIndexer;
     use pepper_sync::Verified;
     use pepper_sync::error::{ServerError, SyncError};
     use wallet_api::{
         BoxFuture, ChainSource, Integrity, Request, Response, Route, Router, SourceError, SourceId,
         SourceInfo,
     };
-    use zingo_netutils::GrpcIndexer;
 
     use super::*;
     use crate::config::{Birthday, WalletConfig};

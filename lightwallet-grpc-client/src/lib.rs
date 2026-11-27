@@ -492,7 +492,7 @@ impl Indexer for GrpcIndexer {
 
 #[cfg(test)]
 mod tests {
-    //! Unit and integration-style tests for `zingo-netutils`.
+    //! Unit and integration-style tests for `lightwallet-grpc-client`.
     //!
     //! These tests focus on:
     //! - TLS test asset sanity (`test-data/localhost.pem` + `.key`)
