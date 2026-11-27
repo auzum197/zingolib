@@ -11,6 +11,7 @@ With `wallet-api` you can:
 - Continue to read the chain when a data source fails.
 - Require a quorum of untrusted data sources before you accept a result.
 - Accept or reject each result by its data source.
+- Measure the duration and the result of each request to each data source.
 - Send a request that exposes wallet data only to the data sources that you
   select.
 - Replace the routing policy, add a type of data source, or add a transport,

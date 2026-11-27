@@ -9,7 +9,7 @@ use zcash_protocol::PoolType;
 use zcash_protocol::consensus::BlockHeight;
 use zcash_protocol::value::Zatoshis;
 
-use zingo_netutils::Indexer as _;
+use lightwallet_grpc_client::Indexer as _;
 use zingolib_common::status::ConfirmationStatus;
 
 use crate::lightclient::DEFAULT_REQUEST_TIMEOUT;
@@ -123,9 +123,10 @@ where
 
     timestamped_test_log("following proposal, preparing to unwind if an assertion fails.");
 
-    let mut indexer = zingo_netutils::GrpcIndexer::new(environment.lightserver_uri().unwrap())
-        .await
-        .unwrap();
+    let mut indexer =
+        lightwallet_grpc_client::GrpcIndexer::new(environment.lightserver_uri().unwrap())
+            .await
+            .unwrap();
     let server_height_at_send = BlockHeight::from(
         indexer
             .get_latest_block(DEFAULT_REQUEST_TIMEOUT)

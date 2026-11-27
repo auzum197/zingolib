@@ -1,5 +1,6 @@
 use std::{
     collections::{BTreeMap, BTreeSet, HashMap},
+    ops::Range,
     time::{Duration, Instant},
 };
 
@@ -8,19 +9,20 @@ use task::ScanTask;
 use tokio::sync::mpsc;
 
 use incrementalmerkletree::Position;
-use wallet_api::chain::{CompactBlock, CompactTx};
+use wallet_api::chain::{CompactAction, CompactBlock, CompactTx};
 use zcash_keys::keys::UnifiedFullViewingKey;
-use zcash_primitives::transaction::TxId;
+use zcash_primitives::{block::BlockHash, transaction::TxId};
 use zcash_protocol::consensus::{self, BlockHeight};
+use zcash_protocol::{PoolType, ShieldedPool};
 use zip32::AccountId;
 
 use crate::{
-    client::FetchRequest,
+    client::{self, FetchRequest},
     error::{ScanError, ServerError},
     sync::ScanPriority,
     utils::{get_compact_block_height, get_compact_tx_txid},
     wallet::{NullifierMap, OutputId, ScanTarget, WalletBlock, WalletTransaction},
-    witness::{self, LocatedTreeData, WitnessData},
+    witness::{self, Frontiers, LocatedTreeData, WitnessData},
 };
 
 use self::{compact_blocks::scan_compact_blocks, transactions::scan_transactions};
@@ -126,6 +128,26 @@ impl DecryptedNoteData {
     }
 }
 
+/// The tree states before the first block and after the last block of `block_range`. `None` if
+/// the check of the range must not run.
+async fn boundary_frontiers(
+    fetch_request_sender: mpsc::UnboundedSender<FetchRequest>,
+    consensus_parameters: &impl consensus::Parameters,
+    block_range: &Range<BlockHeight>,
+) -> Result<Option<(Frontiers, Frontiers)>, ServerError> {
+    let sapling_activation_height = consensus_parameters
+        .activation_height(consensus::NetworkUpgrade::Sapling)
+        .expect("should have some sapling activation height");
+    let start = if block_range.start <= sapling_activation_height {
+        Some(Frontiers::empty(block_range.start - 1, BlockHash([0; 32])))
+    } else {
+        client::get_boundary_frontiers(fetch_request_sender.clone(), block_range.start - 1).await?
+    };
+    let end = client::get_boundary_frontiers(fetch_request_sender, block_range.end - 1).await?;
+
+    Ok(start.zip(end))
+}
+
 /// Scans a given range and returns all data relevant to the specified keys.
 ///
 /// The `start_seam_block` and `end_seam_block` of `scan_task` are the blocks adjacent to its `scan_range` for
@@ -151,6 +173,7 @@ where
         mut scan_targets,
         transparent_addresses,
         chain_height,
+        unverified_sources,
     } = scan_task;
 
     if compact_blocks
@@ -175,7 +198,7 @@ where
                     &mut nullifiers,
                     get_compact_block_height(block),
                     transaction,
-                )?;
+                );
             }
         }
 
@@ -238,6 +261,21 @@ where
 
     scan_targets.append(&mut decrypted_scan_targets);
 
+    let boundary_frontiers = if unverified_sources.is_empty() {
+        None
+    } else {
+        let boundary_started = Instant::now();
+        let frontiers = boundary_frontiers(
+            fetch_request_sender.clone(),
+            consensus_parameters,
+            scan_range.block_range(),
+        )
+        .await?;
+        fetch_duration += boundary_started.elapsed();
+        frontiers
+    };
+    let failure_sender = fetch_request_sender.clone();
+
     let mut outpoints = BTreeMap::new();
     let scan_transactions_started = Instant::now();
     let wallet_transactions = scan_transactions(
@@ -263,28 +301,75 @@ where
     } = witness_data;
 
     let tree_started = Instant::now();
-    let (sapling_located_trees, orchard_located_trees, ironwood_located_trees) =
-        tokio::task::spawn_blocking(move || {
-            (
-                witness::build_located_trees(
-                    sapling_initial_position,
-                    sapling_leaves_and_retentions,
-                    max_batch_outputs / 8,
+    let located_trees = tokio::task::spawn_blocking(move || {
+        if let Some((start, end)) = boundary_frontiers {
+            let pools = [
+                (
+                    ShieldedPool::Sapling,
+                    witness::frontier_reaches(
+                        start.final_sapling_tree(),
+                        &sapling_leaves_and_retentions,
+                        end.final_sapling_tree(),
+                    ),
                 ),
-                witness::build_located_trees(
-                    orchard_initial_position,
-                    orchard_leaves_and_retentions,
-                    max_batch_outputs / 8,
+                (
+                    ShieldedPool::Orchard,
+                    witness::frontier_reaches(
+                        start.final_orchard_tree(),
+                        &orchard_leaves_and_retentions,
+                        end.final_orchard_tree(),
+                    ),
                 ),
-                witness::build_located_trees(
-                    ironwood_initial_position,
-                    ironwood_leaves_and_retentions,
-                    max_batch_outputs / 8,
+                (
+                    ShieldedPool::Ironwood,
+                    witness::frontier_reaches(
+                        start.final_ironwood_tree(),
+                        &ironwood_leaves_and_retentions,
+                        end.final_ironwood_tree(),
+                    ),
                 ),
-            )
-        })
-        .await
-        .expect("task panicked");
+            ];
+            if let Some((pool, _)) = pools.into_iter().find(|(_, reaches)| !reaches) {
+                return Err(pool);
+            }
+        }
+
+        Ok((
+            witness::build_located_trees(
+                sapling_initial_position,
+                sapling_leaves_and_retentions,
+                max_batch_outputs / 8,
+            ),
+            witness::build_located_trees(
+                orchard_initial_position,
+                orchard_leaves_and_retentions,
+                max_batch_outputs / 8,
+            ),
+            witness::build_located_trees(
+                ironwood_initial_position,
+                ironwood_leaves_and_retentions,
+                max_batch_outputs / 8,
+            ),
+        ))
+    })
+    .await
+    .expect("task panicked");
+    let (sapling_located_trees, orchard_located_trees, ironwood_located_trees) = match located_trees
+    {
+        Ok(located_trees) => located_trees,
+        Err(pool) => {
+            for unverified_source in unverified_sources {
+                let _ignore_error =
+                    failure_sender.send(FetchRequest::FailedVerification(unverified_source));
+            }
+            return Err(ServerError::FrontierMismatch {
+                pool: PoolType::Shielded(pool),
+                start: scan_range.block_range().start,
+                end: scan_range.block_range().end - 1,
+            }
+            .into());
+        }
+    };
     let tree_duration = tree_started.elapsed();
 
     Ok(ScanResults {
@@ -307,31 +392,21 @@ fn collect_nullifiers(
     nullifier_map: &mut NullifierMap,
     block_height: BlockHeight,
     transaction: &CompactTx,
-) -> Result<(), ScanError> {
-    transaction
-        .spends
-        .iter()
-        .map(|spend| sapling_crypto::Nullifier(*spend.nullifier.as_bytes()))
-        .for_each(|nullifier| {
-            nullifier_map.sapling.insert(
-                nullifier,
-                ScanTarget {
-                    block_height,
-                    txid: get_compact_tx_txid(transaction),
-                    narrow_scan_area: false,
-                },
-            );
-        });
+) {
+    transaction.spends.iter().for_each(|nullifier| {
+        nullifier_map.sapling.insert(
+            *nullifier,
+            ScanTarget {
+                block_height,
+                txid: get_compact_tx_txid(transaction),
+                narrow_scan_area: false,
+            },
+        );
+    });
     transaction
         .actions
         .iter()
-        .map(|action| {
-            orchard::note::Nullifier::from_bytes(action.nullifier.as_bytes())
-                .into_option()
-                .ok_or(ScanError::InvalidOrchardNullifier)
-        })
-        .collect::<Result<Vec<orchard::note::Nullifier>, ScanError>>()?
-        .into_iter()
+        .map(CompactAction::nullifier)
         .for_each(|nullifier| {
             nullifier_map.orchard.insert(
                 nullifier,
@@ -345,13 +420,7 @@ fn collect_nullifiers(
     transaction
         .ironwood_actions
         .iter()
-        .map(|action| {
-            orchard::note::Nullifier::from_bytes(action.nullifier.as_bytes())
-                .into_option()
-                .ok_or(ScanError::InvalidOrchardNullifier)
-        })
-        .collect::<Result<Vec<orchard::note::Nullifier>, ScanError>>()?
-        .into_iter()
+        .map(CompactAction::nullifier)
         .for_each(|nullifier| {
             nullifier_map.ironwood.insert(
                 nullifier,
@@ -362,5 +431,4 @@ fn collect_nullifiers(
                 },
             );
         });
-    Ok(())
 }

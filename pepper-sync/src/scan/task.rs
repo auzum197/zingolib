@@ -13,7 +13,7 @@ use tokio::{
 };
 
 use futures::TryStreamExt as _;
-use wallet_api::{SourceError, chain::CompactBlock};
+use wallet_api::{SourceError, SourceId, chain::CompactBlock};
 use zcash_keys::keys::UnifiedFullViewingKey;
 use zcash_primitives::transaction::TxId;
 use zcash_protocol::consensus::{self, BlockHeight};
@@ -392,7 +392,13 @@ where
                     };
 
                     match tokio::time::timeout(STREAM_OPEN_TIMEOUT, open_fut).await {
-                        Ok(res) => res?,
+                        Ok(res) => {
+                            let opened = res?;
+                            scan_task
+                                .unverified_sources
+                                .extend(opened.unverified_source);
+                            opened.blocks
+                        }
                         Err(_) => {
                             return Err(SourceError::Timeout("open stream timeout".into()).into());
                         }
@@ -429,7 +435,13 @@ where
 
                             block_stream =
                                 match tokio::time::timeout(STREAM_OPEN_TIMEOUT, reopen_fut).await {
-                                    Ok(res) => res?,
+                                    Ok(res) => {
+                                        let opened = res?;
+                                        scan_task
+                                            .unverified_sources
+                                            .extend(opened.unverified_source);
+                                        opened.blocks
+                                    }
                                     Err(_) => {
                                         return Err(SourceError::Timeout(
                                             "open stream timeout (retry)".into(),
@@ -732,6 +744,8 @@ pub(crate) struct ScanTask {
     pub(crate) transparent_addresses: HashMap<String, TransparentAddressId>,
     // the chain height when the task was selected, which the rolling checkpoint window of each batch hangs from
     pub(crate) chain_height: BlockHeight,
+    /// The sources of blocks that must be verified against the tree state.
+    pub(crate) unverified_sources: Vec<SourceId>,
 }
 
 impl ScanTask {
@@ -774,6 +788,7 @@ impl ScanTask {
             scan_targets,
             transparent_addresses,
             chain_height,
+            unverified_sources: Vec::new(),
         }
     }
 
@@ -846,6 +861,7 @@ impl ScanTask {
                 scan_targets: lower_task_scan_targets,
                 transparent_addresses: self.transparent_addresses.clone(),
                 chain_height: self.chain_height,
+                unverified_sources: self.unverified_sources.clone(),
             },
             ScanTask {
                 compact_blocks: upper_compact_blocks,
@@ -858,6 +874,7 @@ impl ScanTask {
                 scan_targets: upper_task_scan_targets,
                 transparent_addresses: self.transparent_addresses,
                 chain_height: self.chain_height,
+                unverified_sources: self.unverified_sources,
             },
         ))
     }
@@ -867,7 +884,10 @@ impl ScanTask {
 mod tests {
     use std::collections::{BTreeSet, HashMap};
 
-    use wallet_api::chain::{CompactBlock, CompactOrchardAction, CompactSaplingOutput, CompactTx};
+    use wallet_api::chain::{
+        BlockHash, CompactAction, CompactBlock, CompactOutputDescription, CompactTx,
+    };
+    use zcash_note_encryption::EphemeralKeyBytes;
     use zcash_protocol::consensus::BlockHeight;
 
     use crate::sync::{ScanPriority, ScanRange};
@@ -879,15 +899,26 @@ mod tests {
         orchard_actions: usize,
         ironwood_actions: usize,
     ) -> CompactBlock {
+        let output = CompactOutputDescription {
+            cmu: sapling_crypto::note::ExtractedNoteCommitment::from_bytes(&[0; 32]).unwrap(),
+            ephemeral_key: EphemeralKeyBytes([0; 32]),
+            enc_ciphertext: [0; 52],
+        };
+        let action = CompactAction::from_parts(
+            orchard::note::Nullifier::from_bytes(&[0; 32]).unwrap(),
+            orchard::note::ExtractedNoteCommitment::from_bytes(&[0; 32]).unwrap(),
+            EphemeralKeyBytes([0; 32]),
+            [0; 52],
+        );
         CompactBlock {
             height: BlockHeight::from_u32(1),
-            hash: [0; 32].into(),
-            prev_hash: [0; 32].into(),
+            hash: BlockHash([0; 32]),
+            prev_hash: BlockHash([0; 32]),
             time: 0,
             transactions: vec![CompactTx {
-                outputs: vec![CompactSaplingOutput::default(); sapling_outputs],
-                actions: vec![CompactOrchardAction::default(); orchard_actions],
-                ironwood_actions: vec![CompactOrchardAction::default(); ironwood_actions],
+                outputs: vec![output; sapling_outputs],
+                actions: vec![action.clone(); orchard_actions],
+                ironwood_actions: vec![action; ironwood_actions],
                 ..CompactTx::new(0, zcash_protocol::TxId::from_bytes([0; 32]))
             }],
             tree_sizes: None,

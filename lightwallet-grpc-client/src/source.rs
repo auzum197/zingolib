@@ -9,19 +9,23 @@ use std::{
 
 use futures::{StreamExt, TryStreamExt, future::BoxFuture};
 use hyper_util::rt::TokioIo;
-use incrementalmerkletree::Hashable;
+use incrementalmerkletree::{Hashable, frontier::Frontier};
 use lightwallet_protocol::{
     self as proto, BlockId, BlockRange, ChainSpec, Empty, GetSubtreeRootsArg, RawTransaction,
     TxFilter,
 };
-use orchard::tree::MerkleHashOrchard;
+use subtle::CtOption;
 use tonic::codegen::Service;
 use wallet_api::{
-    ChainSource, Connection, Connector, Request, Response, SourceError, SourceInfo, TransportInfo,
-    TrustLevel, chain,
+    ChainSource, Connection, Connector, Integrity, Request, Response, SourceError, SourceInfo,
+    TransportInfo,
+    chain::{self, BlockHash, CompactAction, CompactOutputDescription, OutPoint, TxOut},
 };
+use zcash_encoding::CompactSize;
+use zcash_note_encryption::EphemeralKeyBytes;
 use zcash_primitives::merkle_tree::{HashSer, read_commitment_tree};
-use zcash_protocol::{ShieldedPool, TxId, consensus::BlockHeight};
+use zcash_protocol::{ShieldedPool, TxId, consensus::BlockHeight, value::Zatoshis};
+use zcash_transparent::address::Script;
 
 use crate::{GetClientError, GrpcIndexer, Indexer};
 
@@ -71,9 +75,9 @@ impl GrpcIndexer {
         Ok(Self::from_channel(uri, channel, transport))
     }
 
-    /// Sets the trust level.
-    pub fn with_trust(mut self, trust: TrustLevel) -> Self {
-        self.info.trust = trust;
+    /// Sets the integrity.
+    pub fn with_integrity(mut self, integrity: Integrity) -> Self {
+        self.info.integrity = integrity;
         self
     }
 }
@@ -130,17 +134,17 @@ fn invalid(what: &str, error: impl std::fmt::Display) -> SourceError {
     SourceError::InvalidData(format!("{what}: {error}"))
 }
 
-fn byte_array<T>(what: &str, bytes: &[u8]) -> Result<T, SourceError>
-where
-    T: for<'a> TryFrom<&'a [u8], Error = chain::InvalidLength>,
-{
-    T::try_from(bytes).map_err(|e| invalid(what, e))
+fn bytes<const N: usize>(what: &str, bytes: &[u8]) -> Result<[u8; N], SourceError> {
+    bytes
+        .try_into()
+        .map_err(|_| invalid(what, format!("expected {N} bytes, found {}", bytes.len())))
 }
 
-fn txid(what: &str, bytes: &[u8]) -> Result<TxId, SourceError> {
-    <[u8; 32]>::try_from(bytes)
-        .map(TxId::from_bytes)
-        .map_err(|_| invalid(what, format!("expected 32 bytes, found {}", bytes.len())))
+/// A value of a protocol type, or an error if the bytes are outside its field.
+fn element<T>(what: &str, value: CtOption<T>) -> Result<T, SourceError> {
+    value
+        .into_option()
+        .ok_or_else(|| invalid(what, "not a valid field element"))
 }
 
 fn height(what: &str, height: u64) -> Result<BlockHeight, SourceError> {
@@ -154,7 +158,7 @@ fn tip(tip: BlockId) -> Result<chain::BlockId, SourceError> {
         hash: if tip.hash.is_empty() {
             None
         } else {
-            Some(byte_array("tip hash", &tip.hash)?)
+            Some(BlockHash(bytes("tip hash", &tip.hash)?))
         },
     })
 }
@@ -162,8 +166,8 @@ fn tip(tip: BlockId) -> Result<chain::BlockId, SourceError> {
 fn compact_block(block: proto::CompactBlock) -> Result<chain::CompactBlock, SourceError> {
     Ok(chain::CompactBlock {
         height: height("block", block.height)?,
-        hash: byte_array("block hash", &block.hash)?,
-        prev_hash: byte_array("previous block hash", &block.prev_hash)?,
+        hash: BlockHash(bytes("block hash", &block.hash)?),
+        prev_hash: BlockHash(bytes("previous block hash", &block.prev_hash)?),
         time: block.time,
         transactions: block
             .vtx
@@ -178,42 +182,73 @@ fn compact_block(block: proto::CompactBlock) -> Result<chain::CompactBlock, Sour
     })
 }
 
-fn compact_action(
-    action: proto::CompactOrchardAction,
-) -> Result<chain::CompactOrchardAction, SourceError> {
-    Ok(chain::CompactOrchardAction {
-        nullifier: byte_array("action nullifier", &action.nullifier)?,
-        cmx: byte_array("action commitment", &action.cmx)?,
-        ephemeral_key: byte_array("action ephemeral key", &action.ephemeral_key)?,
-        ciphertext: byte_array("action ciphertext", &action.ciphertext)?,
+fn compact_output(
+    output: proto::CompactSaplingOutput,
+) -> Result<CompactOutputDescription, SourceError> {
+    Ok(CompactOutputDescription {
+        cmu: element(
+            "output commitment",
+            sapling_crypto::note::ExtractedNoteCommitment::from_bytes(&bytes(
+                "output commitment",
+                &output.cmu,
+            )?),
+        )?,
+        ephemeral_key: EphemeralKeyBytes(bytes("output ephemeral key", &output.ephemeral_key)?),
+        enc_ciphertext: bytes("output ciphertext", &output.ciphertext)?,
     })
+}
+
+fn compact_action(action: proto::CompactOrchardAction) -> Result<CompactAction, SourceError> {
+    Ok(CompactAction::from_parts(
+        element(
+            "action nullifier",
+            orchard::note::Nullifier::from_bytes(&bytes("action nullifier", &action.nullifier)?),
+        )?,
+        element(
+            "action commitment",
+            orchard::note::ExtractedNoteCommitment::from_bytes(&bytes(
+                "action commitment",
+                &action.cmx,
+            )?),
+        )?,
+        EphemeralKeyBytes(bytes("action ephemeral key", &action.ephemeral_key)?),
+        bytes("action ciphertext", &action.ciphertext)?,
+    ))
+}
+
+/// A transparent output. `Script::read` needs the length of the script before its bytes.
+fn transparent_output(output: proto::TxOut) -> Result<TxOut, SourceError> {
+    let mut script = Vec::with_capacity(output.script_pub_key.len() + 9);
+    CompactSize::write(&mut script, output.script_pub_key.len())
+        .map_err(|e| invalid("output script", e))?;
+    script.extend_from_slice(&output.script_pub_key);
+
+    Ok(TxOut::new(
+        Zatoshis::from_u64(output.value).map_err(|e| invalid("output value", e))?,
+        Script::read(&script[..]).map_err(|e| invalid("output script", e))?,
+    ))
 }
 
 fn compact_tx(tx: proto::CompactTx) -> Result<chain::CompactTx, SourceError> {
     Ok(chain::CompactTx {
         index: tx.index,
-        txid: txid("txid", &tx.txid)?,
+        txid: TxId::from_bytes(bytes("txid", &tx.txid)?),
         fee: tx.fee,
         spends: tx
             .spends
             .into_iter()
             .map(|spend| {
-                Ok(chain::CompactSaplingSpend {
-                    nullifier: byte_array("spend nullifier", &spend.nf)?,
-                })
+                Ok(sapling_crypto::Nullifier(bytes(
+                    "spend nullifier",
+                    &spend.nf,
+                )?))
             })
             .collect::<Result<_, SourceError>>()?,
         outputs: tx
             .outputs
             .into_iter()
-            .map(|output| {
-                Ok(chain::CompactSaplingOutput {
-                    cmu: byte_array("output commitment", &output.cmu)?,
-                    ephemeral_key: byte_array("output ephemeral key", &output.ephemeral_key)?,
-                    ciphertext: byte_array("output ciphertext", &output.ciphertext)?,
-                })
-            })
-            .collect::<Result<_, SourceError>>()?,
+            .map(compact_output)
+            .collect::<Result<_, _>>()?,
         actions: tx
             .actions
             .into_iter()
@@ -228,64 +263,37 @@ fn compact_tx(tx: proto::CompactTx) -> Result<chain::CompactTx, SourceError> {
             .vin
             .into_iter()
             .map(|input| {
-                Ok(chain::CompactTxIn {
-                    prevout_txid: txid("input txid", &input.prevout_txid)?,
-                    prevout_index: input.prevout_index,
-                })
+                Ok(OutPoint::new(
+                    bytes("input txid", &input.prevout_txid)?,
+                    input.prevout_index,
+                ))
             })
             .collect::<Result<_, SourceError>>()?,
         transparent_outputs: tx
             .vout
             .into_iter()
-            .map(|output| chain::TxOut {
-                value: output.value,
-                script_pub_key: output.script_pub_key,
-            })
-            .collect(),
+            .map(transparent_output)
+            .collect::<Result<_, _>>()?,
     })
 }
 
 /// Reads a commitment tree in the hex form of zcashd and returns its frontier.
-fn frontier<H, const DEPTH: u8>(
-    what: &str,
-    tree: &str,
-    to_bytes: fn(&H) -> [u8; 32],
-) -> Result<Option<chain::Frontier>, SourceError>
+fn frontier<H, const DEPTH: u8>(what: &str, tree: &str) -> Result<Frontier<H, DEPTH>, SourceError>
 where
     H: HashSer + Hashable + Clone,
 {
-    if tree.is_empty() {
-        return Ok(None);
-    }
     let bytes = hex::decode(tree).map_err(|e| invalid(what, e))?;
+    if bytes.is_empty() {
+        return Ok(Frontier::empty());
+    }
     let tree = read_commitment_tree::<H, _, DEPTH>(&bytes[..]).map_err(|e| invalid(what, e))?;
-    // `size` and `to_frontier` panic on a tree that has a right leaf or a parent and no left
-    // leaf.
+    // `to_frontier` panics on a tree that has a right leaf or a parent and no left leaf.
     let filled = tree.right().is_some() || tree.parents().iter().any(Option::is_some);
     if tree.left().is_none() && filled {
         return Err(invalid(what, "tree has no left leaf"));
     }
-    let frontier = tree.to_frontier();
-    let Some(frontier) = frontier.value() else {
-        return Ok(None);
-    };
-    let node = |node: &H| chain::TreeNode::from(to_bytes(node));
 
-    chain::Frontier::new(
-        frontier.position().into(),
-        node(frontier.leaf()),
-        frontier.ommers().iter().map(node).collect(),
-    )
-    .map(Some)
-    .map_err(|e| invalid(what, e))
-}
-
-fn orchard_frontier(what: &str, tree: &str) -> Result<Option<chain::Frontier>, SourceError> {
-    frontier::<MerkleHashOrchard, { orchard::NOTE_COMMITMENT_TREE_DEPTH as u8 }>(
-        what,
-        tree,
-        MerkleHashOrchard::to_bytes,
-    )
+    Ok(tree.to_frontier())
 }
 
 fn tree_state(state: proto::TreeState) -> Result<chain::TreeState, SourceError> {
@@ -295,22 +303,18 @@ fn tree_state(state: proto::TreeState) -> Result<chain::TreeState, SourceError> 
 
     Ok(chain::TreeState {
         height: height("tree state", state.height)?,
-        hash: byte_array("tree state hash", &hash)?,
+        hash: BlockHash(bytes("tree state hash", &hash)?),
         time: state.time,
-        sapling: frontier::<_, { sapling_crypto::NOTE_COMMITMENT_TREE_DEPTH }>(
-            "sapling tree",
-            &state.sapling_tree,
-            sapling_crypto::Node::to_bytes,
-        )?,
-        orchard: orchard_frontier("orchard tree", &state.orchard_tree)?,
-        ironwood: orchard_frontier("ironwood tree", &state.ironwood_tree)?,
+        sapling: frontier("sapling tree", &state.sapling_tree)?,
+        orchard: frontier("orchard tree", &state.orchard_tree)?,
+        ironwood: frontier("ironwood tree", &state.ironwood_tree)?,
     })
 }
 
 fn subtree_root(root: proto::SubtreeRoot) -> Result<chain::SubtreeRoot, SourceError> {
     Ok(chain::SubtreeRoot {
-        root: byte_array("subtree root", &root.root_hash)?,
-        completing_block_hash: byte_array("subtree block hash", &root.completing_block_hash)?,
+        root: bytes("subtree root", &root.root_hash)?,
+        completing_block_hash: BlockHash(bytes("subtree block hash", &root.completing_block_hash)?),
         completing_block_height: height("subtree block", root.completing_block_height)?,
     })
 }
@@ -343,9 +347,9 @@ fn server_info(info: proto::LightdInfo) -> Result<chain::ServerInfo, SourceError
 
 /// zcashd prints a transaction ID in reversed byte order.
 fn submitted_txid(hex_txid: String) -> Result<TxId, SourceError> {
-    let mut bytes = hex::decode(&hex_txid).map_err(|e| invalid("submitted txid", e))?;
-    bytes.reverse();
-    txid("submitted txid", &bytes)
+    let mut txid = hex::decode(&hex_txid).map_err(|e| invalid("submitted txid", e))?;
+    txid.reverse();
+    Ok(TxId::from_bytes(bytes("submitted txid", &txid)?))
 }
 
 /// The number of a shielded pool in the lightwallet protocol.
@@ -461,7 +465,7 @@ fn timed<T>(message: T, timeout: Duration) -> tonic::Request<T> {
 }
 
 pub(crate) fn info(uri: &http::Uri, transport: TransportInfo) -> SourceInfo {
-    let mut info = SourceInfo::new(uri.to_string(), TrustLevel::Untrusted, transport);
+    let mut info = SourceInfo::new(uri.to_string(), Integrity::Unverified, transport);
     info.capabilities.address_queries = cfg!(feature = "globally-public-transparent");
     info
 }
@@ -500,38 +504,37 @@ mod conversion_tests {
         format!("01{}", hex::encode([byte; 32]))
     }
 
-    fn sapling(tree: &str) -> Result<Option<chain::Frontier>, SourceError> {
-        frontier::<_, { sapling_crypto::NOTE_COMMITMENT_TREE_DEPTH }>(
-            "tree",
-            tree,
-            sapling_crypto::Node::to_bytes,
-        )
+    fn sapling(tree: &str) -> Result<chain::SaplingFrontier, SourceError> {
+        frontier("tree", tree)
+    }
+
+    fn nodes(bytes: &[u8]) -> Vec<sapling_crypto::Node> {
+        bytes
+            .iter()
+            .map(|byte| sapling_crypto::Node::from_bytes([*byte; 32]).unwrap())
+            .collect()
     }
 
     #[test]
-    fn frontier_of_an_empty_tree_is_none() {
-        assert_eq!(sapling("").unwrap(), None);
-        assert_eq!(sapling("000000").unwrap(), None);
+    fn frontier_of_an_empty_tree_is_empty() {
+        assert_eq!(sapling("").unwrap(), Frontier::empty());
+        assert_eq!(sapling("000000").unwrap(), Frontier::empty());
     }
 
     #[test]
     fn frontier_takes_the_last_leaf_and_the_filled_parents() {
-        let one_leaf = sapling(&format!("{}0000", node(1))).unwrap().unwrap();
-        assert_eq!(one_leaf.position(), 0);
-        assert_eq!(one_leaf.leaf(), chain::TreeNode::from([1; 32]));
+        let one_leaf = sapling(&format!("{}0000", node(1))).unwrap();
+        let one_leaf = one_leaf.value().unwrap();
+        assert_eq!(u64::from(one_leaf.position()), 0);
+        assert_eq!(one_leaf.leaf(), &nodes(&[1])[0]);
         assert!(one_leaf.ommers().is_empty());
 
         let tree = format!("{}{}02{}{}", node(1), node(2), "00", node(3));
-        let six_leaves = sapling(&tree).unwrap().unwrap();
-        assert_eq!(six_leaves.position(), 5);
-        assert_eq!(six_leaves.leaf(), chain::TreeNode::from([2; 32]));
-        assert_eq!(
-            six_leaves.ommers(),
-            [
-                chain::TreeNode::from([1; 32]),
-                chain::TreeNode::from([3; 32])
-            ]
-        );
+        let six_leaves = sapling(&tree).unwrap();
+        let six_leaves = six_leaves.value().unwrap();
+        assert_eq!(u64::from(six_leaves.position()), 5);
+        assert_eq!(six_leaves.leaf(), &nodes(&[2])[0]);
+        assert_eq!(six_leaves.ommers(), nodes(&[1, 3]));
     }
 
     #[test]
@@ -566,7 +569,7 @@ mod conversion_tests {
         };
         let converted = compact_block(block.clone()).unwrap();
         assert_eq!(converted.height, BlockHeight::from_u32(5));
-        assert_eq!(converted.prev_hash, chain::BlockHash::from([2; 32]));
+        assert_eq!(converted.prev_hash, BlockHash([2; 32]));
 
         let short = proto::CompactBlock {
             hash: vec![1; 31],
@@ -593,6 +596,21 @@ mod conversion_tests {
         assert!(compact_tx(output(vec![0; 52])).is_ok());
         assert!(matches!(
             compact_tx(output(vec![0; 51])),
+            Err(SourceError::InvalidData(_))
+        ));
+    }
+
+    #[test]
+    fn commitment_outside_the_field_is_invalid() {
+        let output = |cmu| proto::CompactSaplingOutput {
+            cmu,
+            ephemeral_key: vec![0; 32],
+            ciphertext: vec![0; 52],
+        };
+
+        assert!(compact_output(output(vec![0; 32])).is_ok());
+        assert!(matches!(
+            compact_output(output(vec![0xff; 32])),
             Err(SourceError::InvalidData(_))
         ));
     }

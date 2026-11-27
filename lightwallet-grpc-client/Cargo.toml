@@ -1,5 +1,5 @@
 [package]
-name = "zingo-netutils"
+name = "lightwallet-grpc-client"
 version = "5.0.1"
 description = "network utility crate"
 authors = ["zingo@zingolabs.org"]
@@ -20,11 +20,15 @@ hyper-util = { workspace = true, features = ["tokio"] }
 incrementalmerkletree.workspace = true
 orchard.workspace = true
 sapling-crypto.workspace = true
+subtle.workspace = true
 thiserror.workspace = true
 tokio = { workspace = true, features = ["net", "sync"] }
 wallet-api.workspace = true
+zcash_encoding.workspace = true
+zcash_note_encryption.workspace = true
 zcash_primitives.workspace = true
 zcash_protocol.workspace = true
+zcash_transparent.workspace = true
 tokio-rustls.workspace = true
 tonic.workspace = true
 tracing.workspace = true

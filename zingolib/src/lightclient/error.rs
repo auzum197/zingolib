@@ -2,8 +2,8 @@
 
 use std::sync::Arc;
 
+use lightwallet_grpc_client::GetClientError;
 use pepper_sync::error::{SyncError, SyncModeError};
-use zingo_netutils::GetClientError;
 
 use crate::wallet::error::WalletError;
 
@@ -42,7 +42,7 @@ pub enum CreateError {
     #[error("gRPC client error. {0}")]
     Indexer(#[from] GetClientError),
     #[error("Failed to get the chain tip for the wallet birthday. {0}")]
-    ChainTip(#[from] zingo_netutils::Status),
+    ChainTip(#[from] wallet_api::SourceError),
 }
 
 /// Why [`crate::lightclient::LightClient::open`] failed.

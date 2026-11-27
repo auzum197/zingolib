@@ -11,7 +11,7 @@ default = ["grpc-proxy"]
 
 [dependencies]
 zingolib = { workspace = true, features = ["testutils"] }
-zingo-netutils = { workspace = true }
+lightwallet-grpc-client = { workspace = true }
 zingo-testvectors = { workspace = true }
 zingolib-common = { workspace = true }
 

@@ -48,7 +48,7 @@ where
         let chain_height_wallet_block = wallet
             .get_wallet_block(chain_height)
             .map_err(SyncError::WalletError)?;
-        if chain_height_wallet_block.block_hash().0 != *chain_height_server_block.hash.as_bytes() {
+        if chain_height_wallet_block.block_hash() != chain_height_server_block.hash {
             wallet
                 .get_sync_state_mut()
                 .map_err(SyncError::WalletError)?

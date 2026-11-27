@@ -11,11 +11,15 @@ use zcash_primitives::transaction::TxId;
 use zcash_protocol::consensus::{BlockHeight, NetworkUpgrade, Parameters as _};
 use zcash_transparent::address::TransparentAddress;
 
+use lightwallet_grpc_client::{GrpcIndexer, TcpConnector};
 use pepper_sync::{
-    error::SyncError, events::SyncEmitter, keys::transparent::TransparentAddressId,
+    SyncStrategy, error::SyncError, events::SyncEmitter, keys::transparent::TransparentAddressId,
     sync::SyncResult, wallet::SyncMode,
 };
-use zingo_netutils::{Indexer as _, lightwallet_protocol::LightdInfo};
+use wallet_api::{
+    ChainSource, EventReceiver, Failover, Integrity, RequestEvent, Router, SourceError, SourceSet,
+    chain::ServerInfo,
+};
 
 use crate::{
     config::{Birthday, ChainType, WalletConfig},
@@ -95,7 +99,9 @@ pub enum Unlock {
 ///
 /// `sync_mode` publishes the [`pepper_sync::wallet::SyncMode`] to the sync engine, which wakes on every change.
 pub struct LightClient {
-    pub(crate) indexer: zingo_netutils::GrpcIndexer,
+    sources: Arc<SourceSet>,
+    strategy: Arc<dyn SyncStrategy<ChainType, LightWallet>>,
+    events: Option<Arc<dyn EventReceiver>>,
     wallet: WalletMeta,
     sync_mode: watch::Sender<SyncMode>,
     sync_handle: Option<JoinHandle<Result<SyncResult, SyncError<WalletError>>>>,
@@ -104,33 +110,84 @@ pub struct LightClient {
     save_state: watch::Receiver<SaveState>,
 }
 
-impl LightClient {
+/// Configures the sources, the router and the sync strategy of a [`LightClient`].
+pub struct LightClientBuilder {
+    chain_type: ChainType,
+    sources: Vec<Arc<dyn ChainSource>>,
+    router: Arc<dyn Router>,
+    strategy: Arc<dyn SyncStrategy<ChainType, LightWallet>>,
+    events: Option<Arc<dyn EventReceiver>>,
+}
+
+fn source_set(
+    sources: Vec<Arc<dyn ChainSource>>,
+    router: Arc<dyn Router>,
+    events: &Option<Arc<dyn EventReceiver>>,
+) -> SourceSet {
+    let sources = SourceSet::new(sources, router);
+    match events.clone() {
+        Some(events) => sources.with_events(move |event: &RequestEvent| events.on_event(event)),
+        None => sources,
+    }
+}
+
+impl LightClientBuilder {
+    /// Adds a chain source. The order of the calls is the order of preference.
+    pub fn source(mut self, source: impl ChainSource + 'static) -> Self {
+        self.sources.push(Arc::new(source));
+        self
+    }
+
+    /// Adds an indexer at `uri` with the default connector.
+    pub fn indexer(
+        self,
+        uri: http::Uri,
+        integrity: Integrity,
+    ) -> Result<Self, lightwallet_grpc_client::GetClientError> {
+        let indexer = GrpcIndexer::with_connector(uri, TcpConnector::default())?;
+        Ok(self.source(indexer.with_integrity(integrity)))
+    }
+
+    /// Sends one [`RequestEvent`] to `receiver` for each request to a source.
+    pub fn request_events(mut self, receiver: impl EventReceiver + 'static) -> Self {
+        self.events = Some(Arc::new(receiver));
+        self
+    }
+
+    /// Replaces the default [`Failover`] router.
+    pub fn router(mut self, router: impl Router + 'static) -> Self {
+        self.router = Arc::new(router);
+        self
+    }
+
+    /// Replaces the default [`pepper_sync::Auto`] strategy.
+    pub fn sync(mut self, strategy: impl SyncStrategy<ChainType, LightWallet> + 'static) -> Self {
+        self.strategy = Arc::new(strategy);
+        self
+    }
+
     /// Creates a wallet and its client. Fails if `store` already holds a wallet.
     ///
-    /// A [`Birthday::ChainTip`] is read from the indexer, so it needs network access.
+    /// A [`Birthday::ChainTip`] is read from the sources, so it needs network access.
     #[allow(clippy::result_large_err)]
     pub async fn create(
+        self,
         store: impl WalletStore,
-        chain_type: ChainType,
-        indexer_uri: http::Uri,
         mut wallet_config: WalletConfig,
         encryption: Encryption,
-    ) -> Result<Self, CreateError> {
+    ) -> Result<LightClient, CreateError> {
         if store.load()?.is_some() {
             return Err(CreateError::AlreadyExists);
         }
-        let mut indexer = Self::connect(indexer_uri).await?;
+        let chain_type = self.chain_type;
+        let sources = source_set(self.sources, self.router, &self.events);
         let birthday = wallet_config.birthday_mut();
         if *birthday == Birthday::ChainTip {
-            let chain_tip = indexer
-                .get_latest_block(DEFAULT_REQUEST_TIMEOUT)
-                .await?
-                .height;
+            let chain_tip = u32::from(sources.tip().await?.value.height);
             let sapling_activation = chain_type
                 .activation_height(NetworkUpgrade::Sapling)
                 .map_or(0, u32::from);
-            *birthday =
-                Birthday::Height((chain_tip.saturating_sub(100) as u32).max(sapling_activation));
+            *birthday = Birthday::Height(chain_tip.saturating_sub(100).max(sapling_activation));
         }
         let encryption = match encryption {
             Encryption::None => None,
@@ -141,17 +198,22 @@ impl LightClient {
             store.write(&bytes)?;
         }
 
-        Ok(Self::assemble(store, indexer, wallet))
+        Ok(LightClient::assemble(
+            store,
+            sources,
+            self.strategy,
+            self.events,
+            wallet,
+        ))
     }
 
     /// Opens the wallet held by `store`. `unlock` must match how the wallet was stored.
     #[allow(clippy::result_large_err)]
     pub async fn open(
+        self,
         store: impl WalletStore,
-        chain_type: ChainType,
-        indexer_uri: http::Uri,
         unlock: Unlock,
-    ) -> Result<Self, OpenError> {
+    ) -> Result<LightClient, OpenError> {
         let bytes = store.load()?.ok_or(OpenError::NotFound)?;
         let passphrase = match (unlock, encryption::is_encrypted(&bytes)) {
             (Unlock::Plaintext, false) => None,
@@ -159,34 +221,79 @@ impl LightClient {
             (Unlock::Plaintext, true) => return Err(OpenError::PassphraseRequired),
             (Unlock::Passphrase(_), false) => return Err(OpenError::NotEncrypted),
         };
-        let wallet = LightWallet::read_encrypted(bytes.as_slice(), chain_type, passphrase)
+        let wallet = LightWallet::read_encrypted(bytes.as_slice(), self.chain_type, passphrase)
             .map_err(|e| match e {
                 WalletError::File(WalletFileError::Encryption(
                     WalletEncryptionError::DecryptionFailed,
                 )) => OpenError::DecryptionFailed,
                 e => OpenError::Wallet(e),
             })?;
+        let sources = source_set(self.sources, self.router, &self.events);
 
-        Ok(Self::assemble(
+        Ok(LightClient::assemble(
             store,
-            Self::connect(indexer_uri).await?,
+            sources,
+            self.strategy,
+            self.events,
             wallet,
         ))
     }
+}
 
-    async fn connect(
-        indexer_uri: http::Uri,
-    ) -> Result<zingo_netutils::GrpcIndexer, zingo_netutils::GetClientError> {
+impl LightClient {
+    /// Starts a client configuration with no sources.
+    pub fn builder(chain_type: ChainType) -> LightClientBuilder {
         // Both `ring` and `aws-lc-rs` are enabled through transitive dependencies, so rustls
         // cannot select a provider itself.
         let _ = rustls::crypto::ring::default_provider().install_default();
 
-        zingo_netutils::GrpcIndexer::new(indexer_uri).await
+        LightClientBuilder {
+            chain_type,
+            sources: Vec::new(),
+            router: Arc::new(Failover::default()),
+            strategy: Arc::new(pepper_sync::Auto),
+            events: None,
+        }
+    }
+
+    /// Creates a wallet and its client with one indexer with assumed integrity.
+    /// Fails if `store` already holds a wallet.
+    ///
+    /// A [`Birthday::ChainTip`] is read from the indexer, so it needs network access.
+    #[allow(clippy::result_large_err)]
+    pub async fn create(
+        store: impl WalletStore,
+        chain_type: ChainType,
+        indexer_uri: http::Uri,
+        wallet_config: WalletConfig,
+        encryption: Encryption,
+    ) -> Result<Self, CreateError> {
+        Self::builder(chain_type)
+            .indexer(indexer_uri, Integrity::Assumed)?
+            .create(store, wallet_config, encryption)
+            .await
+    }
+
+    /// Opens the wallet held by `store` with one indexer with assumed integrity.
+    /// `unlock` must match how the wallet was stored.
+    #[allow(clippy::result_large_err)]
+    pub async fn open(
+        store: impl WalletStore,
+        chain_type: ChainType,
+        indexer_uri: http::Uri,
+        unlock: Unlock,
+    ) -> Result<Self, OpenError> {
+        Self::builder(chain_type)
+            .indexer(indexer_uri, Integrity::Assumed)?
+            .open(store, unlock)
+            .await
     }
 
     fn assemble(
         store: impl WalletStore,
-        indexer: zingo_netutils::GrpcIndexer,
+        sources: SourceSet,
+        strategy: Arc<dyn SyncStrategy<ChainType, LightWallet>>,
+        events: Option<Arc<dyn EventReceiver>>,
         wallet: LightWallet,
     ) -> Self {
         let (sync_events, _root_receiver) =
@@ -201,7 +308,9 @@ impl LightClient {
         );
 
         LightClient {
-            indexer,
+            sources: Arc::new(sources),
+            strategy,
+            events,
             wallet,
             sync_mode: watch::Sender::new(SyncMode::NotRunning),
             sync_handle: None,
@@ -234,25 +343,28 @@ impl LightClient {
         &self.wallet.wallet_data
     }
 
-    /// Returns URI of the indexer the lightclient is connected to.
-    pub fn indexer_uri(&self) -> &http::Uri {
-        self.indexer.uri()
+    /// The source set of this client.
+    pub fn source_set(&self) -> &Arc<SourceSet> {
+        &self.sources
     }
 
-    /// Set indexer URI.
-    ///
-    /// Replaces the current gRPC client(s) with new ones that point at the provided URI.
+    /// Replaces the sources with one indexer with assumed integrity.
     pub async fn set_indexer_uri(
         &mut self,
         server: http::Uri,
-    ) -> Result<(), zingo_netutils::GetClientError> {
-        self.indexer = zingo_netutils::GrpcIndexer::new(server).await?;
+    ) -> Result<(), lightwallet_grpc_client::GetClientError> {
+        let indexer = GrpcIndexer::with_connector(server, TcpConnector::default())?;
+        self.sources = Arc::new(source_set(
+            vec![Arc::new(indexer.with_integrity(Integrity::Assumed))],
+            Arc::new(Failover::default()),
+            &self.events,
+        ));
         Ok(())
     }
 
     /// Returns server information.
-    pub async fn server_info(&mut self) -> Result<LightdInfo, zingo_netutils::Status> {
-        self.indexer.get_lightd_info(DEFAULT_REQUEST_TIMEOUT).await
+    pub async fn server_info(&self) -> Result<ServerInfo, SourceError> {
+        Ok(self.sources.info().await?.value)
     }
 
     /// Wrapper for [`crate::wallet::LightWallet::generate_unified_address`].
@@ -366,7 +478,7 @@ impl LightClient {
 impl std::fmt::Debug for LightClient {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("LightClient")
-            .field("indexer", &self.indexer)
+            .field("sources", &self.sources.sources())
             .field("wallet_meta", &self.wallet)
             .field("sync_mode", &self.sync_mode())
             .field("save_state", &*self.save_state.borrow())

@@ -4,12 +4,13 @@ use tokio::sync::mpsc::UnboundedReceiver;
 
 use tracing::instrument;
 use wallet_api::{
-    SourceError, SourceSet,
+    IntegrityBasis, Request, SourceError, SourceSet,
     chain::{BlockId, TreeState},
 };
 use zcash_protocol::consensus::BlockHeight;
 
-use crate::client::FetchRequest;
+use crate::client::{FetchRequest, Policy};
+use crate::error::ServerError;
 
 /// Receives [`self::FetchRequest`]'s via an [`tokio::sync::mpsc::UnboundedReceiver`] for queueing,
 /// prioritisation and fetching from the server.
@@ -20,6 +21,7 @@ use crate::client::FetchRequest;
 pub(crate) async fn fetch(
     mut fetch_request_receiver: UnboundedReceiver<FetchRequest>,
     sources: std::sync::Arc<SourceSet>,
+    policy: Policy,
 ) {
     let mut fetch_request_queue: Vec<FetchRequest> = Vec::new();
 
@@ -33,7 +35,7 @@ pub(crate) async fn fetch(
         let fetch_request = select_fetch_request(&mut fetch_request_queue);
 
         if let Some(request) = fetch_request {
-            fetch_from_server(&sources, request).await;
+            fetch_from_server(&sources, policy, request).await;
         }
     }
 }
@@ -83,28 +85,28 @@ fn select_fetch_request(fetch_request_queue: &mut Vec<FetchRequest>) -> Option<F
     }
 }
 
-async fn fetch_from_server(sources: &SourceSet, fetch_request: FetchRequest) {
+async fn fetch_from_server(sources: &SourceSet, policy: Policy, fetch_request: FetchRequest) {
     match fetch_request {
         FetchRequest::ChainTip(sender) => {
             tracing::debug!("Fetching chain tip.");
-            let _ignore_error = sender.send(get_latest_block(sources).await);
+            let _ignore_error = sender.send(get_latest_block(sources, policy).await);
         }
         FetchRequest::CompactBlock(sender, block_height) => {
             tracing::debug!("Fetching compact block. {:?}", &block_height);
-            let block = sources.block(block_height).await.map(|block| block.value);
+            let block = policy.admit(sources.block(block_height).await);
             let _ignore_error = sender.send(block);
         }
         FetchRequest::CompactBlockRange(sender, block_range) => {
             tracing::debug!("Fetching compact blocks. {:?}", &block_range);
-            let block_stream = sources.blocks(block_range).await.map(|blocks| blocks.value);
+            let checkable = checkable(sources, block_range.end - 1);
+            let block_stream = policy.admit_blocks(sources.blocks(block_range).await, checkable);
             let _ignore_error = sender.send(block_stream);
         }
         FetchRequest::NullifierRange(sender, block_range) => {
             tracing::debug!("Fetching nullifiers. {:?}", &block_range);
-            let block_stream = sources
-                .nullifiers(block_range)
-                .await
-                .map(|blocks| blocks.value);
+            let checkable = checkable(sources, block_range.end - 1);
+            let block_stream =
+                policy.admit_blocks(sources.nullifiers(block_range).await, checkable);
             let _ignore_error = sender.send(block_stream);
         }
         #[cfg(not(feature = "darkside_test"))]
@@ -114,20 +116,27 @@ async fn fetch_from_server(sources: &SourceSet, fetch_request: FetchRequest) {
                 start_index,
                 pool
             );
-            let subtree_roots = sources
-                .subtree_roots(pool, start_index, max_entries)
-                .await
-                .map(|roots| roots.value);
+            let subtree_roots =
+                policy.admit(sources.subtree_roots(pool, start_index, max_entries).await);
             let _ignore_error = sender.send(subtree_roots);
         }
         FetchRequest::TreeState(sender, block_height) => {
             tracing::debug!("Fetching tree state. {:?}", &block_height);
-            let _ignore_error = sender.send(get_tree_state(sources, block_height).await);
+            let _ignore_error = sender.send(get_tree_state(sources, policy, block_height).await);
+        }
+        FetchRequest::BoundaryTreeState(sender, block_height) => {
+            tracing::debug!("Fetching boundary tree state. {:?}", &block_height);
+            let tree_state = policy.admit_boundary(sources.tree_state(block_height).await);
+            let _ignore_error = sender.send(tree_state);
         }
         FetchRequest::Transaction(sender, txid) => {
             tracing::debug!("Fetching transaction. {:?}", txid);
-            let transaction = sources.transaction(txid).await.map(|tx| tx.value);
+            let transaction = policy.admit(sources.transaction(txid).await);
             let _ignore_error = sender.send(transaction);
+        }
+        FetchRequest::FailedVerification(source) => {
+            tracing::warn!("Blocks from source {} failed verification.", source.0);
+            sources.on_failure(source, &SourceError::FailedVerification);
         }
         FetchRequest::TransparentAddressTxs(sender, (address, block_range)) => {
             tracing::debug!(
@@ -135,27 +144,40 @@ async fn fetch_from_server(sources: &SourceSet, fetch_request: FetchRequest) {
                 &block_range,
                 &address
             );
-            let raw_transaction_stream = sources
-                .address_transactions(address, block_range)
-                .await
-                .map(|txs| txs.value);
+            let raw_transaction_stream =
+                policy.admit(sources.address_transactions(address, block_range).await);
             let _ignore_error = sender.send(raw_transaction_stream);
         }
     }
 }
 
-#[instrument(skip(sources), name = "fetch::get_latest_block", err, level = "info")]
-async fn get_latest_block(sources: &SourceSet) -> Result<BlockId, SourceError> {
-    sources.tip().await.map(|tip| tip.value)
+/// Whether the tree state at `block_height` will have a better basis than one unverified source.
+fn checkable(sources: &SourceSet, block_height: BlockHeight) -> bool {
+    sources
+        .route_info(&Request::TreeState(block_height))
+        .is_ok_and(|route| route.basis != IntegrityBasis::Unverified)
 }
 
-#[instrument(skip(sources), name = "fetch::get_tree_state", err, level = "info")]
+#[instrument(
+    skip(sources, policy),
+    name = "fetch::get_latest_block",
+    err,
+    level = "info"
+)]
+async fn get_latest_block(sources: &SourceSet, policy: Policy) -> Result<BlockId, ServerError> {
+    policy.admit(sources.tip().await)
+}
+
+#[instrument(
+    skip(sources, policy),
+    name = "fetch::get_tree_state",
+    err,
+    level = "info"
+)]
 async fn get_tree_state(
     sources: &SourceSet,
+    policy: Policy,
     block_height: BlockHeight,
-) -> Result<TreeState, SourceError> {
-    sources
-        .tree_state(block_height)
-        .await
-        .map(|tree_state| tree_state.value)
+) -> Result<TreeState, ServerError> {
+    policy.admit(sources.tree_state(block_height).await)
 }

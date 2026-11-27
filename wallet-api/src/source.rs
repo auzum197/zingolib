@@ -8,14 +8,14 @@ use crate::{Request, Response, TransportInfo};
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct SourceId(pub usize);
 
-/// How much the wallet trusts a source.
+/// Whether the wallet accepts the data of a source without a check.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[non_exhaustive]
-pub enum TrustLevel {
+pub enum Integrity {
     /// Results are accepted without a check.
-    Trusted,
+    Assumed,
     /// Results need a check or a quorum.
-    Untrusted,
+    Unverified,
 }
 
 /// The requests that a source supports.
@@ -65,8 +65,8 @@ impl Capabilities {
 pub struct SourceInfo {
     /// Name for logs and display.
     pub name: String,
-    /// Trust level.
-    pub trust: TrustLevel,
+    /// Integrity of its data.
+    pub integrity: Integrity,
     /// Transport properties.
     pub transport: TransportInfo,
     /// Supported requests.
@@ -75,10 +75,10 @@ pub struct SourceInfo {
 
 impl SourceInfo {
     /// A source with all capabilities.
-    pub fn new(name: impl Into<String>, trust: TrustLevel, transport: TransportInfo) -> Self {
+    pub fn new(name: impl Into<String>, integrity: Integrity, transport: TransportInfo) -> Self {
         Self {
             name: name.into(),
-            trust,
+            integrity,
             transport,
             capabilities: Capabilities::all(),
         }

@@ -1,26 +1,26 @@
 //! The set of configured sources and the execution of routes.
 
-use std::{ops::Range, sync::Arc};
+use std::{ops::Range, sync::Arc, time::Instant};
 
 use futures::{StreamExt, TryStreamExt, future::join_all, stream};
 use zcash_protocol::{ShieldedPool, TxId, consensus::BlockHeight};
 
 use crate::{
-    ChainSource, Failover, Request, Response, ResponseStream, Route, Router, SourceError, SourceId,
-    SourceInfo, TransportInfo, TrustLevel,
+    ChainSource, EventReceiver, Failover, Integrity, Request, RequestEvent, RequestKind, Response,
+    ResponseStream, Route, Router, SourceError, SourceId, SourceInfo, TransportInfo,
     chain::{BlockId, CompactBlock, RawTransaction, ServerInfo, SubtreeRoot, TreeState},
 };
 
-/// Why the caller can trust a result.
+/// Why the caller can accept a result.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[non_exhaustive]
-pub enum TrustBasis {
-    /// The result is from a trusted source.
-    TrustedSource,
+pub enum IntegrityBasis {
+    /// The result is from a source with assumed integrity.
+    Assumed,
     /// This number of sources returned the same result.
     Quorum(usize),
-    /// The result is from one untrusted source.
-    UntrustedSource,
+    /// The result is from one unverified source.
+    Unverified,
 }
 
 /// A result and where it came from.
@@ -30,16 +30,16 @@ pub struct Fetched<T> {
     pub value: T,
     /// Its source.
     pub source: SourceId,
-    /// Why it can be trusted.
-    pub basis: TrustBasis,
+    /// Why it can be accepted.
+    pub basis: IntegrityBasis,
 }
 
 /// What a request will get from the current route.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[non_exhaustive]
 pub struct RouteInfo {
-    /// Expected trust basis of the result.
-    pub basis: TrustBasis,
+    /// Expected integrity basis of the result.
+    pub basis: IntegrityBasis,
     /// The weakest transport properties on the route.
     pub transport: TransportInfo,
 }
@@ -67,6 +67,7 @@ pub struct SourceSet {
     sources: Vec<Arc<dyn ChainSource>>,
     infos: Vec<SourceInfo>,
     router: Arc<dyn Router>,
+    events: Option<Arc<dyn EventReceiver>>,
 }
 
 impl SourceSet {
@@ -77,7 +78,14 @@ impl SourceSet {
             sources,
             infos,
             router,
+            events: None,
         }
+    }
+
+    /// Sends one [`RequestEvent`] to `receiver` for each request to a source.
+    pub fn with_events(mut self, receiver: impl EventReceiver + 'static) -> Self {
+        self.events = Some(Arc::new(receiver));
+        self
     }
 
     /// A set of one source with a [`Failover`] router.
@@ -105,13 +113,17 @@ impl SourceSet {
         if infos.is_empty() {
             return Err(SourceError::NoSource);
         }
-        let any_trusted = infos.iter().any(|info| info.trust == TrustLevel::Trusted);
-        let all_trusted = infos.iter().all(|info| info.trust == TrustLevel::Trusted);
+        let any_assumed = infos
+            .iter()
+            .any(|info| info.integrity == Integrity::Assumed);
+        let all_assumed = infos
+            .iter()
+            .all(|info| info.integrity == Integrity::Assumed);
         let basis = match quorum {
-            Some(_) if any_trusted => TrustBasis::TrustedSource,
-            Some(need) => TrustBasis::Quorum(need),
-            None if all_trusted => TrustBasis::TrustedSource,
-            None => TrustBasis::UntrustedSource,
+            Some(_) if any_assumed => IntegrityBasis::Assumed,
+            Some(need) => IntegrityBasis::Quorum(need),
+            None if all_assumed => IntegrityBasis::Assumed,
+            None => IntegrityBasis::Unverified,
         };
         let transport = infos[1..].iter().fold(infos[0].transport, |weakest, info| {
             weakest.weakest(info.transport)
@@ -207,22 +219,31 @@ impl SourceSet {
         typed!(self.send(Request::Broadcast(transaction)).await?, Broadcast)
     }
 
-    fn basis(&self, source: SourceId) -> TrustBasis {
-        match self.infos[source.0].trust {
-            TrustLevel::Trusted => TrustBasis::TrustedSource,
-            TrustLevel::Untrusted => TrustBasis::UntrustedSource,
+    fn basis(&self, source: SourceId) -> IntegrityBasis {
+        match self.infos[source.0].integrity {
+            Integrity::Assumed => IntegrityBasis::Assumed,
+            Integrity::Unverified => IntegrityBasis::Unverified,
         }
     }
 
     async fn send_to(&self, id: SourceId, request: Request) -> Result<Response, SourceError> {
         let source = self.sources.get(id.0).ok_or(SourceError::NoSource)?;
-        match source.execute(request).await {
+        let (kind, start) = (request.kind(), Instant::now());
+        let response = source.execute(request).await;
+        emit(&self.events, id, kind, start, response.as_ref().err());
+        match response {
             Ok(response) => {
                 self.router.on_success(id);
                 Ok(match response {
-                    Response::Blocks(blocks) => Response::Blocks(self.watch(id, blocks)),
-                    Response::SubtreeRoots(roots) => Response::SubtreeRoots(self.watch(id, roots)),
-                    Response::Transactions(txs) => Response::Transactions(self.watch(id, txs)),
+                    Response::Blocks(blocks) => {
+                        Response::Blocks(self.watch(id, kind, start, blocks))
+                    }
+                    Response::SubtreeRoots(roots) => {
+                        Response::SubtreeRoots(self.watch(id, kind, start, roots))
+                    }
+                    Response::Transactions(txs) => {
+                        Response::Transactions(self.watch(id, kind, start, txs))
+                    }
                     unary => unary,
                 })
             }
@@ -233,10 +254,17 @@ impl SourceSet {
         }
     }
 
-    fn watch<T: 'static>(&self, id: SourceId, stream: ResponseStream<T>) -> ResponseStream<T> {
-        let router = self.router.clone();
+    fn watch<T: 'static>(
+        &self,
+        id: SourceId,
+        kind: RequestKind,
+        start: Instant,
+        stream: ResponseStream<T>,
+    ) -> ResponseStream<T> {
+        let (router, events) = (self.router.clone(), self.events.clone());
         stream
             .inspect_err(move |e| {
+                emit(&events, id, kind, start, Some(e));
                 router.on_failure(id, e);
             })
             .boxed()
@@ -296,17 +324,17 @@ impl SourceSet {
             }
         }
 
-        let trusted = responses
+        let assumed = responses
             .iter()
-            .position(|(id, _)| self.infos[id.0].trust == TrustLevel::Trusted);
-        let (source, value, basis) = if let Some(position) = trusted {
+            .position(|(id, _)| self.infos[id.0].integrity == Integrity::Assumed);
+        let (source, value, basis) = if let Some(position) = assumed {
             let (source, value) = responses.swap_remove(position);
-            (source, value, TrustBasis::TrustedSource)
+            (source, value, IntegrityBasis::Assumed)
         } else if responses.len() < need {
             return Err(error);
         } else {
             let (source, value) = agreed(&responses, need).ok_or(SourceError::Disagreement)?;
-            (source, value, TrustBasis::Quorum(need))
+            (source, value, IntegrityBasis::Quorum(need))
         };
 
         for (id, response) in &responses {
@@ -320,6 +348,23 @@ impl SourceSet {
             source,
             basis,
         })
+    }
+}
+
+fn emit(
+    events: &Option<Arc<dyn EventReceiver>>,
+    source: SourceId,
+    kind: RequestKind,
+    start: Instant,
+    error: Option<&SourceError>,
+) {
+    if let Some(events) = events {
+        events.on_event(&RequestEvent {
+            source,
+            kind,
+            duration: start.elapsed(),
+            result: error.cloned().map_or(Ok(()), Err),
+        });
     }
 }
 
@@ -413,15 +458,19 @@ impl Collected {
 
 #[cfg(test)]
 mod tests {
-    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::{
+        sync::{
+            Mutex,
+            atomic::{AtomicUsize, Ordering},
+        },
+        time::Duration,
+    };
 
     use futures::future::BoxFuture;
+    use incrementalmerkletree::frontier::Frontier;
 
     use super::*;
-    use crate::{
-        Bandwidth, Quorum, SourceExposure,
-        chain::{BlockHash, TreeNode},
-    };
+    use crate::{Bandwidth, Quorum, SourceExposure, SourceHealth, chain::BlockHash};
 
     struct Mock {
         info: SourceInfo,
@@ -432,12 +481,13 @@ mod tests {
         submit_error: Option<SourceError>,
         breaks_streams: bool,
         wrong_kind: bool,
+        delay: Duration,
         calls: AtomicUsize,
     }
 
-    fn mock(trust: TrustLevel, tip: u32, tree: &'static str) -> Arc<Mock> {
+    fn mock(integrity: Integrity, tip: u32, tree: &'static str) -> Arc<Mock> {
         Arc::new(Mock {
-            info: SourceInfo::new("mock", trust, TransportInfo::direct()),
+            info: SourceInfo::new("mock", integrity, TransportInfo::direct()),
             tip,
             tree,
             roots: &[],
@@ -445,12 +495,13 @@ mod tests {
             submit_error: None,
             breaks_streams: false,
             wrong_kind: false,
+            delay: Duration::ZERO,
             calls: AtomicUsize::new(0),
         })
     }
 
     fn custom(change: impl FnOnce(&mut Mock)) -> Arc<Mock> {
-        let mut source = mock(UNTRUSTED, 10, "a");
+        let mut source = mock(UNVERIFIED, 10, "a");
         change(Arc::get_mut(&mut source).unwrap());
         source
     }
@@ -470,6 +521,7 @@ mod tests {
 
         fn execute(&self, request: Request) -> BoxFuture<'_, Result<Response, SourceError>> {
             self.calls.fetch_add(1, Ordering::Relaxed);
+            std::thread::sleep(self.delay);
             Box::pin(async move {
                 if self.fails {
                     return Err(SourceError::Unavailable("down".into()));
@@ -486,9 +538,9 @@ mod tests {
                         height: HEIGHT,
                         hash: marked(self.tree),
                         time: 0,
-                        sapling: None,
-                        orchard: None,
-                        ironwood: None,
+                        sapling: Frontier::empty(),
+                        orchard: Frontier::empty(),
+                        ironwood: Frontier::empty(),
                     }),
                     Request::Blocks(_) if self.breaks_streams => {
                         let cut = Err(SourceError::Interrupted("cut".into()));
@@ -506,8 +558,8 @@ mod tests {
                     Request::SubtreeRoots { .. } => {
                         let roots = self.roots.iter().map(|root| {
                             Ok(SubtreeRoot {
-                                root: TreeNode::from([*root; 32]),
-                                completing_block_hash: BlockHash::default(),
+                                root: [*root; 32],
+                                completing_block_hash: BlockHash([0; 32]),
                                 completing_block_height: HEIGHT,
                             })
                         });
@@ -540,25 +592,103 @@ mod tests {
         )
     }
 
-    const UNTRUSTED: TrustLevel = TrustLevel::Untrusted;
+    const UNVERIFIED: Integrity = Integrity::Unverified;
 
     /// A block hash that stands for one version of a tree state.
     fn marked(tree: &str) -> BlockHash {
-        BlockHash::from([tree.as_bytes()[0]; 32])
+        BlockHash([tree.as_bytes()[0]; 32])
     }
     const HEIGHT: BlockHeight = BlockHeight::from_u32(1);
 
     #[tokio::test]
     async fn failover_uses_the_next_source_and_remembers_the_failure() {
-        let (down, up) = (failing(), mock(UNTRUSTED, 10, "a"));
+        let (down, up) = (failing(), mock(UNVERIFIED, 10, "a"));
         let sources = set(&[&down, &up], Failover::default());
 
         let tip = sources.tip().await.unwrap();
         assert_eq!(tip.source, SourceId(1));
-        assert_eq!(tip.basis, TrustBasis::UntrustedSource);
+        assert_eq!(tip.basis, IntegrityBasis::Unverified);
 
         sources.tip().await.unwrap();
         assert_eq!(down.calls.load(Ordering::Relaxed), 1);
+    }
+
+    fn recorded() -> (Arc<Mutex<Vec<RequestEvent>>>, impl EventReceiver) {
+        let events = Arc::new(Mutex::new(Vec::new()));
+        let copy = events.clone();
+        (events, move |event: &RequestEvent| {
+            copy.lock().unwrap().push(event.clone());
+        })
+    }
+
+    #[tokio::test]
+    async fn each_request_to_a_source_gives_one_event() {
+        let (down, up) = (failing(), mock(UNVERIFIED, 10, "a"));
+        let (events, receiver) = recorded();
+        let sources = set(&[&down, &up], Failover::default()).with_events(receiver);
+
+        sources.tip().await.unwrap();
+
+        let events = events.lock().unwrap();
+        assert_eq!(events.len(), 2);
+        assert_eq!(
+            (events[0].source, events[0].kind),
+            (SourceId(0), RequestKind::Tip)
+        );
+        assert_eq!(
+            events[0].result,
+            Err(SourceError::Unavailable("down".into()))
+        );
+        assert_eq!(
+            (events[1].source, &events[1].result),
+            (SourceId(1), &Ok(()))
+        );
+    }
+
+    #[tokio::test]
+    async fn failure_inside_a_stream_gives_a_second_event() {
+        let broken = custom(|source| source.breaks_streams = true);
+        let (events, receiver) = recorded();
+        let sources = set(&[&broken], Failover::default()).with_events(receiver);
+
+        let blocks = sources.blocks(HEIGHT..HEIGHT + 5).await.unwrap();
+        assert_eq!(events.lock().unwrap().len(), 1);
+        assert!(blocks.value.try_collect::<Vec<_>>().await.is_err());
+
+        let events = events.lock().unwrap();
+        assert_eq!(events[0].result, Ok(()));
+        assert_eq!(events[1].kind, RequestKind::Blocks);
+        assert_eq!(
+            events[1].result,
+            Err(SourceError::Interrupted("cut".into()))
+        );
+    }
+
+    #[tokio::test]
+    async fn event_has_the_duration_of_the_request() {
+        let delay = Duration::from_millis(20);
+        let slow = custom(|source| source.delay = delay);
+        let (events, receiver) = recorded();
+        let sources = set(&[&slow], Failover::default()).with_events(receiver);
+
+        sources.tip().await.unwrap();
+
+        assert!(events.lock().unwrap()[0].duration >= delay);
+    }
+
+    #[tokio::test]
+    async fn router_in_an_arc_gives_the_health_of_each_source() {
+        let router = Arc::new(Failover::default());
+        let (down, up) = (failing(), mock(UNVERIFIED, 10, "a"));
+        let sources = set(&[&down, &up], router.clone());
+        assert_eq!(router.health(SourceId(0)), SourceHealth::Healthy);
+
+        sources.tip().await.unwrap();
+        assert_eq!(router.health(SourceId(0)), SourceHealth::Failing(1));
+        assert_eq!(router.health(SourceId(1)), SourceHealth::Healthy);
+
+        sources.on_failure(SourceId(1), &SourceError::FailedVerification);
+        assert_eq!(router.health(SourceId(1)), SourceHealth::Dropped);
     }
 
     #[tokio::test]
@@ -620,7 +750,7 @@ mod tests {
     #[tokio::test]
     async fn route_info_gives_the_weakest_transport_on_the_route() {
         let (direct, private) = (
-            mock(UNTRUSTED, 10, "a"),
+            mock(UNVERIFIED, 10, "a"),
             custom(|source| {
                 let transport = &mut source.info.transport;
                 transport.exposed_to_source = SourceExposure::Nothing;
@@ -647,7 +777,7 @@ mod tests {
         ] {
             let (first, next) = (
                 custom(|source| source.submit_error = Some(error.clone())),
-                mock(UNTRUSTED, 10, "a"),
+                mock(UNVERIFIED, 10, "a"),
             );
             let sources = set(&[&first, &next], Failover::default());
 
@@ -662,7 +792,7 @@ mod tests {
             custom(|source| {
                 source.submit_error = Some(SourceError::Unavailable("no route".into()));
             }),
-            mock(UNTRUSTED, 10, "a"),
+            mock(UNVERIFIED, 10, "a"),
         );
         let sources = set(&[&unreachable, &next], Failover::default());
 
@@ -676,7 +806,7 @@ mod tests {
     async fn stream_error_moves_the_next_request_to_another_source() {
         let (broken, good) = (
             custom(|source| source.breaks_streams = true),
-            mock(UNTRUSTED, 10, "a"),
+            mock(UNVERIFIED, 10, "a"),
         );
         let sources = set(&[&broken, &good], Failover::default());
         let range = HEIGHT..HEIGHT + 5;
@@ -704,15 +834,15 @@ mod tests {
     #[tokio::test]
     async fn quorum_returns_the_majority_response_and_drops_the_other_source() {
         let (a, liar, c) = (
-            mock(UNTRUSTED, 10, "a"),
-            mock(UNTRUSTED, 10, "b"),
-            mock(UNTRUSTED, 10, "a"),
+            mock(UNVERIFIED, 10, "a"),
+            mock(UNVERIFIED, 10, "b"),
+            mock(UNVERIFIED, 10, "a"),
         );
         let sources = set(&[&a, &liar, &c], Quorum::new(2));
 
         let tree_state = sources.tree_state(HEIGHT).await.unwrap();
         assert_eq!(tree_state.value.hash, marked("a"));
-        assert_eq!(tree_state.basis, TrustBasis::Quorum(2));
+        assert_eq!(tree_state.basis, IntegrityBasis::Quorum(2));
 
         sources.tree_state(HEIGHT).await.unwrap();
         assert_eq!(liar.calls.load(Ordering::Relaxed), 1);
@@ -720,7 +850,7 @@ mod tests {
 
     #[tokio::test]
     async fn quorum_fails_without_enough_equal_responses() {
-        let (a, b) = (mock(UNTRUSTED, 10, "a"), mock(UNTRUSTED, 10, "b"));
+        let (a, b) = (mock(UNVERIFIED, 10, "a"), mock(UNVERIFIED, 10, "b"));
         let sources = set(&[&a, &b], Quorum::new(2));
 
         assert_eq!(
@@ -731,7 +861,7 @@ mod tests {
 
     #[tokio::test]
     async fn quorum_fails_with_too_few_responses() {
-        let (a, down) = (mock(UNTRUSTED, 10, "a"), failing());
+        let (a, down) = (mock(UNVERIFIED, 10, "a"), failing());
         let sources = set(&[&a, &down], Quorum::new(2));
 
         assert_eq!(
@@ -743,9 +873,9 @@ mod tests {
     #[tokio::test]
     async fn quorum_tip_is_the_height_that_enough_sources_reached() {
         let (a, b, c) = (
-            mock(UNTRUSTED, 12, "a"),
-            mock(UNTRUSTED, 11, "a"),
-            mock(UNTRUSTED, 10, "a"),
+            mock(UNVERIFIED, 12, "a"),
+            mock(UNVERIFIED, 11, "a"),
+            mock(UNVERIFIED, 10, "a"),
         );
         let sources = set(&[&a, &b, &c], Quorum::new(2));
 
@@ -770,10 +900,7 @@ mod tests {
             .unwrap();
         let roots: Vec<_> = roots.value.try_collect().await.unwrap();
         assert_eq!(
-            roots
-                .iter()
-                .map(|root| root.root.as_bytes()[0])
-                .collect::<Vec<_>>(),
+            roots.iter().map(|root| root.root[0]).collect::<Vec<_>>(),
             [1, 2]
         );
 
@@ -786,40 +913,40 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn trusted_source_overrules_the_other_sources() {
-        let (a, b, trusted) = (
-            mock(UNTRUSTED, 10, "a"),
-            mock(UNTRUSTED, 10, "a"),
-            mock(TrustLevel::Trusted, 10, "b"),
+    async fn assumed_source_overrules_the_other_sources() {
+        let (a, b, assumed) = (
+            mock(UNVERIFIED, 10, "a"),
+            mock(UNVERIFIED, 10, "a"),
+            mock(Integrity::Assumed, 10, "b"),
         );
-        let sources = set(&[&a, &b, &trusted], AskAll);
+        let sources = set(&[&a, &b, &assumed], AskAll);
 
         let tree_state = sources.tree_state(HEIGHT).await.unwrap();
         assert_eq!(tree_state.value.hash, marked("b"));
-        assert_eq!(tree_state.basis, TrustBasis::TrustedSource);
+        assert_eq!(tree_state.basis, IntegrityBasis::Assumed);
     }
 
     #[tokio::test]
-    async fn quorum_router_prefers_a_trusted_source() {
-        let (a, trusted) = (mock(UNTRUSTED, 10, "a"), mock(TrustLevel::Trusted, 10, "b"));
-        let sources = set(&[&a, &trusted], Quorum::new(2));
+    async fn quorum_router_prefers_an_assumed_source() {
+        let (a, assumed) = (mock(UNVERIFIED, 10, "a"), mock(Integrity::Assumed, 10, "b"));
+        let sources = set(&[&a, &assumed], Quorum::new(2));
 
         let tree_state = sources.tree_state(HEIGHT).await.unwrap();
-        assert_eq!(tree_state.basis, TrustBasis::TrustedSource);
+        assert_eq!(tree_state.basis, IntegrityBasis::Assumed);
         assert_eq!(a.calls.load(Ordering::Relaxed), 0);
     }
 
     #[tokio::test]
     async fn quorum_router_sends_block_ranges_to_one_source() {
-        let (a, b) = (mock(UNTRUSTED, 10, "a"), mock(UNTRUSTED, 10, "a"));
+        let (a, b) = (mock(UNVERIFIED, 10, "a"), mock(UNVERIFIED, 10, "a"));
         let sources = set(&[&a, &b], Quorum::new(2));
 
         let range = HEIGHT..HEIGHT + 5;
         let info = sources.route_info(&Request::Blocks(range.clone())).unwrap();
-        assert_eq!(info.basis, TrustBasis::UntrustedSource);
+        assert_eq!(info.basis, IntegrityBasis::Unverified);
         assert_eq!(
             sources.route_info(&Request::Tip).unwrap().basis,
-            TrustBasis::Quorum(2)
+            IntegrityBasis::Quorum(2)
         );
 
         sources.blocks(range).await.unwrap();

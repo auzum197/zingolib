@@ -10,13 +10,11 @@ use zcash_client_backend::zip321::TransactionRequest;
 use zcash_primitives::transaction::{TxId, fees::zip317};
 use zcash_protocol::consensus::Parameters as _;
 
-use zingo_netutils::Indexer as _;
-use zingo_netutils::lightwallet_protocol::RawTransaction;
 use zingolib_common::status::ConfirmationStatus;
 
 use super::error::{CalculateTransactionError, SendError, TransmissionError};
 use super::proposal::ZingoProposal;
-use crate::lightclient::{DEFAULT_REQUEST_TIMEOUT, LightClient};
+use crate::lightclient::LightClient;
 use crate::wallet::LightWallet;
 use crate::wallet::error::{KeyError, WalletError};
 use crate::wallet::output::OutputRef;
@@ -251,16 +249,10 @@ impl LightClient {
             let mut retry_count = 0;
             let txid_from_server = loop {
                 let transmission_result = self
-                    .indexer
-                    .clone()
-                    .send_transaction(
-                        RawTransaction {
-                            data: transaction_bytes.clone(),
-                            height: height.into(),
-                        },
-                        DEFAULT_REQUEST_TIMEOUT,
-                    )
+                    .source_set()
+                    .submit_transaction(transaction_bytes.clone())
                     .await
+                    .map(|sent| sent.value)
                     .map_err(|e| {
                         SendError::TransmissionError(TransmissionError::TransmissionFailed(
                             format!("{e:?}"),
@@ -296,9 +288,6 @@ impl LightClient {
                 .update_status(ConfirmationStatus::Transmitted(height), crate::utils::now());
             wallet.mark_dirty();
 
-            let txid_from_server =
-                crate::utils::conversion::txid_from_hex_encoded_str(txid_from_server.as_str())
-                    .map_err(WalletError::ConversionFailed)?;
             if txid_from_server != *txid {
                 return Err(SendError::TransmissionError(
                     TransmissionError::IncorrectTxidFromServer(*txid, txid_from_server),

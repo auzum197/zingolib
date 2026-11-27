@@ -4,8 +4,8 @@ use std::convert::Infallible;
 
 use shardtree::error::ShardTreeError;
 use zcash_primitives::{block::BlockHash, transaction::TxId};
+use zcash_protocol::PoolType;
 use zcash_protocol::consensus::BlockHeight;
-use zcash_protocol::{PoolType, ShieldedPool};
 
 use crate::wallet::OutputId;
 
@@ -92,11 +92,13 @@ impl ServerError {
             ServerError::RequestFailed(_) => false,
 
             // Bad data from server — retrying the same server won't help.
-            ServerError::InvalidFrontier(_)
-            | ServerError::InvalidTransaction(_)
+            ServerError::InvalidTransaction(_)
             | ServerError::InvalidSubtreeRoot
             | ServerError::ChainVerificationError
-            | ServerError::GenesisBlockOnly => false,
+            | ServerError::FrontierMismatch { .. }
+            | ServerError::GenesisBlockOnly
+            | ServerError::IntegrityRequired
+            | ServerError::UnverifiedTreeState => false,
         }
     }
 }
@@ -151,12 +153,14 @@ impl ServerError {
             ServerError::FetcherDropped => SyncRecoveryObservables::MaybeRecoverableServer,
             // gRPC request failure or bad data — try a different server.
             ServerError::RequestFailed(_)
-            | ServerError::InvalidFrontier(_)
             | ServerError::InvalidTransaction(_)
             | ServerError::InvalidSubtreeRoot
-            | ServerError::ChainVerificationError => SyncRecoveryObservables::ServerUnavailable,
+            | ServerError::ChainVerificationError
+            | ServerError::FrontierMismatch { .. } => SyncRecoveryObservables::ServerUnavailable,
             // Empty chain — no point retrying anywhere.
-            ServerError::GenesisBlockOnly => SyncRecoveryObservables::Abort,
+            ServerError::GenesisBlockOnly
+            | ServerError::IntegrityRequired
+            | ServerError::UnverifiedTreeState => SyncRecoveryObservables::Abort,
         }
     }
 }
@@ -197,20 +201,6 @@ pub enum ScanError {
     /// Continuity error.
     #[error("continuity error. {0}")]
     ContinuityError(#[from] ContinuityError),
-    /// Invalid encoding of a compact output or action
-    #[error("{0}")]
-    EncodingError(#[from] EncodingInvalid),
-    /// Invalid orchard nullifier
-    #[error("invalid orchard nullifier")]
-    InvalidOrchardNullifier,
-    /// Invalid sapling output
-    // TODO: add output data
-    #[error("invalid sapling output")]
-    InvalidSaplingOutput,
-    /// Invalid orchard action
-    // TODO: add output data
-    #[error("invalid orchard action")]
-    InvalidOrchardAction,
     /// Incorrect tree size
     #[error(
         "incorrect tree size. {shielded_protocol} tree size recorded in block metadata {block_metadata_size} does not match calculated size {calculated_size}"
@@ -242,34 +232,6 @@ pub enum ScanError {
     /// Failed to parse encoded address.
     #[error("failed to parse encoded address. {0}")]
     AddressParseError(#[from] zcash_address::unified::ParseError),
-}
-
-/// The encoding of a compact Sapling output or compact Orchard action was invalid.
-#[derive(Debug, thiserror::Error)]
-#[error("{pool_type:?} output {index} of transaction {txid} was improperly encoded.")]
-pub struct EncodingInvalid {
-    pub(crate) at_height: BlockHeight,
-    pub(crate) txid: TxId,
-    pub(crate) pool_type: ShieldedPool,
-    pub(crate) index: usize,
-    pub(crate) error: CompactFormatError,
-}
-
-/// An error indicating that a field of a compact format structure could not be parsed.
-#[derive(Clone, Debug)]
-pub enum CompactFormatError {
-    /// A field value did not represent a valid protocol element.
-    InvalidValue,
-}
-
-impl std::fmt::Display for CompactFormatError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            CompactFormatError::InvalidValue => {
-                write!(f, "Compact format field is not a valid protocol element")
-            }
-        }
-    }
 }
 
 /// Block continuity errors.
@@ -307,9 +269,6 @@ pub enum ServerError {
     /// Server request failed.
     #[error("server request failed. {0}")]
     RequestFailed(#[from] wallet_api::SourceError),
-    /// Server returned invalid frontier.
-    #[error("server returned invalid frontier. {0}")]
-    InvalidFrontier(std::io::Error),
     /// Server returned invalid transaction.
     #[error("server returned invalid transaction. {0}")]
     InvalidTransaction(std::io::Error),
@@ -328,6 +287,27 @@ pub enum ServerError {
     /// Server reports only the genesis block exists.
     #[error("server reports only the genesis block exists.")]
     GenesisBlockOnly,
+    /// The note commitments in a block range do not lead to the tree state at its end.
+    #[error(
+        "the {pool} note commitments in blocks {start} to {end} do not lead to the tree state at {end}."
+    )]
+    FrontierMismatch {
+        /// Shielded pool
+        pool: PoolType,
+        /// First block of the range
+        start: BlockHeight,
+        /// Last block of the range
+        end: BlockHeight,
+    },
+    /// The sync strategy accepts only results with assumed integrity.
+    #[error("the sync strategy accepts only results with assumed integrity.")]
+    IntegrityRequired,
+    /// The sync strategy checks each block range, and the tree states for the check are from one
+    /// unverified source.
+    #[error(
+        "the sync strategy checks each block range, and the tree states for the check are from one unverified source."
+    )]
+    UnverifiedTreeState,
 }
 
 /// Sync mode error.
@@ -386,12 +366,6 @@ mod tests {
             fn request_failed() {
                 let e =
                     ServerError::RequestFailed(wallet_api::SourceError::Timeout("timeout".into()));
-                assert!(!e.recommend_same_server());
-            }
-
-            #[test]
-            fn invalid_frontier() {
-                let e = ServerError::InvalidFrontier(std::io::Error::other("bad frontier"));
                 assert!(!e.recommend_same_server());
             }
 
@@ -496,15 +470,6 @@ mod tests {
                 let e: TestSyncError =
                     ServerError::RequestFailed(wallet_api::SourceError::Unavailable("down".into()))
                         .into();
-                assert_eq!(
-                    e.recovery_recommendation(),
-                    SyncRecoveryObservables::ServerUnavailable
-                );
-            }
-
-            #[test]
-            fn invalid_frontier() {
-                let e = ServerError::InvalidFrontier(std::io::Error::other("bad"));
                 assert_eq!(
                     e.recovery_recommendation(),
                     SyncRecoveryObservables::ServerUnavailable

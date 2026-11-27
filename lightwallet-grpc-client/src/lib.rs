@@ -246,7 +246,7 @@ pub struct GrpcIndexer {
 }
 
 impl GrpcIndexer {
-    /// An untrusted indexer at `uri`, through a default [`TcpConnector`]. The connection
+    /// An unverified indexer at `uri`, through a default [`TcpConnector`]. The connection
     /// opens on the first request.
     pub async fn new(uri: http::Uri) -> Result<Self, GetClientError> {
         Self::with_connector(uri, TcpConnector::default())
@@ -492,7 +492,7 @@ impl Indexer for GrpcIndexer {
 
 #[cfg(test)]
 mod tests {
-    //! Unit and integration-style tests for `zingo-netutils`.
+    //! Unit and integration-style tests for `lightwallet-grpc-client`.
     //!
     //! These tests focus on:
     //! - TLS test asset sanity (`test-data/localhost.pem` + `.key`)

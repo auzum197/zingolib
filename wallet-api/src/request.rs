@@ -6,7 +6,7 @@ use futures::stream::BoxStream;
 use zcash_protocol::{ShieldedPool, TxId, consensus::BlockHeight};
 
 use crate::{
-    SourceError,
+    RequestKind, SourceError,
     chain::{BlockId, CompactBlock, RawTransaction, ServerInfo, SubtreeRoot, TreeState},
 };
 
@@ -68,6 +68,23 @@ pub enum Disclosure {
 }
 
 impl Request {
+    /// The type of this request.
+    pub fn kind(&self) -> RequestKind {
+        match self {
+            Request::Info => RequestKind::Info,
+            Request::Tip => RequestKind::Tip,
+            Request::Block(_) => RequestKind::Block,
+            Request::Blocks(_) => RequestKind::Blocks,
+            Request::Nullifiers(_) => RequestKind::Nullifiers,
+            Request::TreeState(_) => RequestKind::TreeState,
+            Request::SubtreeRoots { .. } => RequestKind::SubtreeRoots,
+            Request::Transaction(_) => RequestKind::Transaction,
+            Request::AddressTransactions { .. } => RequestKind::AddressTransactions,
+            Request::Mempool => RequestKind::Mempool,
+            Request::Broadcast(_) => RequestKind::Broadcast,
+        }
+    }
+
     /// Wallet data that this request exposes to the source.
     pub fn disclosure(&self) -> Disclosure {
         match self {
