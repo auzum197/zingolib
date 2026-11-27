@@ -19,7 +19,7 @@ use crate::{
     scan::task::ScanTask,
     wallet::{
         TreeBounds,
-        traits::{SyncBlocks, SyncNullifiers, SyncWallet},
+        traits::{SyncBlocks, SyncNullifiers, SyncTransactions, SyncWallet},
     },
 };
 
@@ -66,7 +66,7 @@ pub(crate) fn create_scan_task<W>(
     nullifier_map_limit_exceeded: bool,
 ) -> Result<Option<ScanTask>, W::Error>
 where
-    W: SyncWallet + SyncBlocks + SyncNullifiers,
+    W: SyncWallet + SyncBlocks + SyncNullifiers + SyncTransactions,
 {
     let Some(selected_range) = wallet
         .get_sync_state_mut()?
@@ -89,6 +89,7 @@ where
             BTreeSet::new(),
             HashMap::new(),
             chain_height,
+            HashMap::new(),
         )));
     }
 
@@ -108,6 +109,17 @@ where
         .map(|(id, address)| (address.clone(), *id))
         .collect();
 
+    let known_transactions = wallet
+        .get_wallet_transactions()?
+        .values()
+        .filter(|transaction| !transaction.status().is_confirmed())
+        .filter_map(|transaction| {
+            let mut bytes = Vec::new();
+            transaction.transaction().write(&mut bytes).ok()?;
+            Some((transaction.txid(), bytes))
+        })
+        .collect();
+
     Ok(Some(ScanTask::from_parts(
         selected_range,
         start_seam_block,
@@ -115,6 +127,7 @@ where
         scan_targets,
         transparent_addresses,
         chain_height,
+        known_transactions,
     )))
 }
 

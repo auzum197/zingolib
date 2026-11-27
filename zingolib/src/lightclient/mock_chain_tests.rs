@@ -1097,6 +1097,33 @@ mod strict_chain {
     }
 
     #[tokio::test]
+    async fn sent_transaction_is_not_requested_by_txid_after_it_is_mined() {
+        let mut net = MockNet::launch().await;
+        let mut sender = funded_sender(&mut net).await;
+        let txids = from_inputs::quick_send(
+            &mut sender,
+            vec![(&external_address(PoolType::ORCHARD), PAYMENT, None)],
+        )
+        .await
+        .unwrap();
+        {
+            let mut chain = net.chain.write().await;
+            chain.mine_mempool();
+            let outage = Fault::Fail(Code::Unavailable, "mock outage".to_string());
+            chain.faults.inject(Rpc::Transaction, outage);
+        }
+
+        sender.sync_and_await().await.unwrap();
+        assert_eq!(net.chain.read().await.faults.pending(Rpc::Transaction), 1);
+        let summaries = sender.transaction_summaries(false).await.unwrap();
+        let sent = summaries
+            .iter()
+            .find(|summary| summary.txid == txids[0])
+            .unwrap();
+        assert!(matches!(sent.status, ConfirmationStatus::Confirmed(_)));
+    }
+
+    #[tokio::test]
     async fn sync_recovers_from_a_truncated_block_stream() {
         let mut net = MockNet::launch().await;
         let mut recipient = net

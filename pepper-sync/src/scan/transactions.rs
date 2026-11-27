@@ -96,6 +96,7 @@ pub(crate) async fn scan_transactions(
     wallet_blocks: &BTreeMap<BlockHeight, WalletBlock>,
     outpoint_map: &mut BTreeMap<OutputId, ScanTarget>,
     transparent_addresses: HashMap<String, TransparentAddressId>,
+    known_transactions: &HashMap<TxId, Vec<u8>>,
 ) -> Result<HashMap<TxId, WalletTransaction>, ScanError> {
     let mut wallet_transactions = HashMap::with_capacity(scan_targets.len());
 
@@ -104,12 +105,29 @@ pub(crate) async fn scan_transactions(
             continue;
         }
 
-        let (transaction, block_height) = client::get_transaction_and_block_height(
-            fetch_request_sender.clone(),
-            consensus_parameters,
-            scan_target.txid,
-        )
-        .await?;
+        let known = known_transactions
+            .get(&scan_target.txid)
+            .filter(|_| {
+                wallet_blocks
+                    .get(&scan_target.block_height)
+                    .is_some_and(|block| block.txids().contains(&scan_target.txid))
+            })
+            .and_then(|bytes| {
+                let branch_id =
+                    consensus::BranchId::for_height(consensus_parameters, scan_target.block_height);
+                Transaction::read(&bytes[..], branch_id).ok()
+            });
+        let (transaction, block_height) = match known {
+            Some(transaction) => (transaction, scan_target.block_height),
+            None => {
+                client::get_transaction_and_block_height(
+                    fetch_request_sender.clone(),
+                    consensus_parameters,
+                    scan_target.txid,
+                )
+                .await?
+            }
+        };
 
         if transaction.txid() != scan_target.txid {
             #[cfg(feature = "darkside_test")]
