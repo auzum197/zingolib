@@ -16,7 +16,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   truncation there and was cleared with a truncation error instead.
 
 ### Added
-- `engine` module: re-export of `zingolib_common::engine`, the sealed traits that hold the
+- `engine` module: re-export of `ekdromos_common::engine`, the sealed traits that hold the
   operations only the sync engine performs on the wallet data.
 - `wallet::OutputId`, `keys::KeyId` and `keys::transparent::TransparentAddressId`: unversioned
   `read` and `write`, replacing the field-by-field encoding repeated in every note writer.
@@ -47,7 +47,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 - The wallet state types, the key identifiers, the scan scheduler, the scan ranges, the sync
-  configuration and their codecs moved to `zingolib-common`. Every item is re-exported from its
+  configuration and their codecs moved to `ekdromos-common`. Every item is re-exported from its
   original path, so `use pepper_sync::…` paths are unchanged.
 - `zcash_client_backend`: the `lightwalletd-tonic` feature is enabled here instead of in the
   workspace dependency.
@@ -80,9 +80,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   keeps, and struct versions older than the first release.
 - `WalletTransaction::with_outgoing_sapling_notes_for_test` and `with_ironwood_notes_for_test`
   under `test-features`, so a test transaction can carry notes in every pool at once.
-- `keys::transparent::TransparentScope`: now defined in `zingolib_common::keys` and re-exported.
+- `keys::transparent::TransparentScope`: now defined in `ekdromos_common::keys` and re-exported.
 - wallet types and `config::SyncConfig` / `config::PerformanceLevel`: inherent `read` and
-  `write` replaced by `zingolib_common::serialization::ReadableWriteable` impls. Reading now
+  `write` replaced by `ekdromos_common::serialization::ReadableWriteable` impls. Reading now
   rejects layout versions newer than the crate knows, and `write` takes `&self` for
   `SyncState` and `ShardTrees`.
 - `sync::sync` fn: added `events: SyncEmitter` parameter.
@@ -92,7 +92,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `sync::SyncStatus`: `Display` impl now summarises raw counts.
 
 ### Removed
-- `wallet_essentials` feature: the codecs always compile, in `zingolib-common`.
+- `wallet_essentials` feature: the codecs always compile, in `ekdromos-common`.
 - `WalletBlock::from_compact_block`: replaced by a crate-private function wrapping
   `WalletBlock::new`.
 - Struct layouts older than the ones the first pendrake-watch release wrote: scan target and

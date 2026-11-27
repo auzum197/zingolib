@@ -1233,6 +1233,136 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "91622ff5e7162018101f2fea40d6ebf4a78bbe5a49736a2020649edf9693679e"
 
 [[package]]
+name = "ekdromos"
+version = "5.0.0"
+dependencies = [
+ "bech32",
+ "bip0039",
+ "byteorder",
+ "chain-router",
+ "chrono",
+ "dirs",
+ "ekdromos",
+ "ekdromos-common",
+ "ekdromos-common-components",
+ "ekdromos-file-format",
+ "ekdromos-test-vectors",
+ "futures",
+ "hex",
+ "http",
+ "incrementalmerkletree",
+ "itertools 0.14.0",
+ "lightwallet-grpc-client",
+ "log",
+ "nonempty",
+ "pepper-sync",
+ "portpicker",
+ "proptest",
+ "rand 0.10.2",
+ "reqwest",
+ "ring",
+ "rust-embed",
+ "rust_decimal",
+ "rustls 0.23.42",
+ "secrecy",
+ "serde",
+ "serde_json",
+ "shardtree",
+ "tempfile",
+ "test-log",
+ "thiserror 2.0.19",
+ "tokio",
+ "tokio-stream",
+ "tonic",
+ "tracing",
+ "tracing-subscriber",
+ "zakura-address",
+ "zakura-client-backend",
+ "zakura-keys",
+ "zakura-orchard",
+ "zakura-primitives",
+ "zakura-proofs",
+ "zakura-protocol",
+ "zakura-sapling-crypto",
+ "zakura-transparent",
+ "zcash_encoding 0.4.0",
+ "zeroize",
+ "zip32",
+]
+
+[[package]]
+name = "ekdromos-common"
+version = "0.1.0"
+dependencies = [
+ "bip0039",
+ "bip32",
+ "byteorder",
+ "ekdromos-common-components",
+ "hex",
+ "incrementalmerkletree",
+ "memuse",
+ "proptest",
+ "rand 0.10.2",
+ "serde",
+ "shardtree",
+ "thiserror 2.0.19",
+ "tracing",
+ "zakura-address",
+ "zakura-client-backend",
+ "zakura-jubjub",
+ "zakura-keys",
+ "zakura-orchard",
+ "zakura-primitives",
+ "zakura-protocol",
+ "zakura-sapling-crypto",
+ "zakura-transparent",
+ "zcash_encoding 0.4.0",
+ "zip32",
+]
+
+[[package]]
+name = "ekdromos-common-components"
+version = "0.4.0"
+dependencies = [
+ "hex",
+]
+
+[[package]]
+name = "ekdromos-file-format"
+version = "0.1.0"
+dependencies = [
+ "argon2",
+ "bip0039",
+ "byteorder",
+ "chacha20poly1305 0.10.1",
+ "ekdromos-common",
+ "ekdromos-common-components",
+ "hex",
+ "incrementalmerkletree",
+ "log",
+ "pepper-sync",
+ "proptest",
+ "rand 0.10.2",
+ "secrecy",
+ "shardtree",
+ "thiserror 2.0.19",
+ "zakura-jubjub",
+ "zakura-keys",
+ "zakura-orchard",
+ "zakura-primitives",
+ "zakura-protocol",
+ "zakura-sapling-crypto",
+ "zakura-transparent",
+ "zcash_encoding 0.4.0",
+ "zeroize",
+ "zip32",
+]
+
+[[package]]
+name = "ekdromos-test-vectors"
+version = "0.0.1"
+
+[[package]]
 name = "env_filter"
 version = "2.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2722,6 +2852,7 @@ dependencies = [
  "chain-router",
  "criterion",
  "crossbeam-channel",
+ "ekdromos-common",
  "futures",
  "incrementalmerkletree",
  "memuse",
@@ -2743,7 +2874,6 @@ dependencies = [
  "zakura-protocol",
  "zakura-sapling-crypto",
  "zakura-transparent",
- "zingolib-common",
  "zip32",
 ]
 
@@ -5010,6 +5140,31 @@ dependencies = [
 ]
 
 [[package]]
+name = "watchonly-tui"
+version = "0.1.0"
+dependencies = [
+ "chrono",
+ "clap",
+ "crossterm",
+ "dirs",
+ "ekdromos",
+ "ekdromos-common",
+ "ekdromos-common-components",
+ "ekdromos-test-vectors",
+ "http",
+ "pepper-sync",
+ "qrcode",
+ "ratatui",
+ "tempfile",
+ "tokio",
+ "tracing",
+ "tracing-subscriber",
+ "zakura-keys",
+ "zakura-protocol",
+ "zip32",
+]
+
+[[package]]
 name = "web-sys"
 version = "0.3.103"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5943,161 +6098,6 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn 2.0.119",
-]
-
-[[package]]
-name = "zingo_common_components"
-version = "0.4.0"
-dependencies = [
- "hex",
-]
-
-[[package]]
-name = "zingo_test_vectors"
-version = "0.0.1"
-
-[[package]]
-name = "zingolib"
-version = "5.0.0"
-dependencies = [
- "bech32",
- "bip0039",
- "byteorder",
- "chain-router",
- "chrono",
- "dirs",
- "futures",
- "hex",
- "http",
- "incrementalmerkletree",
- "itertools 0.14.0",
- "lightwallet-grpc-client",
- "log",
- "nonempty",
- "pepper-sync",
- "portpicker",
- "proptest",
- "rand 0.10.2",
- "reqwest",
- "ring",
- "rust-embed",
- "rust_decimal",
- "rustls 0.23.42",
- "secrecy",
- "serde",
- "serde_json",
- "shardtree",
- "tempfile",
- "test-log",
- "thiserror 2.0.19",
- "tokio",
- "tokio-stream",
- "tonic",
- "tracing",
- "tracing-subscriber",
- "zakura-address",
- "zakura-client-backend",
- "zakura-keys",
- "zakura-orchard",
- "zakura-primitives",
- "zakura-proofs",
- "zakura-protocol",
- "zakura-sapling-crypto",
- "zakura-transparent",
- "zcash_encoding 0.4.0",
- "zeroize",
- "zingo_common_components",
- "zingo_test_vectors",
- "zingolib",
- "zingolib-common",
- "zingolib-file-format",
- "zip32",
-]
-
-[[package]]
-name = "zingolib-common"
-version = "0.1.0"
-dependencies = [
- "bip0039",
- "bip32",
- "byteorder",
- "hex",
- "incrementalmerkletree",
- "memuse",
- "proptest",
- "rand 0.10.2",
- "serde",
- "shardtree",
- "thiserror 2.0.19",
- "tracing",
- "zakura-address",
- "zakura-client-backend",
- "zakura-jubjub",
- "zakura-keys",
- "zakura-orchard",
- "zakura-primitives",
- "zakura-protocol",
- "zakura-sapling-crypto",
- "zakura-transparent",
- "zcash_encoding 0.4.0",
- "zingo_common_components",
- "zip32",
-]
-
-[[package]]
-name = "zingolib-file-format"
-version = "0.1.0"
-dependencies = [
- "argon2",
- "bip0039",
- "byteorder",
- "chacha20poly1305 0.10.1",
- "hex",
- "incrementalmerkletree",
- "log",
- "pepper-sync",
- "proptest",
- "rand 0.10.2",
- "secrecy",
- "shardtree",
- "thiserror 2.0.19",
- "zakura-jubjub",
- "zakura-keys",
- "zakura-orchard",
- "zakura-primitives",
- "zakura-protocol",
- "zakura-sapling-crypto",
- "zakura-transparent",
- "zcash_encoding 0.4.0",
- "zeroize",
- "zingo_common_components",
- "zingolib-common",
- "zip32",
-]
-
-[[package]]
-name = "zingolib-tui"
-version = "0.1.0"
-dependencies = [
- "chrono",
- "clap",
- "crossterm",
- "dirs",
- "http",
- "pepper-sync",
- "qrcode",
- "ratatui",
- "tempfile",
- "tokio",
- "tracing",
- "tracing-subscriber",
- "zakura-keys",
- "zakura-protocol",
- "zingo_common_components",
- "zingo_test_vectors",
- "zingolib",
- "zingolib-common",
- "zip32",
 ]
 
 [[package]]

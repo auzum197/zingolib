@@ -1,15 +1,15 @@
 #!/bin/bash
 #
-# zingolib pre-commit hook
+# ekdromos pre-commit hook
 #
-# zingolib devs can ensure consistent commits by using this pre-commit
+# ekdromos devs can ensure consistent commits by using this pre-commit
 # hook. Install with:
 #
 # $ ln -s ../../utils/git-hook-pre-commit.sh .git/hooks/pre-commit
 
 set -efuo pipefail
 
-echo 'Running zingolib pre-commit checks.'
+echo 'Running ekdromos pre-commit checks.'
 
 cd "$(git rev-parse --show-toplevel)"
 

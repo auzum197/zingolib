@@ -2,13 +2,13 @@
 members = [
     "pepper-sync",
     "chain-router",
-    "zingolib-common",
-    "zingolib-file-format",
-    "zingolib",
-    "zingolib-tui",
+    "ekdromos-common",
+    "ekdromos-file-format",
+    "ekdromos",
+    "watchonly-tui",
     "lightwallet-grpc-client",
-    "zingo_common_components",
-    "zingo_test_vectors",
+    "ekdromos-common-components",
+    "ekdromos-test-vectors",
 ]
 resolver = "2"
 
@@ -16,9 +16,9 @@ resolver = "2"
 ### Workspace
 pepper-sync = { path = "pepper-sync" }         # NOTE: for development between releases
 chain-router = { path = "chain-router" }
-zingolib-common = { path = "zingolib-common" }
-zingolib-file-format = { path = "zingolib-file-format" }
-zingolib = { path = "zingolib" }
+ekdromos-common = { path = "ekdromos-common" }
+ekdromos-file-format = { path = "ekdromos-file-format" }
+ekdromos = { path = "ekdromos" }
 
 ### Tests and Integration Tests
 criterion = "0.5"
@@ -26,7 +26,7 @@ portpicker = "0.1"
 proptest = "1.6.0"
 tempfile = "3"
 test-log = "0.2"
-zingo_test_vectors = { path = "zingo_test_vectors" }
+ekdromos-test-vectors = { path = "ekdromos-test-vectors" }
 
 ### Documentation
 indoc = "2"
@@ -37,7 +37,7 @@ log = "0.4"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 
-### Zingo-common
+### Light wallet protocol
 # The `rebuild-proto` feature regenerates the bindings from the patched crate's
 # proto files (see [patch.crates-io]), which carry the Ironwood fields the
 # checked-in generated code lacks. Requires `protoc`.
@@ -45,7 +45,7 @@ lightwallet-protocol = { version = "0.3.0", features = ["rebuild-proto"] }
 lightwallet-grpc-client = { path = "lightwallet-grpc-client", features = [
     "globally-public-transparent",
 ] }
-zingo_common_components = { path = "zingo_common_components" }
+ekdromos-common-components = { path = "ekdromos-common-components" }
 tokio-stream = { version = "0.1", features = ["net"] }
 
 ### Zcash

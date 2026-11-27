@@ -19,7 +19,7 @@ use zcash_protocol::ShieldedPool;
 use zcash_protocol::consensus::{self, BlockHeight};
 use zip32::AccountId;
 
-use zingolib_common::status::ConfirmationStatus;
+use ekdromos_common::status::ConfirmationStatus;
 
 use crate::client::{self, FetchRequest, Policy};
 use crate::config::{PerformanceLevel, SyncConfig};
@@ -56,9 +56,9 @@ pub(crate) mod transparent;
 pub(crate) mod spend;
 pub(crate) mod state;
 
-pub(crate) use zingolib_common::engine::VerifyEnd;
-pub use zingolib_common::sync::{ScanPriority, ScanRange};
-pub(crate) use zingolib_common::wallet::{
+pub(crate) use ekdromos_common::engine::VerifyEnd;
+pub use ekdromos_common::sync::{ScanPriority, ScanRange};
+pub(crate) use ekdromos_common::wallet::{
     MAX_REORG_ALLOWANCE, SHARDTREE_CHECKPOINT_ROLLING_WINDOW_SIZE,
 };
 
@@ -2001,6 +2001,7 @@ mod test {
         use std::collections::{BTreeMap, HashMap};
         use std::time::Duration;
 
+        use ekdromos_common::status::ConfirmationStatus;
         use incrementalmerkletree::Position;
         use shardtree::store::ShardStore;
         use tokio::sync::mpsc;
@@ -2008,7 +2009,6 @@ mod test {
         use zcash_primitives::transaction::{TransactionData, TxId, TxVersion};
         use zcash_protocol::consensus::{BlockHeight, BranchId};
         use zcash_protocol::local_consensus::LocalNetwork;
-        use zingolib_common::status::ConfirmationStatus;
 
         use crate::bench_support::{synthetic_orchard_leaves, synthetic_sapling_leaves};
         use crate::config::PerformanceLevel;

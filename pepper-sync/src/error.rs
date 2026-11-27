@@ -105,8 +105,7 @@ impl ServerError {
 
 /// Recommended action when sync fails.
 ///
-/// Returned by [`SyncError::recovery_recommendation`] to give callers (zingo-cli,
-/// zingo-mobile, etc.) a concrete decision without needing to match on
+/// Returned by [`SyncError::recovery_recommendation`] to give callers a concrete decision without needing to match on
 /// error internals.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SyncRecoveryObservables {

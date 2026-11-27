@@ -18,7 +18,7 @@ use {
     subtle::CtOption,
 };
 
-pub(crate) use zingolib_common::wallet::SHARD_HEIGHT;
+pub(crate) use ekdromos_common::wallet::SHARD_HEIGHT;
 
 /// Required data for updating [`shardtree::ShardTree`]
 #[derive(Debug)]
