@@ -103,9 +103,41 @@ impl SourceSet {
         self.router.on_failure(source, error);
     }
 
+    /// The route from the router, without the sources that cannot receive the wallet
+    /// identifier of `request`.
+    fn route(&self, request: &Request) -> Result<Route, SourceError> {
+        let route = self.router.select_route(request, &self.infos);
+        let Some(identifier) = request.wallet_identifier() else {
+            return Ok(route);
+        };
+        let allowed = |ids: Vec<SourceId>| {
+            let selected = ids.len();
+            let ids: Vec<_> = ids
+                .into_iter()
+                .filter(|id| {
+                    self.infos
+                        .get(id.0)
+                        .is_some_and(|info| info.allowed_identifiers.contains(&identifier))
+                })
+                .collect();
+            if ids.is_empty() && selected > 0 {
+                return Err(SourceError::IdentifierNotAllowed(identifier));
+            }
+            Ok(ids)
+        };
+
+        Ok(match route {
+            Route::Failover(ids) => Route::Failover(allowed(ids)?),
+            Route::Quorum { of, need } => Route::Quorum {
+                of: allowed(of)?,
+                need,
+            },
+        })
+    }
+
     /// What `request` will get from the current route.
     pub fn route_info(&self, request: &Request) -> Result<RouteInfo, SourceError> {
-        let (ids, quorum) = match self.router.select_route(request, &self.infos) {
+        let (ids, quorum) = match self.route(request)? {
             Route::Failover(ids) => (ids.into_iter().take(1).collect(), None),
             Route::Quorum { of, need } => (of, Some(need)),
         };
@@ -134,7 +166,7 @@ impl SourceSet {
 
     /// Sends `request` on the route that the router selects.
     pub async fn send(&self, request: Request) -> Result<Fetched<Response>, SourceError> {
-        match self.router.select_route(&request, &self.infos) {
+        match self.route(&request)? {
             Route::Failover(ids) => self.failover(request, ids).await,
             Route::Quorum { of, need } => self.quorum(request, of, need.max(1)).await,
         }
@@ -470,7 +502,9 @@ mod tests {
     use incrementalmerkletree::frontier::Frontier;
 
     use super::*;
-    use crate::{Bandwidth, Quorum, SourceExposure, SourceHealth, chain::BlockHash};
+    use crate::{
+        Bandwidth, Quorum, SourceExposure, SourceHealth, WalletIdentifier, chain::BlockHash,
+    };
 
     struct Mock {
         info: SourceInfo,
@@ -486,8 +520,10 @@ mod tests {
     }
 
     fn mock(integrity: Integrity, tip: u32, tree: &'static str) -> Arc<Mock> {
+        let mut info = SourceInfo::new("mock", integrity, TransportInfo::direct());
+        info.allowed_identifiers = WalletIdentifier::ALL.to_vec();
         Arc::new(Mock {
-            info: SourceInfo::new("mock", integrity, TransportInfo::direct()),
+            info,
             tip,
             tree,
             roots: &[],
@@ -745,6 +781,56 @@ mod tests {
 
         let sources = set(&[&direct, &pseudonym], Failover::default());
         assert_eq!(sources.transaction(txid).await.unwrap().source, SourceId(1));
+    }
+
+    fn allowing(identifiers: &[WalletIdentifier]) -> Arc<Mock> {
+        custom(|source| source.info.allowed_identifiers = identifiers.to_vec())
+    }
+
+    #[tokio::test]
+    async fn identifying_request_goes_only_to_a_source_that_allows_the_identifier() {
+        let (closed, open) = (allowing(&[]), allowing(&[WalletIdentifier::Txid]));
+        let sources = set(&[&closed, &open], Failover::default());
+
+        let transaction = sources
+            .transaction(TxId::from_bytes([0; 32]))
+            .await
+            .unwrap();
+        assert_eq!(transaction.source, SourceId(1));
+        assert_eq!(closed.calls.load(Ordering::Relaxed), 0);
+        assert_eq!(sources.tip().await.unwrap().source, SourceId(0));
+    }
+
+    #[tokio::test]
+    async fn identifying_request_is_not_sent_if_no_source_allows_the_identifier() {
+        let (a, b) = (allowing(&[WalletIdentifier::Txid]), allowing(&[]));
+        let not_allowed = SourceError::IdentifierNotAllowed(WalletIdentifier::SentTransaction);
+
+        for sources in [set(&[&a, &b], Failover::default()), set(&[&a, &b], AskAll)] {
+            let submitted = sources.submit_transaction(Vec::new()).await;
+            assert_eq!(submitted.unwrap_err(), not_allowed);
+            let route = sources.route_info(&Request::Broadcast(Vec::new()));
+            assert_eq!(route.unwrap_err(), not_allowed);
+        }
+        assert_eq!(a.calls.load(Ordering::Relaxed), 0);
+        assert_eq!(b.calls.load(Ordering::Relaxed), 0);
+    }
+
+    #[tokio::test]
+    async fn quorum_counts_only_the_sources_that_allow_the_identifier() {
+        let (a, b, closed) = (
+            mock(UNVERIFIED, 10, "a"),
+            mock(UNVERIFIED, 10, "a"),
+            allowing(&[]),
+        );
+        let sources = set(&[&a, &closed, &b], AskAll);
+
+        let transaction = sources
+            .transaction(TxId::from_bytes([0; 32]))
+            .await
+            .unwrap();
+        assert_eq!(transaction.basis, IntegrityBasis::Quorum(2));
+        assert_eq!(closed.calls.load(Ordering::Relaxed), 0);
     }
 
     #[tokio::test]

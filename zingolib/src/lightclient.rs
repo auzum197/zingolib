@@ -18,7 +18,7 @@ use pepper_sync::{
 };
 use wallet_api::{
     ChainSource, EventReceiver, Failover, Integrity, RequestEvent, Router, SourceError, SourceSet,
-    chain::ServerInfo,
+    WalletIdentifier, chain::ServerInfo,
 };
 
 use crate::{
@@ -138,14 +138,17 @@ impl LightClientBuilder {
         self
     }
 
-    /// Adds an indexer at `uri` with the default connector.
+    /// Adds an indexer at `uri` with the default connector. It can receive `identifiers`.
     pub fn indexer(
         self,
         uri: http::Uri,
         integrity: Integrity,
+        identifiers: &[WalletIdentifier],
     ) -> Result<Self, lightwallet_grpc_client::GetClientError> {
-        let indexer = GrpcIndexer::with_connector(uri, TcpConnector::default())?;
-        Ok(self.source(indexer.with_integrity(integrity)))
+        let indexer = GrpcIndexer::with_connector(uri, TcpConnector::default())?
+            .with_integrity(integrity)
+            .allow_identifiers(identifiers);
+        Ok(self.source(indexer))
     }
 
     /// Sends one [`RequestEvent`] to `receiver` for each request to a source.
@@ -256,7 +259,8 @@ impl LightClient {
         }
     }
 
-    /// Creates a wallet and its client with one indexer with assumed integrity.
+    /// Creates a wallet and its client with one indexer with assumed integrity, which can
+    /// receive every wallet identifier.
     /// Fails if `store` already holds a wallet.
     ///
     /// A [`Birthday::ChainTip`] is read from the indexer, so it needs network access.
@@ -269,12 +273,13 @@ impl LightClient {
         encryption: Encryption,
     ) -> Result<Self, CreateError> {
         Self::builder(chain_type)
-            .indexer(indexer_uri, Integrity::Assumed)?
+            .indexer(indexer_uri, Integrity::Assumed, &WalletIdentifier::ALL)?
             .create(store, wallet_config, encryption)
             .await
     }
 
-    /// Opens the wallet held by `store` with one indexer with assumed integrity.
+    /// Opens the wallet held by `store` with one indexer with assumed integrity, which can
+    /// receive every wallet identifier.
     /// `unlock` must match how the wallet was stored.
     #[allow(clippy::result_large_err)]
     pub async fn open(
@@ -284,7 +289,7 @@ impl LightClient {
         unlock: Unlock,
     ) -> Result<Self, OpenError> {
         Self::builder(chain_type)
-            .indexer(indexer_uri, Integrity::Assumed)?
+            .indexer(indexer_uri, Integrity::Assumed, &WalletIdentifier::ALL)?
             .open(store, unlock)
             .await
     }
@@ -348,14 +353,17 @@ impl LightClient {
         &self.sources
     }
 
-    /// Replaces the sources with one indexer with assumed integrity.
+    /// Replaces the sources with one indexer with assumed integrity, which can receive every
+    /// wallet identifier.
     pub async fn set_indexer_uri(
         &mut self,
         server: http::Uri,
     ) -> Result<(), lightwallet_grpc_client::GetClientError> {
-        let indexer = GrpcIndexer::with_connector(server, TcpConnector::default())?;
+        let indexer = GrpcIndexer::with_connector(server, TcpConnector::default())?
+            .with_integrity(Integrity::Assumed)
+            .allow_identifiers(&WalletIdentifier::ALL);
         self.sources = Arc::new(source_set(
-            vec![Arc::new(indexer.with_integrity(Integrity::Assumed))],
+            vec![Arc::new(indexer)],
             Arc::new(Failover::default()),
             &self.events,
         ));

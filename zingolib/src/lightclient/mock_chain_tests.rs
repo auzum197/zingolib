@@ -1202,7 +1202,7 @@ mod sources {
     use pepper_sync::error::{ServerError, SyncError};
     use wallet_api::{
         BoxFuture, Connection, Connector, Integrity, Quorum, RequestEvent, RequestKind,
-        SourceExposure, SourceId, TransportInfo,
+        SourceError, SourceExposure, SourceId, TransportInfo, WalletIdentifier,
     };
 
     use super::*;
@@ -1213,7 +1213,10 @@ mod sources {
     use crate::testutils::default_test_wallet_settings;
 
     async fn indexer(net: &MockNet) -> GrpcIndexer {
-        GrpcIndexer::new(net.indexer_uri()).await.unwrap()
+        GrpcIndexer::new(net.indexer_uri())
+            .await
+            .unwrap()
+            .allow_identifiers(&WalletIdentifier::ALL)
     }
 
     async fn create(builder: LightClientBuilder) -> LightClient {
@@ -1271,8 +1274,9 @@ mod sources {
         let net = MockNet::launch().await;
         net.generate_blocks(10).await;
         let dials = Arc::new(AtomicUsize::new(0));
-        let indexer =
-            GrpcIndexer::with_connector(net.indexer_uri(), CountingTcp(dials.clone())).unwrap();
+        let indexer = GrpcIndexer::with_connector(net.indexer_uri(), CountingTcp(dials.clone()))
+            .unwrap()
+            .allow_identifiers(&WalletIdentifier::ALL);
         let mut client = create(LightClient::builder(net.chain_type()).source(indexer)).await;
 
         let synced = client.sync_and_await().await.unwrap();
@@ -1289,7 +1293,11 @@ mod sources {
         let events = Arc::new(std::sync::Mutex::new(Vec::new()));
         let copy = events.clone();
         let builder = LightClient::builder(net.chain_type())
-            .indexer(net.indexer_uri(), Integrity::Assumed)
+            .indexer(
+                net.indexer_uri(),
+                Integrity::Assumed,
+                &WalletIdentifier::ALL,
+            )
             .unwrap()
             .request_events(move |event: &RequestEvent| copy.lock().unwrap().push(event.clone()));
         let mut client = create(builder).await;
@@ -1313,6 +1321,29 @@ mod sources {
 
         let synced = client.sync_and_await().await.unwrap();
         assert_eq!(u32::from(synced.sync_end_height), net.chain_height().await);
+    }
+
+    #[tokio::test]
+    async fn sync_stops_if_no_source_allows_a_wallet_identifier() {
+        let net = MockNet::launch().await;
+        net.generate_blocks(10).await;
+        let events = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let copy = events.clone();
+        let builder = LightClient::builder(net.chain_type())
+            .indexer(net.indexer_uri(), Integrity::Assumed, &[])
+            .unwrap()
+            .request_events(move |event: &RequestEvent| copy.lock().unwrap().push(event.kind));
+        let mut client = create(builder).await;
+
+        let error = client.sync_and_await().await.unwrap_err();
+        assert!(matches!(
+            error,
+            LightClientError::SyncError(SyncError::ServerError(ServerError::RequestFailed(
+                SourceError::IdentifierNotAllowed(WalletIdentifier::TransparentAddress)
+            )))
+        ));
+        let sent = events.lock().unwrap();
+        assert!(!sent.contains(&RequestKind::AddressTransactions));
     }
 
     #[tokio::test]
@@ -1341,7 +1372,7 @@ mod verification {
     use pepper_sync::error::{ServerError, SyncError};
     use wallet_api::{
         BoxFuture, ChainSource, Integrity, Request, Response, Route, Router, SourceError, SourceId,
-        SourceInfo,
+        SourceInfo, WalletIdentifier,
     };
 
     use super::*;
@@ -1371,7 +1402,10 @@ mod verification {
     }
 
     async fn indexer(net: &MockNet) -> GrpcIndexer {
-        GrpcIndexer::new(net.indexer_uri()).await.unwrap()
+        GrpcIndexer::new(net.indexer_uri())
+            .await
+            .unwrap()
+            .allow_identifiers(&WalletIdentifier::ALL)
     }
 
     struct CountingTreeStates(GrpcIndexer, Arc<AtomicUsize>);

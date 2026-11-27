@@ -2,7 +2,7 @@
 
 use futures::future::BoxFuture;
 
-use crate::{Request, Response, TransportInfo};
+use crate::{Request, Response, TransportInfo, WalletIdentifier};
 
 /// Position of a source in its [`crate::SourceSet`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -71,16 +71,19 @@ pub struct SourceInfo {
     pub transport: TransportInfo,
     /// Supported requests.
     pub capabilities: Capabilities,
+    /// Wallet identifiers that the source can receive.
+    pub allowed_identifiers: Vec<WalletIdentifier>,
 }
 
 impl SourceInfo {
-    /// A source with all capabilities.
+    /// A source with all capabilities and no allowed wallet identifier.
     pub fn new(name: impl Into<String>, integrity: Integrity, transport: TransportInfo) -> Self {
         Self {
             name: name.into(),
             integrity,
             transport,
             capabilities: Capabilities::all(),
+            allowed_identifiers: Vec::new(),
         }
     }
 }
@@ -110,6 +113,9 @@ pub enum SourceError {
     /// No configured source supports the request.
     #[error("no source can serve this request")]
     NoSource,
+    /// No source that supports the request can receive its wallet identifier.
+    #[error("no source can receive this wallet identifier. {0:?}")]
+    IdentifierNotAllowed(WalletIdentifier),
     /// The response kind does not match the request.
     #[error("source returned a response of the wrong kind")]
     UnexpectedResponse,
