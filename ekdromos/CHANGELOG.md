@@ -92,6 +92,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `LightClient::propose_send_all` and `LightClient::max_send_value`. A transaction that pays the
   former donation address is now an ordinary send.
 - `DEVELOPER_DONATION_ADDRESS` const.
+- `git_description`: the build script no longer runs git. A consumer that needs a version string
+  takes it from its own build.
 - `LightClient::save_task`, `wait_for_save`, `check_save_error` and `shutdown_save_task`.
 - `config::ClientConfig`, `config::ClientConfigBuilder`, `config::DEFAULT_WALLET_NAME` and the
   default wallet directory. The caller selects the wallet path.

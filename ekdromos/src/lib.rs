@@ -19,6 +19,3 @@ pub use chain_router;
 pub use ekdromos_common_components::protocol::ActivationHeights;
 pub use lightwallet_grpc_client::GrpcIndexer;
 pub use pepper_sync::strategy;
-
-// This line includes the generated `git_description()` function directly into this scope.
-include!(concat!(env!("OUT_DIR"), "/git_description.rs"));
