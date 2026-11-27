@@ -174,6 +174,7 @@ where
         transparent_addresses,
         chain_height,
         unverified_sources,
+        known_transactions,
     } = scan_task;
 
     if compact_blocks
@@ -287,6 +288,7 @@ where
         &wallet_blocks,
         &mut outpoints,
         transparent_addresses,
+        &known_transactions,
     )
     .await?;
     fetch_duration += scan_transactions_started.elapsed();

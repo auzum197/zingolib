@@ -30,7 +30,7 @@ use crate::{
     sync::{self, ScanPriority, ScanRange},
     wallet::{
         ScanTarget, WalletBlock,
-        traits::{SyncBlocks, SyncNullifiers, SyncWallet},
+        traits::{SyncBlocks, SyncNullifiers, SyncTransactions, SyncWallet},
         wallet_block_from_compact_block,
     },
 };
@@ -223,7 +223,7 @@ where
         nullifier_map_limit_exceeded: bool,
     ) -> Result<(), SyncError<W::Error>>
     where
-        W: SyncWallet + SyncBlocks + SyncNullifiers,
+        W: SyncWallet + SyncBlocks + SyncNullifiers + SyncTransactions,
     {
         match self.state {
             ScannerState::Verification => {
@@ -296,7 +296,7 @@ where
         nullifier_map_limit_exceeded: bool,
     ) -> Result<(), W::Error>
     where
-        W: SyncWallet + SyncBlocks + SyncNullifiers,
+        W: SyncWallet + SyncBlocks + SyncNullifiers + SyncTransactions,
     {
         let batcher = self.batcher.as_ref().expect("batcher should be running");
         if !batcher.is_batching() {
@@ -746,6 +746,8 @@ pub(crate) struct ScanTask {
     pub(crate) chain_height: BlockHeight,
     /// The sources of blocks that must be verified against the tree state.
     pub(crate) unverified_sources: Vec<SourceId>,
+    /// Serialized transactions that the wallet already has and that are not confirmed.
+    pub(crate) known_transactions: Arc<HashMap<TxId, Vec<u8>>>,
 }
 
 impl ScanTask {
@@ -779,6 +781,7 @@ impl ScanTask {
         scan_targets: BTreeSet<ScanTarget>,
         transparent_addresses: HashMap<String, TransparentAddressId>,
         chain_height: BlockHeight,
+        known_transactions: HashMap<TxId, Vec<u8>>,
     ) -> Self {
         Self {
             compact_blocks: Vec::new(),
@@ -789,6 +792,7 @@ impl ScanTask {
             transparent_addresses,
             chain_height,
             unverified_sources: Vec::new(),
+            known_transactions: Arc::new(known_transactions),
         }
     }
 
@@ -862,6 +866,7 @@ impl ScanTask {
                 transparent_addresses: self.transparent_addresses.clone(),
                 chain_height: self.chain_height,
                 unverified_sources: self.unverified_sources.clone(),
+                known_transactions: self.known_transactions.clone(),
             },
             ScanTask {
                 compact_blocks: upper_compact_blocks,
@@ -875,6 +880,7 @@ impl ScanTask {
                 transparent_addresses: self.transparent_addresses,
                 chain_height: self.chain_height,
                 unverified_sources: self.unverified_sources,
+                known_transactions: self.known_transactions,
             },
         ))
     }
@@ -937,6 +943,7 @@ mod tests {
             BTreeSet::new(),
             HashMap::new(),
             BlockHeight::from_u32(3),
+            HashMap::new(),
         );
         scan_task.compact_blocks = vec![
             compact_block(2, 1, 4),
