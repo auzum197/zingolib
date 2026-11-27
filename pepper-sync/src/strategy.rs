@@ -2,9 +2,9 @@
 
 use std::sync::Arc;
 
+use chain_router::SourceSet;
 use futures::future::BoxFuture;
 use tokio::sync::{RwLock, watch};
-use wallet_api::SourceSet;
 use zcash_protocol::consensus;
 
 use crate::{

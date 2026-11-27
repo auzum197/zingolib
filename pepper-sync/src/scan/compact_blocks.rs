@@ -3,11 +3,11 @@ use std::{
     collections::{BTreeMap, BTreeSet, HashMap},
 };
 
+use chain_router::chain::{CompactAction, CompactBlock, CompactOutputDescription};
 use incrementalmerkletree::{Marking, Position, Retention};
 use orchard::tree::MerkleHashOrchard;
 use sapling_crypto::Node;
 use tokio::sync::mpsc;
-use wallet_api::chain::{CompactAction, CompactBlock, CompactOutputDescription};
 use zcash_keys::keys::UnifiedFullViewingKey;
 use zcash_note_encryption::Domain;
 use zcash_primitives::block::BlockHash;
@@ -572,7 +572,7 @@ fn set_checkpoint_retentions<L>(
 
 #[cfg(all(test, not(feature = "darkside_test")))]
 mod tests {
-    use wallet_api::chain::TreeSizes;
+    use chain_router::chain::TreeSizes;
 
     use super::*;
 

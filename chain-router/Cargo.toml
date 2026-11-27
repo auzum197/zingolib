@@ -1,5 +1,5 @@
 [package]
-name = "wallet-api"
+name = "chain-router"
 description = "Traits and types for replaceable chain sources, transports and source routing."
 version = "0.1.0"
 edition = "2024"

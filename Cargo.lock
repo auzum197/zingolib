@@ -665,6 +665,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "chain-router"
+version = "0.1.0"
+dependencies = [
+ "futures",
+ "incrementalmerkletree",
+ "thiserror 2.0.19",
+ "tokio",
+ "zakura-note-encryption",
+ "zakura-orchard",
+ "zakura-primitives",
+ "zakura-protocol",
+ "zakura-sapling-crypto",
+ "zakura-transparent",
+]
+
+[[package]]
 name = "chrono"
 version = "0.4.45"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2243,6 +2259,7 @@ dependencies = [
 name = "lightwallet-grpc-client"
 version = "5.0.1"
 dependencies = [
+ "chain-router",
  "futures",
  "hex",
  "hickory-resolver",
@@ -2261,7 +2278,6 @@ dependencies = [
  "tokio-stream",
  "tonic",
  "tracing",
- "wallet-api",
  "x509-parser",
  "zakura-note-encryption",
  "zakura-orchard",
@@ -2703,6 +2719,7 @@ name = "pepper-sync"
 version = "0.6.0"
 dependencies = [
  "bip32",
+ "chain-router",
  "criterion",
  "crossbeam-channel",
  "futures",
@@ -2717,7 +2734,6 @@ dependencies = [
  "tokio",
  "tokio-util",
  "tracing",
- "wallet-api",
  "zakura-address",
  "zakura-jubjub",
  "zakura-keys",
@@ -4914,22 +4930,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "wallet-api"
-version = "0.1.0"
-dependencies = [
- "futures",
- "incrementalmerkletree",
- "thiserror 2.0.19",
- "tokio",
- "zakura-note-encryption",
- "zakura-orchard",
- "zakura-primitives",
- "zakura-protocol",
- "zakura-sapling-crypto",
- "zakura-transparent",
-]
-
-[[package]]
 name = "want"
 version = "0.3.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5963,6 +5963,7 @@ dependencies = [
  "bech32",
  "bip0039",
  "byteorder",
+ "chain-router",
  "chrono",
  "dirs",
  "futures",
@@ -5994,7 +5995,6 @@ dependencies = [
  "tonic",
  "tracing",
  "tracing-subscriber",
- "wallet-api",
  "zakura-address",
  "zakura-client-backend",
  "zakura-keys",

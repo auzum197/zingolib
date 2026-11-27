@@ -1,4 +1,4 @@
-use wallet_api::chain::{CompactBlock, CompactTx};
+use chain_router::chain::{CompactBlock, CompactTx};
 use zcash_primitives::block::BlockHash;
 use zcash_protocol::{TxId, consensus::BlockHeight};
 

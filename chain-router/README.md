@@ -1,9 +1,9 @@
-# wallet-api
+# chain-router
 
 Route Zcash chain requests across many data sources, by the trust level that
 you give each data source.
 
-With `wallet-api` you can:
+With `chain-router` you can:
 
 - Give each data source a trust level.
 - Write wallet code one time, against one typed data model, for all data

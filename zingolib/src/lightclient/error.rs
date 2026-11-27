@@ -42,7 +42,7 @@ pub enum CreateError {
     #[error("gRPC client error. {0}")]
     Indexer(#[from] GetClientError),
     #[error("Failed to get the chain tip for the wallet birthday. {0}")]
-    ChainTip(#[from] wallet_api::SourceError),
+    ChainTip(#[from] chain_router::SourceError),
 }
 
 /// Why [`crate::lightclient::LightClient::open`] failed.

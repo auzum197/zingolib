@@ -2,11 +2,11 @@
 
 use tokio::sync::mpsc::UnboundedReceiver;
 
-use tracing::instrument;
-use wallet_api::{
+use chain_router::{
     IntegrityBasis, Request, SourceError, SourceSet,
     chain::{BlockId, TreeState},
 };
+use tracing::instrument;
 use zcash_protocol::consensus::BlockHeight;
 
 use crate::client::{FetchRequest, Policy};

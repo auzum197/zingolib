@@ -7,6 +7,7 @@ use std::{
     time::Duration,
 };
 
+use chain_router::{Connection, Connector, TransportInfo};
 use futures::future::BoxFuture;
 use hickory_resolver::{
     TokioResolver,
@@ -14,7 +15,6 @@ use hickory_resolver::{
     net::runtime::TokioRuntimeProvider,
 };
 use tokio::{net::TcpStream, sync::OnceCell};
-use wallet_api::{Connection, Connector, TransportInfo};
 
 /// A blocked server must not delay the first connection for long.
 const LOOKUP_TIMEOUT: Duration = Duration::from_secs(3);
@@ -213,7 +213,7 @@ impl Connector for TcpConnector {
 mod tests {
     use std::cell::Cell;
 
-    use wallet_api::{ChainSource as _, Request};
+    use chain_router::{ChainSource as _, Request};
 
     use super::*;
     use crate::GrpcIndexer;

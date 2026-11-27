@@ -15,8 +15,8 @@ use zcash_primitives::{
 };
 use zcash_protocol::consensus;
 
+use chain_router::chain::CompactBlock;
 use memuse::DynamicUsage;
-use wallet_api::chain::CompactBlock;
 
 use crate::keys::KeyId;
 use crate::keys::ScanningKeyOps;

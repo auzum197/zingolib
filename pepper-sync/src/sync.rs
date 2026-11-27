@@ -8,11 +8,11 @@ use std::time::{Duration, Instant, SystemTime};
 use tokio::sync::{RwLock, mpsc, watch};
 use tokio_util::sync::CancellationToken;
 
+use chain_router::{SourceSet, chain::RawTransaction};
 use futures::TryStreamExt as _;
 use incrementalmerkletree::{Marking, Retention};
 use orchard::tree::MerkleHashOrchard;
 use shardtree::store::ShardStore;
-use wallet_api::{SourceSet, chain::RawTransaction};
 use zcash_keys::keys::UnifiedFullViewingKey;
 use zcash_primitives::transaction::{Transaction, TxId};
 use zcash_protocol::ShieldedPool;
@@ -47,7 +47,7 @@ use crate::witness::LocatedTreeData;
 #[cfg(not(feature = "darkside_test"))]
 use crate::witness;
 #[cfg(not(feature = "darkside_test"))]
-use wallet_api::{SourceError, chain::SubtreeRoot};
+use chain_router::{SourceError, chain::SubtreeRoot};
 
 #[cfg(not(feature = "darkside_test"))]
 pub(crate) mod transparent;

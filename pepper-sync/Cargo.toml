@@ -21,7 +21,7 @@ test-features = ["zingolib-common/test-features"]
 [dependencies]
 # Zingo
 zingolib-common.workspace = true
-wallet-api.workspace = true
+chain-router.workspace = true
 
 # Zcash
 incrementalmerkletree.workspace = true

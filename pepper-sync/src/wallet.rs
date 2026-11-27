@@ -7,7 +7,7 @@
 use tokio::sync::mpsc;
 use zcash_protocol::consensus;
 
-use wallet_api::chain::CompactBlock;
+use chain_router::chain::CompactBlock;
 
 use crate::{
     client::FetchRequest,
