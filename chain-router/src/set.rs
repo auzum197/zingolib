@@ -8,6 +8,7 @@ use zcash_protocol::{ShieldedPool, TxId, consensus::BlockHeight};
 use crate::{
     ChainSource, EventReceiver, Failover, Integrity, Request, RequestEvent, RequestKind, Response,
     ResponseStream, Route, Router, SourceError, SourceId, SourceInfo, TransportInfo,
+    WalletIdentifier,
     chain::{BlockId, CompactBlock, RawTransaction, ServerInfo, SubtreeRoot, TreeState},
 };
 
@@ -96,6 +97,13 @@ impl SourceSet {
     /// Information on each source, indexed by [`SourceId`].
     pub fn sources(&self) -> &[SourceInfo] {
         &self.infos
+    }
+
+    /// Whether a source can receive `identifier`.
+    pub fn allows(&self, identifier: WalletIdentifier) -> bool {
+        self.infos
+            .iter()
+            .any(|info| info.allowed_identifiers.contains(&identifier))
     }
 
     /// Passes a failure of `source` to the router.
@@ -502,9 +510,7 @@ mod tests {
     use incrementalmerkletree::frontier::Frontier;
 
     use super::*;
-    use crate::{
-        Bandwidth, Quorum, SourceExposure, SourceHealth, WalletIdentifier, chain::BlockHash,
-    };
+    use crate::{Bandwidth, Quorum, SourceExposure, SourceHealth, chain::BlockHash};
 
     struct Mock {
         info: SourceInfo,
@@ -799,6 +805,8 @@ mod tests {
         assert_eq!(transaction.source, SourceId(1));
         assert_eq!(closed.calls.load(Ordering::Relaxed), 0);
         assert_eq!(sources.tip().await.unwrap().source, SourceId(0));
+        assert!(sources.allows(WalletIdentifier::Txid));
+        assert!(!sources.allows(WalletIdentifier::SentTransaction));
     }
 
     #[tokio::test]

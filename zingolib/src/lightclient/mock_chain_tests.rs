@@ -1199,7 +1199,7 @@ mod sources {
 
     use chain_router::{
         BoxFuture, Connection, Connector, Integrity, Quorum, RequestEvent, RequestKind,
-        SourceError, SourceExposure, SourceId, TransportInfo, WalletIdentifier,
+        SourceExposure, SourceId, TransportInfo, WalletIdentifier,
     };
     use lightwallet_grpc_client::GrpcIndexer;
     use pepper_sync::AssumedOnly;
@@ -1281,6 +1281,7 @@ mod sources {
 
         let synced = client.sync_and_await().await.unwrap();
         assert_eq!(u32::from(synced.sync_end_height), net.chain_height().await);
+        assert!(synced.omitted_identifiers.is_empty());
         assert!(dials.load(Ordering::Relaxed) > 0);
         let transport = client.source_set().sources().first().unwrap().transport;
         assert_eq!(transport.exposed_to_source, SourceExposure::Nothing);
@@ -1324,7 +1325,7 @@ mod sources {
     }
 
     #[tokio::test]
-    async fn sync_stops_if_no_source_allows_a_wallet_identifier() {
+    async fn sync_omits_transparent_data_if_no_source_allows_a_transparent_address() {
         let net = MockNet::launch().await;
         net.generate_blocks(10).await;
         let events = Arc::new(std::sync::Mutex::new(Vec::new()));
@@ -1335,13 +1336,12 @@ mod sources {
             .request_events(move |event: &RequestEvent| copy.lock().unwrap().push(event.kind));
         let mut client = create(builder).await;
 
-        let error = client.sync_and_await().await.unwrap_err();
-        assert!(matches!(
-            error,
-            LightClientError::SyncError(SyncError::ServerError(ServerError::RequestFailed(
-                SourceError::IdentifierNotAllowed(WalletIdentifier::TransparentAddress)
-            )))
-        ));
+        let synced = client.sync_and_await().await.unwrap();
+        assert_eq!(u32::from(synced.sync_end_height), net.chain_height().await);
+        assert_eq!(
+            synced.omitted_identifiers,
+            [WalletIdentifier::TransparentAddress]
+        );
         let sent = events.lock().unwrap();
         assert!(!sent.contains(&RequestKind::AddressTransactions));
     }

@@ -8,7 +8,7 @@ use std::time::{Duration, Instant, SystemTime};
 use tokio::sync::{RwLock, mpsc, watch};
 use tokio_util::sync::CancellationToken;
 
-use chain_router::{SourceSet, chain::RawTransaction};
+use chain_router::{SourceSet, WalletIdentifier, chain::RawTransaction};
 use futures::TryStreamExt as _;
 use incrementalmerkletree::{Marking, Retention};
 use orchard::tree::MerkleHashOrchard;
@@ -104,6 +104,8 @@ pub struct SyncResult {
     pub sapling_outputs_scanned: u32,
     pub orchard_outputs_scanned: u32,
     pub ironwood_outputs_scanned: u32,
+    /// Wallet identifiers that no source can receive. Sync omitted the data that needs them.
+    pub omitted_identifiers: Vec<WalletIdentifier>,
 }
 
 impl std::fmt::Display for SyncResult {
@@ -118,6 +120,7 @@ impl std::fmt::Display for SyncResult {
     sapling outputs scanned: {}
     orchard outputs scanned: {}
     ironwood outputs scanned: {}
+    omitted identifiers: {:?}
 }}",
             self.sync_start_height,
             self.sync_end_height,
@@ -125,6 +128,7 @@ impl std::fmt::Display for SyncResult {
             self.sapling_outputs_scanned,
             self.orchard_outputs_scanned,
             self.ironwood_outputs_scanned,
+            self.omitted_identifiers,
         )
     }
 }
@@ -201,6 +205,17 @@ where
 
     tracing::info!("Starting sync...");
 
+    let discovery = &config.transparent_address_discovery.scopes;
+    let transparent_omitted = (discovery.external || discovery.internal || discovery.refund)
+        && !sources.allows(WalletIdentifier::TransparentAddress);
+    let omitted_identifiers: Vec<_> = transparent_omitted
+        .then_some(WalletIdentifier::TransparentAddress)
+        .into_iter()
+        .collect();
+    if transparent_omitted {
+        tracing::warn!("No source can receive a transparent address. Transparent data is omitted.");
+    }
+
     let (fetch_request_sender, fetch_request_receiver) = mpsc::unbounded_channel();
     let fetcher_handle = tokio::spawn(client::fetch::fetch(
         fetch_request_receiver,
@@ -241,16 +256,18 @@ where
         .map_err(SyncError::WalletError)?;
 
     #[cfg(not(feature = "darkside_test"))]
-    transparent::update_addresses_and_scan_targets(
-        consensus_parameters,
-        &mut *wallet_guard,
-        fetch_request_sender.clone(),
-        &ufvks,
-        last_known_chain_height,
-        chain_height,
-        config.transparent_address_discovery,
-    )
-    .await?;
+    if !transparent_omitted {
+        transparent::update_addresses_and_scan_targets(
+            consensus_parameters,
+            &mut *wallet_guard,
+            fetch_request_sender.clone(),
+            &ufvks,
+            last_known_chain_height,
+            chain_height,
+            config.transparent_address_discovery,
+        )
+        .await?;
+    }
 
     #[cfg(not(feature = "darkside_test"))]
     update_subtree_roots(
@@ -406,7 +423,11 @@ where
                         fetcher_handle.abort();
                         tracing::info!("Sync successfully shutdown.");
 
-                        return Ok(build_sync_result(sync_status, &initial_sync_state));
+                        return Ok(build_sync_result(
+                            sync_status,
+                            &initial_sync_state,
+                            omitted_identifiers,
+                        ));
                     }
                     SyncMode::Running => (),
                     SyncMode::Paused => unreachable!("waited for the pause to end"),
@@ -496,13 +517,22 @@ where
     }
     fetcher_handle.await.expect("task panicked");
 
-    Ok(build_sync_result(sync_status, &initial_sync_state))
+    Ok(build_sync_result(
+        sync_status,
+        &initial_sync_state,
+        omitted_identifiers,
+    ))
 }
 
 /// Builds a [`self::SyncResult`], recomputing this session's counts from the cumulative scanned
 /// counts and the pre-session baseline.
-fn build_sync_result(sync_status: SyncStatus, initial_sync_state: &InitialSyncState) -> SyncResult {
+fn build_sync_result(
+    sync_status: SyncStatus,
+    initial_sync_state: &InitialSyncState,
+    omitted_identifiers: Vec<WalletIdentifier>,
+) -> SyncResult {
     SyncResult {
+        omitted_identifiers,
         sync_start_height: sync_status.sync_start_height,
         sync_end_height: (sync_status
             .scan_ranges
