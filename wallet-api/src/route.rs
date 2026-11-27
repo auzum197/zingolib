@@ -1,6 +1,9 @@
 //! Source selection for each request.
 
-use std::{collections::HashMap, sync::Mutex};
+use std::{
+    collections::HashMap,
+    sync::{Arc, Mutex},
+};
 
 use crate::{Disclosure, Integrity, Request, SourceError, SourceExposure, SourceId, SourceInfo};
 
@@ -31,19 +34,40 @@ pub trait Router: Send + Sync {
     fn on_failure(&self, _source: SourceId, _error: &SourceError) {}
 }
 
-#[derive(Debug, Clone, Copy)]
-enum Health {
+/// The state of a source in a [`Failover`] or [`Quorum`] router.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[non_exhaustive]
+pub enum SourceHealth {
+    /// The last request succeeded, or no request was sent.
+    Healthy,
+    /// This number of requests failed after the last success. The source is used last.
     Failing(u32),
+    /// Data from the source failed a check. The source is no longer used.
     Dropped,
 }
 
+/// A router in an [`Arc`] is a router, so you can keep one copy and read its state.
+impl<R: Router + ?Sized> Router for Arc<R> {
+    fn select_route(&self, request: &Request, sources: &[SourceInfo]) -> Route {
+        (**self).select_route(request, sources)
+    }
+
+    fn on_success(&self, source: SourceId) {
+        (**self).on_success(source);
+    }
+
+    fn on_failure(&self, source: SourceId, error: &SourceError) {
+        (**self).on_failure(source, error);
+    }
+}
+
 #[derive(Debug, Default)]
-struct HealthLog(Mutex<HashMap<SourceId, Health>>);
+struct HealthLog(Mutex<HashMap<SourceId, SourceHealth>>);
 
 impl HealthLog {
     fn on_success(&self, source: SourceId) {
         let mut log = self.0.lock().unwrap_or_else(|e| e.into_inner());
-        if let Some(Health::Failing(_)) = log.get(&source) {
+        if let Some(SourceHealth::Failing(_)) = log.get(&source) {
             log.remove(&source);
         }
     }
@@ -51,23 +75,28 @@ impl HealthLog {
     fn on_failure(&self, source: SourceId, error: &SourceError) {
         let mut log = self.0.lock().unwrap_or_else(|e| e.into_inner());
         let failures = match log.get(&source) {
-            Some(Health::Dropped) => return,
-            Some(Health::Failing(n)) => *n,
-            None => 0,
+            Some(SourceHealth::Dropped) => return,
+            Some(SourceHealth::Failing(n)) => *n,
+            Some(SourceHealth::Healthy) | None => 0,
         };
         match error {
             SourceError::FailedVerification => {
-                log.insert(source, Health::Dropped);
+                log.insert(source, SourceHealth::Dropped);
             }
             SourceError::Timeout(_)
             | SourceError::Unavailable(_)
             | SourceError::Interrupted(_)
             | SourceError::InvalidData(_)
             | SourceError::Other(_) => {
-                log.insert(source, Health::Failing(failures.saturating_add(1)));
+                log.insert(source, SourceHealth::Failing(failures.saturating_add(1)));
             }
             _ => {}
         }
+    }
+
+    fn health(&self, source: SourceId) -> SourceHealth {
+        let log = self.0.lock().unwrap_or_else(|e| e.into_inner());
+        log.get(&source).copied().unwrap_or(SourceHealth::Healthy)
     }
 
     /// Sources that can serve `request`: fewest failures first, then by integrity and privacy.
@@ -81,9 +110,9 @@ impl HealthLog {
             .filter_map(|(index, info)| {
                 let id = SourceId(index);
                 let failures = match log.get(&id) {
-                    Some(Health::Dropped) => return None,
-                    Some(Health::Failing(n)) => *n,
-                    None => 0,
+                    Some(SourceHealth::Dropped) => return None,
+                    Some(SourceHealth::Failing(n)) => *n,
+                    Some(SourceHealth::Healthy) | None => 0,
                 };
                 let preference =
                     match (info.integrity, disclosing, info.transport.exposed_to_source) {
@@ -103,6 +132,13 @@ impl HealthLog {
 /// One source for each request. Sources with assumed integrity are first.
 #[derive(Debug, Default)]
 pub struct Failover(HealthLog);
+
+impl Failover {
+    /// The state of `source`.
+    pub fn health(&self, source: SourceId) -> SourceHealth {
+        self.0.health(source)
+    }
+}
 
 impl Router for Failover {
     fn select_route(&self, request: &Request, sources: &[SourceInfo]) -> Route {
@@ -133,6 +169,11 @@ impl Quorum {
             need,
             health: HealthLog::default(),
         }
+    }
+
+    /// The state of `source`.
+    pub fn health(&self, source: SourceId) -> SourceHealth {
+        self.health.health(source)
     }
 }
 

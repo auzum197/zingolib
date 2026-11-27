@@ -1,13 +1,13 @@
 //! The set of configured sources and the execution of routes.
 
-use std::{ops::Range, sync::Arc};
+use std::{ops::Range, sync::Arc, time::Instant};
 
 use futures::{StreamExt, TryStreamExt, future::join_all, stream};
 use zcash_protocol::{ShieldedPool, TxId, consensus::BlockHeight};
 
 use crate::{
-    ChainSource, Failover, Integrity, Request, Response, ResponseStream, Route, Router,
-    SourceError, SourceId, SourceInfo, TransportInfo,
+    ChainSource, EventReceiver, Failover, Integrity, Request, RequestEvent, RequestKind, Response,
+    ResponseStream, Route, Router, SourceError, SourceId, SourceInfo, TransportInfo,
     chain::{BlockId, CompactBlock, RawTransaction, ServerInfo, SubtreeRoot, TreeState},
 };
 
@@ -67,6 +67,7 @@ pub struct SourceSet {
     sources: Vec<Arc<dyn ChainSource>>,
     infos: Vec<SourceInfo>,
     router: Arc<dyn Router>,
+    events: Option<Arc<dyn EventReceiver>>,
 }
 
 impl SourceSet {
@@ -77,7 +78,14 @@ impl SourceSet {
             sources,
             infos,
             router,
+            events: None,
         }
+    }
+
+    /// Sends one [`RequestEvent`] to `receiver` for each request to a source.
+    pub fn with_events(mut self, receiver: impl EventReceiver + 'static) -> Self {
+        self.events = Some(Arc::new(receiver));
+        self
     }
 
     /// A set of one source with a [`Failover`] router.
@@ -220,13 +228,22 @@ impl SourceSet {
 
     async fn send_to(&self, id: SourceId, request: Request) -> Result<Response, SourceError> {
         let source = self.sources.get(id.0).ok_or(SourceError::NoSource)?;
-        match source.execute(request).await {
+        let (kind, start) = (request.kind(), Instant::now());
+        let response = source.execute(request).await;
+        emit(&self.events, id, kind, start, response.as_ref().err());
+        match response {
             Ok(response) => {
                 self.router.on_success(id);
                 Ok(match response {
-                    Response::Blocks(blocks) => Response::Blocks(self.watch(id, blocks)),
-                    Response::SubtreeRoots(roots) => Response::SubtreeRoots(self.watch(id, roots)),
-                    Response::Transactions(txs) => Response::Transactions(self.watch(id, txs)),
+                    Response::Blocks(blocks) => {
+                        Response::Blocks(self.watch(id, kind, start, blocks))
+                    }
+                    Response::SubtreeRoots(roots) => {
+                        Response::SubtreeRoots(self.watch(id, kind, start, roots))
+                    }
+                    Response::Transactions(txs) => {
+                        Response::Transactions(self.watch(id, kind, start, txs))
+                    }
                     unary => unary,
                 })
             }
@@ -237,10 +254,17 @@ impl SourceSet {
         }
     }
 
-    fn watch<T: 'static>(&self, id: SourceId, stream: ResponseStream<T>) -> ResponseStream<T> {
-        let router = self.router.clone();
+    fn watch<T: 'static>(
+        &self,
+        id: SourceId,
+        kind: RequestKind,
+        start: Instant,
+        stream: ResponseStream<T>,
+    ) -> ResponseStream<T> {
+        let (router, events) = (self.router.clone(), self.events.clone());
         stream
             .inspect_err(move |e| {
+                emit(&events, id, kind, start, Some(e));
                 router.on_failure(id, e);
             })
             .boxed()
@@ -324,6 +348,23 @@ impl SourceSet {
             source,
             basis,
         })
+    }
+}
+
+fn emit(
+    events: &Option<Arc<dyn EventReceiver>>,
+    source: SourceId,
+    kind: RequestKind,
+    start: Instant,
+    error: Option<&SourceError>,
+) {
+    if let Some(events) = events {
+        events.on_event(&RequestEvent {
+            source,
+            kind,
+            duration: start.elapsed(),
+            result: error.cloned().map_or(Ok(()), Err),
+        });
     }
 }
 
@@ -417,13 +458,19 @@ impl Collected {
 
 #[cfg(test)]
 mod tests {
-    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::{
+        sync::{
+            Mutex,
+            atomic::{AtomicUsize, Ordering},
+        },
+        time::Duration,
+    };
 
     use futures::future::BoxFuture;
 
     use super::*;
     use crate::{
-        Bandwidth, Quorum, SourceExposure,
+        Bandwidth, Quorum, SourceExposure, SourceHealth,
         chain::{BlockHash, TreeNode},
     };
 
@@ -436,6 +483,7 @@ mod tests {
         submit_error: Option<SourceError>,
         breaks_streams: bool,
         wrong_kind: bool,
+        delay: Duration,
         calls: AtomicUsize,
     }
 
@@ -449,6 +497,7 @@ mod tests {
             submit_error: None,
             breaks_streams: false,
             wrong_kind: false,
+            delay: Duration::ZERO,
             calls: AtomicUsize::new(0),
         })
     }
@@ -474,6 +523,7 @@ mod tests {
 
         fn execute(&self, request: Request) -> BoxFuture<'_, Result<Response, SourceError>> {
             self.calls.fetch_add(1, Ordering::Relaxed);
+            std::thread::sleep(self.delay);
             Box::pin(async move {
                 if self.fails {
                     return Err(SourceError::Unavailable("down".into()));
@@ -563,6 +613,84 @@ mod tests {
 
         sources.tip().await.unwrap();
         assert_eq!(down.calls.load(Ordering::Relaxed), 1);
+    }
+
+    fn recorded() -> (Arc<Mutex<Vec<RequestEvent>>>, impl EventReceiver) {
+        let events = Arc::new(Mutex::new(Vec::new()));
+        let copy = events.clone();
+        (events, move |event: &RequestEvent| {
+            copy.lock().unwrap().push(event.clone());
+        })
+    }
+
+    #[tokio::test]
+    async fn each_request_to_a_source_gives_one_event() {
+        let (down, up) = (failing(), mock(UNVERIFIED, 10, "a"));
+        let (events, receiver) = recorded();
+        let sources = set(&[&down, &up], Failover::default()).with_events(receiver);
+
+        sources.tip().await.unwrap();
+
+        let events = events.lock().unwrap();
+        assert_eq!(events.len(), 2);
+        assert_eq!(
+            (events[0].source, events[0].kind),
+            (SourceId(0), RequestKind::Tip)
+        );
+        assert_eq!(
+            events[0].result,
+            Err(SourceError::Unavailable("down".into()))
+        );
+        assert_eq!(
+            (events[1].source, &events[1].result),
+            (SourceId(1), &Ok(()))
+        );
+    }
+
+    #[tokio::test]
+    async fn failure_inside_a_stream_gives_a_second_event() {
+        let broken = custom(|source| source.breaks_streams = true);
+        let (events, receiver) = recorded();
+        let sources = set(&[&broken], Failover::default()).with_events(receiver);
+
+        let blocks = sources.blocks(HEIGHT..HEIGHT + 5).await.unwrap();
+        assert_eq!(events.lock().unwrap().len(), 1);
+        assert!(blocks.value.try_collect::<Vec<_>>().await.is_err());
+
+        let events = events.lock().unwrap();
+        assert_eq!(events[0].result, Ok(()));
+        assert_eq!(events[1].kind, RequestKind::Blocks);
+        assert_eq!(
+            events[1].result,
+            Err(SourceError::Interrupted("cut".into()))
+        );
+    }
+
+    #[tokio::test]
+    async fn event_has_the_duration_of_the_request() {
+        let delay = Duration::from_millis(20);
+        let slow = custom(|source| source.delay = delay);
+        let (events, receiver) = recorded();
+        let sources = set(&[&slow], Failover::default()).with_events(receiver);
+
+        sources.tip().await.unwrap();
+
+        assert!(events.lock().unwrap()[0].duration >= delay);
+    }
+
+    #[tokio::test]
+    async fn router_in_an_arc_gives_the_health_of_each_source() {
+        let router = Arc::new(Failover::default());
+        let (down, up) = (failing(), mock(UNVERIFIED, 10, "a"));
+        let sources = set(&[&down, &up], router.clone());
+        assert_eq!(router.health(SourceId(0)), SourceHealth::Healthy);
+
+        sources.tip().await.unwrap();
+        assert_eq!(router.health(SourceId(0)), SourceHealth::Failing(1));
+        assert_eq!(router.health(SourceId(1)), SourceHealth::Healthy);
+
+        sources.on_failure(SourceId(1), &SourceError::FailedVerification);
+        assert_eq!(router.health(SourceId(1)), SourceHealth::Dropped);
     }
 
     #[tokio::test]
