@@ -7,7 +7,7 @@ use zcash_protocol::{ShieldedPool, TxId, consensus::BlockHeight};
 
 use crate::{
     ChainSource, EventReceiver, Failover, Integrity, Request, RequestEvent, RequestKind, Response,
-    ResponseStream, Route, Router, SourceError, SourceId, SourceInfo, TransportInfo,
+    ResponseStream, Route, Router, SourceError, SourceId, SourceInfo, TransportInfo, TxidRule,
     WalletIdentifier,
     chain::{BlockId, CompactBlock, RawTransaction, ServerInfo, SubtreeRoot, TreeState},
 };
@@ -104,6 +104,17 @@ impl SourceSet {
         self.infos
             .iter()
             .any(|info| info.allowed_identifiers.allows(identifier))
+    }
+
+    /// The smallest number of txids that a source needs to receive a txid among other txids.
+    pub fn txid_minimum(&self) -> Option<usize> {
+        self.infos
+            .iter()
+            .filter_map(|info| match info.allowed_identifiers.txid {
+                TxidRule::Among(minimum) => Some(minimum),
+                _ => None,
+            })
+            .min()
     }
 
     /// Passes a failure of `source` to the router.
@@ -520,8 +531,7 @@ mod tests {
 
     use super::*;
     use crate::{
-        AllowedIdentifiers, Bandwidth, Quorum, SourceExposure, SourceHealth, TxidRule,
-        chain::BlockHash,
+        AllowedIdentifiers, Bandwidth, Quorum, SourceExposure, SourceHealth, chain::BlockHash,
     };
 
     struct Mock {
@@ -877,6 +887,7 @@ mod tests {
         let source = allowing(TxidRule::Among(3));
         let sources = set(&[&source], Failover::default());
 
+        assert_eq!(sources.txid_minimum(), Some(3));
         let fetched = sources.transactions(txids(3)).await.unwrap();
         let transactions: Vec<_> = fetched.value.try_collect().await.unwrap();
         assert_eq!(transactions.len(), 3);
@@ -897,6 +908,7 @@ mod tests {
         let source = allowing(TxidRule::Alone);
         let sources = set(&[&source], Failover::default());
 
+        assert_eq!(sources.txid_minimum(), None);
         let txids = vec![TxId::from_bytes([0; 32])];
         assert!(sources.transactions(txids).await.is_ok());
     }

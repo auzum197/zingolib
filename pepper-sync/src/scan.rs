@@ -28,6 +28,7 @@ use crate::{
 use self::{compact_blocks::scan_compact_blocks, transactions::scan_transactions};
 
 pub(crate) mod compact_blocks;
+pub(crate) mod decoys;
 pub(crate) mod task;
 pub(crate) mod transactions;
 
@@ -289,6 +290,7 @@ where
         &mut outpoints,
         transparent_addresses,
         &known_transactions,
+        chain_height,
     )
     .await?;
     fetch_duration += scan_transactions_started.elapsed();
