@@ -1187,8 +1187,126 @@ async fn chain_tip_birthday_is_100_blocks_below_the_tip() {
     let mut net = MockNet::launch().await;
     net.generate_blocks(150).await;
 
-    let mut client = net.create_client().await;
+    let client = net.create_client().await;
 
     let chain_tip = client.server_info().await.unwrap().block_height;
-    assert_eq!(u64::from(client.birthday()), chain_tip - 100);
+    assert_eq!(client.birthday(), u32::from(chain_tip) - 100);
+}
+
+mod sources {
+    use std::sync::Arc;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    use pepper_sync::AssumedOnly;
+    use pepper_sync::error::{ServerError, SyncError};
+    use wallet_api::{
+        BoxFuture, Connection, Connector, Integrity, Quorum, SourceExposure, TransportInfo,
+    };
+    use zingo_netutils::GrpcIndexer;
+
+    use super::*;
+    use crate::config::{Birthday, WalletConfig};
+    use crate::lightclient::error::LightClientError;
+    use crate::lightclient::store::MemoryStore;
+    use crate::lightclient::{Encryption, LightClient, LightClientBuilder};
+    use crate::testutils::default_test_wallet_settings;
+
+    async fn indexer(net: &MockNet) -> GrpcIndexer {
+        GrpcIndexer::new(net.indexer_uri()).await.unwrap()
+    }
+
+    async fn create(builder: LightClientBuilder) -> LightClient {
+        let wallet_config = WalletConfig::NewSeed {
+            no_of_accounts: 1.try_into().unwrap(),
+            birthday: Birthday::Height(1),
+            wallet_settings: default_test_wallet_settings(),
+        };
+        builder
+            .create(MemoryStore::default(), wallet_config, Encryption::None)
+            .await
+            .unwrap()
+    }
+
+    #[tokio::test]
+    async fn assumed_only_strategy_fails_on_an_unverified_source() {
+        let net = MockNet::launch().await;
+        net.generate_blocks(10).await;
+        let builder = LightClient::builder(net.chain_type())
+            .source(indexer(&net).await)
+            .sync(AssumedOnly);
+        let mut client = create(builder).await;
+
+        let error = client.sync_and_await().await.unwrap_err();
+        assert!(matches!(
+            error,
+            LightClientError::SyncError(SyncError::ServerError(ServerError::IntegrityRequired))
+        ));
+    }
+
+    struct CountingTcp(Arc<AtomicUsize>);
+
+    impl Connector for CountingTcp {
+        fn connect<'a>(
+            &'a self,
+            host: &'a str,
+            port: u16,
+        ) -> BoxFuture<'a, std::io::Result<Box<dyn Connection>>> {
+            self.0.fetch_add(1, Ordering::Relaxed);
+            Box::pin(async move {
+                let stream = tokio::net::TcpStream::connect((host, port)).await?;
+                Ok(Box::new(stream) as Box<dyn Connection>)
+            })
+        }
+
+        fn info(&self) -> TransportInfo {
+            let mut info = TransportInfo::direct();
+            info.exposed_to_source = SourceExposure::Nothing;
+            info
+        }
+    }
+
+    #[tokio::test]
+    async fn sync_works_through_a_custom_connector() {
+        let net = MockNet::launch().await;
+        net.generate_blocks(10).await;
+        let dials = Arc::new(AtomicUsize::new(0));
+        let indexer =
+            GrpcIndexer::with_connector(net.indexer_uri(), CountingTcp(dials.clone())).unwrap();
+        let mut client = create(LightClient::builder(net.chain_type()).source(indexer)).await;
+
+        let synced = client.sync_and_await().await.unwrap();
+        assert_eq!(u32::from(synced.sync_end_height), net.chain_height().await);
+        assert!(dials.load(Ordering::Relaxed) > 0);
+        let transport = client.source_set().sources().first().unwrap().transport;
+        assert_eq!(transport.exposed_to_source, SourceExposure::Nothing);
+    }
+
+    #[tokio::test]
+    async fn assumed_only_strategy_syncs_from_an_assumed_source() {
+        let net = MockNet::launch().await;
+        net.generate_blocks(10).await;
+        let builder = LightClient::builder(net.chain_type())
+            .source(indexer(&net).await.with_integrity(Integrity::Assumed))
+            .sync(AssumedOnly);
+        let mut client = create(builder).await;
+
+        let synced = client.sync_and_await().await.unwrap();
+        assert_eq!(u32::from(synced.sync_end_height), net.chain_height().await);
+    }
+
+    #[tokio::test]
+    async fn unverified_sources_that_disagree_stop_sync() {
+        let mut funded = MockNet::launch().await;
+        funded.create_faucet().await;
+        let empty = MockNet::launch().await;
+        empty.generate_blocks(funded.chain_height().await).await;
+        let builder = LightClient::builder(funded.chain_type())
+            .source(indexer(&funded).await)
+            .source(indexer(&empty).await)
+            .router(Quorum::new(2));
+        let mut client = create(builder).await;
+
+        let error = client.sync_and_await().await.unwrap_err();
+        assert!(error.to_string().contains("sources disagree"), "{error}");
+    }
 }

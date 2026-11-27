@@ -54,6 +54,7 @@ tokio = { workspace = true, features = ["full"] }
 tokio-stream = { workspace = true, optional = true }
 tonic = { workspace = true, optional = true }
 tracing.workspace = true
+wallet-api.workspace = true
 zcash_address = { workspace = true }
 zcash_client_backend = { workspace = true, features = [
     "unstable",

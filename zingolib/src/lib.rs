@@ -17,7 +17,10 @@ pub mod mocks;
 #[cfg(any(test, feature = "testutils"))]
 pub mod testutils;
 
+pub use pepper_sync::strategy;
+pub use wallet_api;
 pub use zingo_common_components::protocol::ActivationHeights;
+pub use zingo_netutils::GrpcIndexer;
 
 // This line includes the generated `git_description()` function directly into this scope.
 include!(concat!(env!("OUT_DIR"), "/git_description.rs"));

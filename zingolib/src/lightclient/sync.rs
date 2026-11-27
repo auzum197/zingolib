@@ -1,15 +1,14 @@
 //! Sync implementations for [`crate::lightclient::LightClient`] and related types.
 
 use std::borrow::BorrowMut;
-use std::sync::Arc;
 use std::time::Duration;
 
 use futures::FutureExt;
+use pepper_sync::SyncContext;
 use pepper_sync::error::{SyncError, SyncModeError, SyncRecoveryObservables};
 use pepper_sync::events::SequencedSyncEvent;
 use pepper_sync::wallet::SyncMode;
 use tokio::time::timeout;
-use zingo_netutils::wallet_api::{Integrity, SourceSet};
 
 use crate::data::PollReport;
 use crate::wallet::error::WalletError;
@@ -30,9 +29,6 @@ impl LightClient {
             ));
         }
 
-        let client = Arc::new(SourceSet::single(
-            self.indexer.clone().with_integrity(Integrity::Assumed),
-        ));
         let chain_type = self.chain_type();
         let sync_config = self
             .wallet()
@@ -41,20 +37,15 @@ impl LightClient {
             .wallet_settings
             .sync_config
             .clone();
-        let wallet = self.wallet().clone();
-        let sync_mode = self.sync_mode.clone();
-        let sync_events = self.sync_events.clone();
-        let sync_handle = tokio::spawn(async move {
-            pepper_sync::sync(
-                client,
-                &chain_type,
-                wallet,
-                sync_mode,
-                sync_config,
-                sync_events,
-            )
-            .await
-        });
+        let context = SyncContext::new(
+            self.sources.clone(),
+            chain_type,
+            self.wallet().clone(),
+            self.sync_mode.clone(),
+            sync_config,
+            self.sync_events.clone(),
+        );
+        let sync_handle = tokio::spawn(self.strategy.run(context));
         self.sync_handle = Some(sync_handle);
 
         let mut sync_mode = self.sync_mode.subscribe();
