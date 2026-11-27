@@ -8,12 +8,12 @@ use tokio_util::sync::CancellationToken;
 use zcash_primitives::transaction::{Transaction, TxId};
 use zcash_protocol::consensus::{self, BlockHeight};
 
-#[cfg(not(feature = "darkside_test"))]
-use futures::TryStreamExt as _;
-use wallet_api::{
+use chain_router::{
     Fetched, IntegrityBasis, ResponseStream, SourceError, SourceId, SourceSet,
     chain::{BlockId, CompactBlock, RawTransaction, TreeState},
 };
+#[cfg(not(feature = "darkside_test"))]
+use futures::TryStreamExt as _;
 
 use crate::{
     error::{MempoolError, ServerError},
@@ -21,7 +21,7 @@ use crate::{
 };
 
 #[cfg(not(feature = "darkside_test"))]
-use wallet_api::chain::SubtreeRoot;
+use chain_router::chain::SubtreeRoot;
 #[cfg(not(feature = "darkside_test"))]
 use zcash_protocol::ShieldedPool;
 
@@ -463,7 +463,7 @@ pub(crate) async fn get_mempool_transaction_stream(
 
 #[cfg(test)]
 mod tests {
-    use wallet_api::SourceId;
+    use chain_router::SourceId;
 
     use super::*;
 

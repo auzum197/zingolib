@@ -1,7 +1,7 @@
 [workspace]
 members = [
     "pepper-sync",
-    "wallet-api",
+    "chain-router",
     "zingolib-common",
     "zingolib-file-format",
     "zingolib",
@@ -15,7 +15,7 @@ resolver = "2"
 [workspace.dependencies]
 ### Workspace
 pepper-sync = { path = "pepper-sync" }         # NOTE: for development between releases
-wallet-api = { path = "wallet-api" }
+chain-router = { path = "chain-router" }
 zingolib-common = { path = "zingolib-common" }
 zingolib-file-format = { path = "zingolib-file-format" }
 zingolib = { path = "zingolib" }

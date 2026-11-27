@@ -49,11 +49,11 @@ mod connector;
 pub mod error;
 mod source;
 
+pub use chain_router;
 pub use connector::{DohServer, Resolver, TcpConnector};
 pub use error::*;
 pub use lightwallet_protocol;
 pub use tonic::{Status, Streaming};
-pub use wallet_api;
 
 #[cfg(feature = "globally-public-transparent")]
 mod globally_public;
@@ -241,7 +241,7 @@ pub trait Indexer {
 pub struct GrpcIndexer {
     uri: http::Uri,
     clear_net_client: CompactTxStreamerClient<Channel>,
-    info: wallet_api::SourceInfo,
+    info: chain_router::SourceInfo,
     // TODO; add nym_client
 }
 
@@ -270,7 +270,7 @@ impl GrpcIndexer {
     fn from_channel(
         uri: http::Uri,
         channel: Channel,
-        mut transport: wallet_api::TransportInfo,
+        mut transport: chain_router::TransportInfo,
     ) -> Self {
         if uri.scheme_str() == Some("https") {
             transport.exposed_to_network.content = false;

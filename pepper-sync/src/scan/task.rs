@@ -12,8 +12,8 @@ use tokio::{
     task::JoinSet,
 };
 
+use chain_router::{SourceError, SourceId, chain::CompactBlock};
 use futures::TryStreamExt as _;
-use wallet_api::{SourceError, SourceId, chain::CompactBlock};
 use zcash_keys::keys::UnifiedFullViewingKey;
 use zcash_primitives::transaction::TxId;
 use zcash_protocol::consensus::{self, BlockHeight};
@@ -884,7 +884,7 @@ impl ScanTask {
 mod tests {
     use std::collections::{BTreeSet, HashMap};
 
-    use wallet_api::chain::{
+    use chain_router::chain::{
         BlockHash, CompactAction, CompactBlock, CompactOutputDescription, CompactTx,
     };
     use zcash_note_encryption::EphemeralKeyBytes;

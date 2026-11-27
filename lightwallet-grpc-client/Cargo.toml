@@ -23,7 +23,7 @@ sapling-crypto.workspace = true
 subtle.workspace = true
 thiserror.workspace = true
 tokio = { workspace = true, features = ["net", "sync"] }
-wallet-api.workspace = true
+chain-router.workspace = true
 zcash_encoding.workspace = true
 zcash_note_encryption.workspace = true
 zcash_primitives.workspace = true

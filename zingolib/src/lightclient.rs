@@ -11,14 +11,14 @@ use zcash_primitives::transaction::TxId;
 use zcash_protocol::consensus::{BlockHeight, NetworkUpgrade, Parameters as _};
 use zcash_transparent::address::TransparentAddress;
 
+use chain_router::{
+    ChainSource, EventReceiver, Failover, Integrity, RequestEvent, Router, SourceError, SourceSet,
+    WalletIdentifier, chain::ServerInfo,
+};
 use lightwallet_grpc_client::{GrpcIndexer, TcpConnector};
 use pepper_sync::{
     SyncStrategy, error::SyncError, events::SyncEmitter, keys::transparent::TransparentAddressId,
     sync::SyncResult, wallet::SyncMode,
-};
-use wallet_api::{
-    ChainSource, EventReceiver, Failover, Integrity, RequestEvent, Router, SourceError, SourceSet,
-    WalletIdentifier, chain::ServerInfo,
 };
 
 use crate::{

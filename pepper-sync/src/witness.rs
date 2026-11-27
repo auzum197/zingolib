@@ -3,10 +3,10 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::ops::Range;
 
+use chain_router::chain::TreeState;
 use incrementalmerkletree::{Hashable, Position, Retention, frontier::Frontier};
 use orchard::tree::MerkleHashOrchard;
 use shardtree::LocatedPrunableTree;
-use wallet_api::chain::TreeState;
 use zcash_primitives::block::BlockHash;
 use zcash_protocol::consensus::BlockHeight;
 
@@ -14,8 +14,8 @@ use crate::sync::SHARDTREE_CHECKPOINT_ROLLING_WINDOW_SIZE;
 
 #[cfg(not(feature = "darkside_test"))]
 use {
-    crate::error::ServerError, shardtree::store::ShardStore, subtle::CtOption,
-    wallet_api::chain::SubtreeRoot,
+    crate::error::ServerError, chain_router::chain::SubtreeRoot, shardtree::store::ShardStore,
+    subtle::CtOption,
 };
 
 pub(crate) use zingolib_common::wallet::SHARD_HEIGHT;

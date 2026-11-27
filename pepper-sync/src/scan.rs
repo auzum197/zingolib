@@ -8,8 +8,8 @@ use orchard::tree::MerkleHashOrchard;
 use task::ScanTask;
 use tokio::sync::mpsc;
 
+use chain_router::chain::{CompactAction, CompactBlock, CompactTx};
 use incrementalmerkletree::Position;
-use wallet_api::chain::{CompactAction, CompactBlock, CompactTx};
 use zcash_keys::keys::UnifiedFullViewingKey;
 use zcash_primitives::{block::BlockHash, transaction::TxId};
 use zcash_protocol::consensus::{self, BlockHeight};

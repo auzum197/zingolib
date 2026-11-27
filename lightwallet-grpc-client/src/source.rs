@@ -7,6 +7,11 @@ use std::{
     time::Duration,
 };
 
+use chain_router::{
+    ChainSource, Connection, Connector, Integrity, Request, Response, SourceError, SourceInfo,
+    TransportInfo, WalletIdentifier,
+    chain::{self, BlockHash, CompactAction, CompactOutputDescription, OutPoint, TxOut},
+};
 use futures::{StreamExt, TryStreamExt, future::BoxFuture};
 use hyper_util::rt::TokioIo;
 use incrementalmerkletree::{Hashable, frontier::Frontier};
@@ -16,11 +21,6 @@ use lightwallet_protocol::{
 };
 use subtle::CtOption;
 use tonic::codegen::Service;
-use wallet_api::{
-    ChainSource, Connection, Connector, Integrity, Request, Response, SourceError, SourceInfo,
-    TransportInfo, WalletIdentifier,
-    chain::{self, BlockHash, CompactAction, CompactOutputDescription, OutPoint, TxOut},
-};
 use zcash_encoding::CompactSize;
 use zcash_note_encryption::EphemeralKeyBytes;
 use zcash_primitives::merkle_tree::{HashSer, read_commitment_tree};
@@ -129,7 +129,7 @@ fn block_range(range: std::ops::Range<BlockHeight>) -> BlockRange {
 fn stream<T: Send + 'static, U: Send + 'static>(
     stream: tonic::Streaming<T>,
     convert: fn(T) -> Result<U, SourceError>,
-) -> wallet_api::ResponseStream<U> {
+) -> chain_router::ResponseStream<U> {
     stream
         .map_err(source_error)
         .and_then(move |item| std::future::ready(convert(item)))

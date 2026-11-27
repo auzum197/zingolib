@@ -268,7 +268,7 @@ pub enum ContinuityError {
 pub enum ServerError {
     /// Server request failed.
     #[error("server request failed. {0}")]
-    RequestFailed(#[from] wallet_api::SourceError),
+    RequestFailed(#[from] chain_router::SourceError),
     /// Server returned invalid transaction.
     #[error("server returned invalid transaction. {0}")]
     InvalidTransaction(std::io::Error),
@@ -364,8 +364,9 @@ mod tests {
 
             #[test]
             fn request_failed() {
-                let e =
-                    ServerError::RequestFailed(wallet_api::SourceError::Timeout("timeout".into()));
+                let e = ServerError::RequestFailed(chain_router::SourceError::Timeout(
+                    "timeout".into(),
+                ));
                 assert!(!e.recommend_same_server());
             }
 
@@ -396,9 +397,10 @@ mod tests {
 
             #[test]
             fn server_request_failed() {
-                let e: TestSyncError =
-                    ServerError::RequestFailed(wallet_api::SourceError::Timeout("timeout".into()))
-                        .into();
+                let e: TestSyncError = ServerError::RequestFailed(
+                    chain_router::SourceError::Timeout("timeout".into()),
+                )
+                .into();
                 assert!(!e.recommend_same_server());
             }
 
@@ -457,8 +459,9 @@ mod tests {
 
             #[test]
             fn request_failed() {
-                let e =
-                    ServerError::RequestFailed(wallet_api::SourceError::Timeout("timeout".into()));
+                let e = ServerError::RequestFailed(chain_router::SourceError::Timeout(
+                    "timeout".into(),
+                ));
                 assert_eq!(
                     e.recovery_recommendation(),
                     SyncRecoveryObservables::ServerUnavailable
@@ -467,9 +470,10 @@ mod tests {
 
             #[test]
             fn sync_error_from_request_failed() {
-                let e: TestSyncError =
-                    ServerError::RequestFailed(wallet_api::SourceError::Unavailable("down".into()))
-                        .into();
+                let e: TestSyncError = ServerError::RequestFailed(
+                    chain_router::SourceError::Unavailable("down".into()),
+                )
+                .into();
                 assert_eq!(
                     e.recovery_recommendation(),
                     SyncRecoveryObservables::ServerUnavailable
