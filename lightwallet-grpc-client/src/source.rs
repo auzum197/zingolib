@@ -18,7 +18,7 @@ use subtle::CtOption;
 use tonic::codegen::Service;
 use wallet_api::{
     ChainSource, Connection, Connector, Integrity, Request, Response, SourceError, SourceInfo,
-    TransportInfo,
+    TransportInfo, WalletIdentifier,
     chain::{self, BlockHash, CompactAction, CompactOutputDescription, OutPoint, TxOut},
 };
 use zcash_encoding::CompactSize;
@@ -78,6 +78,12 @@ impl GrpcIndexer {
     /// Sets the integrity.
     pub fn with_integrity(mut self, integrity: Integrity) -> Self {
         self.info.integrity = integrity;
+        self
+    }
+
+    /// Sets the wallet identifiers that the indexer can receive. The default is none.
+    pub fn allow_identifiers(mut self, identifiers: &[WalletIdentifier]) -> Self {
+        self.info.allowed_identifiers = identifiers.to_vec();
         self
     }
 }

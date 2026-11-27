@@ -65,6 +65,11 @@ pub enum WalletIdentifier {
     SentTransaction,
 }
 
+impl WalletIdentifier {
+    /// Every wallet identifier.
+    pub const ALL: [Self; 3] = [Self::Txid, Self::TransparentAddress, Self::SentTransaction];
+}
+
 impl Request {
     /// The type of this request.
     pub fn kind(&self) -> RequestKind {
