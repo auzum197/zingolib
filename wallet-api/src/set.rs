@@ -731,9 +731,9 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn disclosing_request_goes_to_the_least_exposed_source() {
+    async fn identifying_request_goes_to_the_least_exposed_source() {
         let (direct, pseudonym, unlinkable) = (
-            exposed_as(SourceExposure::Address),
+            exposed_as(SourceExposure::IpAddress),
             exposed_as(SourceExposure::Pseudonym),
             exposed_as(SourceExposure::Nothing),
         );
@@ -762,7 +762,7 @@ mod tests {
         let sources = set(&[&direct, &private], AskAll);
 
         let transport = sources.route_info(&Request::Tip).unwrap().transport;
-        assert_eq!(transport.exposed_to_source, SourceExposure::Address);
+        assert_eq!(transport.exposed_to_source, SourceExposure::IpAddress);
         assert!(transport.exposed_to_network.destination);
         assert!(transport.metered);
         assert_eq!(transport.bandwidth, Bandwidth::Low);

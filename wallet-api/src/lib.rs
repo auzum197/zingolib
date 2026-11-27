@@ -13,7 +13,7 @@ mod transport;
 pub use futures::future::BoxFuture;
 
 pub use event::{EventReceiver, RequestEvent, RequestKind};
-pub use request::{Disclosure, Request, Response, ResponseStream};
+pub use request::{Request, Response, ResponseStream, WalletIdentifier};
 pub use route::{Failover, Quorum, Route, Router, SourceHealth};
 pub use set::{Fetched, IntegrityBasis, RouteInfo, SourceSet};
 pub use source::{Capabilities, ChainSource, Integrity, SourceError, SourceId, SourceInfo};
