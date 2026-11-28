@@ -1,4 +1,4 @@
-//! A public crate that provides access to testvectors
+//! Seeds, addresses and amounts that the tests share.
 
 /// The number of blocks most tests start with.
 pub const BASE_HEIGHT: u32 = 3;

@@ -49,8 +49,8 @@ use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
 use tokio::net::TcpStream;
 use zcash_protocol::value::Zatoshis;
 
-const WALLET_SEED: &str = ekdromos_test_vectors::seeds::HOSPITAL_MUSEUM_SEED;
-const FOREIGN_SEED: &str = ekdromos_test_vectors::seeds::ABANDON_ART_SEED;
+const WALLET_SEED: &str = ekdromos::testutils::vectors::seeds::HOSPITAL_MUSEUM_SEED;
+const FOREIGN_SEED: &str = ekdromos::testutils::vectors::seeds::ABANDON_ART_SEED;
 const NOISE_VALUE: Zatoshis = Zatoshis::const_from_u64(1_000);
 const WALLET_NOTE_VALUE: Zatoshis = Zatoshis::const_from_u64(100_000);
 const COINBASE_REWARD: Zatoshis = Zatoshis::const_from_u64(625_000_000);

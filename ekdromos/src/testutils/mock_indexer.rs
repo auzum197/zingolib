@@ -90,7 +90,7 @@ const FAUCET_TIP: u32 = 20;
 const FUNDING_SOURCE_ENTROPY: [u8; 32] = [0x5a; 32];
 /// The per-block miner subsidy from Canopy on, on the zcashd regtest
 /// chains the ported tests were written against.
-pub const BLOCK_REWARD: u64 = ekdromos_test_vectors::block_rewards::CANOPY;
+pub const BLOCK_REWARD: u64 = crate::testutils::vectors::block_rewards::CANOPY;
 
 /// The miner subsidy at `height`: [`BLOCK_REWARD`] from Canopy on, the
 /// Blossom-era subsidy before it.
@@ -98,7 +98,7 @@ pub fn block_subsidy(chain_type: &ChainType, height: BlockHeight) -> Zatoshis {
     if chain_type.is_nu_active(NetworkUpgrade::Canopy, height) {
         Zatoshis::const_from_u64(BLOCK_REWARD)
     } else {
-        Zatoshis::const_from_u64(ekdromos_test_vectors::block_rewards::BLOSSOM)
+        Zatoshis::const_from_u64(crate::testutils::vectors::block_rewards::BLOSSOM)
     }
 }
 
@@ -2417,7 +2417,8 @@ mod tests {
 
     fn external_orchard_address() -> String {
         let mut wallet =
-            SyntheticWalletBuilder::new(ekdromos_test_vectors::seeds::HOSPITAL_MUSEUM_SEED).build();
+            SyntheticWalletBuilder::new(crate::testutils::vectors::seeds::HOSPITAL_MUSEUM_SEED)
+                .build();
         let (_, unified_address) = wallet
             .generate_unified_address(
                 crate::wallet::keys::unified::ReceiverSelection::orchard_only(),
@@ -2429,7 +2430,8 @@ mod tests {
 
     fn external_transparent_address() -> String {
         let wallet =
-            SyntheticWalletBuilder::new(ekdromos_test_vectors::seeds::HOSPITAL_MUSEUM_SEED).build();
+            SyntheticWalletBuilder::new(crate::testutils::vectors::seeds::HOSPITAL_MUSEUM_SEED)
+                .build();
         wallet
             .transparent_addresses()
             .values()

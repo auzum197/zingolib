@@ -10,7 +10,7 @@
 //! heights, where NU6.3 is active from height 1.
 
 use crate::config::{LocalNetwork, REGTEST_NETWORK};
-use ekdromos_test_vectors::{
+use crate::testutils::vectors::{
     REG_O_ADDR_FROM_ABANDONART, REG_T_ADDR_FROM_ABANDONART, REG_Z_ADDR_FROM_ABANDONART, seeds,
 };
 use tempfile::TempDir;

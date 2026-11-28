@@ -1,5 +1,5 @@
+use crate::testutils::vectors::seeds::CHIMNEY_BETTER_SEED;
 use bip0039::Mnemonic;
-use ekdromos_test_vectors::seeds::CHIMNEY_BETTER_SEED;
 use zcash_keys::keys::Era;
 
 use crate::{
@@ -109,7 +109,7 @@ fn encrypted_wallet_round_trip_and_backward_compat() {
     use std::num::NonZeroU32;
 
     let network = ChainType::Testnet;
-    let seed = ekdromos_test_vectors::seeds::CHIMNEY_BETTER_SEED;
+    let seed = crate::testutils::vectors::seeds::CHIMNEY_BETTER_SEED;
     let seed_entropy = Mnemonic::<bip0039::English>::from_phrase(seed.to_string())
         .unwrap()
         .into_entropy();
@@ -173,7 +173,7 @@ fn construction_encryption_records_custom_memory_and_round_trips() {
     use std::num::NonZeroU32;
 
     let network = ChainType::Testnet;
-    let seed = ekdromos_test_vectors::seeds::CHIMNEY_BETTER_SEED;
+    let seed = crate::testutils::vectors::seeds::CHIMNEY_BETTER_SEED;
     let passphrase = "a passphrase".to_string();
 
     // Encrypt at construction with a non-default memory cost (32 MiB) to prove the chosen value

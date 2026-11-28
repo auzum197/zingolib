@@ -29,7 +29,7 @@ use crate::wallet::keys::unified::ReceiverSelection;
 /// are external.
 fn external_address(pool: PoolType) -> String {
     let mut external_wallet =
-        SyntheticWalletBuilder::new(ekdromos_test_vectors::seeds::ABANDON_ART_SEED).build();
+        SyntheticWalletBuilder::new(crate::testutils::vectors::seeds::ABANDON_ART_SEED).build();
     let selection = match pool {
         PoolType::ORCHARD | PoolType::IRONWOOD => ReceiverSelection::orchard_only(),
         PoolType::SAPLING => ReceiverSelection::sapling_only(),
@@ -48,7 +48,7 @@ fn external_tex_address() -> String {
     use zcash_transparent::address::TransparentAddress;
 
     let external_wallet =
-        SyntheticWalletBuilder::new(ekdromos_test_vectors::seeds::ABANDON_ART_SEED).build();
+        SyntheticWalletBuilder::new(crate::testutils::vectors::seeds::ABANDON_ART_SEED).build();
     let taddr = external_wallet
         .transparent_addresses()
         .values()
@@ -80,7 +80,7 @@ async fn fund(net: &MockNet, receivers: Vec<(&str, u64, Option<&str>)>, extra_bl
 async fn funded_send_confirms_on_the_mock_chain() {
     let mut net = MockNet::launch().await;
     let mut recipient = net
-        .client(ekdromos_test_vectors::seeds::HOSPITAL_MUSEUM_SEED)
+        .client(crate::testutils::vectors::seeds::HOSPITAL_MUSEUM_SEED)
         .await;
     let recipient_ua =
         get_base_address(&recipient, PoolType::Shielded(ShieldedPool::Orchard)).await;
@@ -112,7 +112,7 @@ async fn max_send_value_to_tex_empties_the_wallet() {
     let funding = 100_000;
     let mut net = MockNet::launch().await;
     let mut sender = net
-        .client(ekdromos_test_vectors::seeds::HOSPITAL_MUSEUM_SEED)
+        .client(crate::testutils::vectors::seeds::HOSPITAL_MUSEUM_SEED)
         .await;
     let sender_ua = get_base_address(&sender, PoolType::Shielded(ShieldedPool::Orchard)).await;
 
@@ -154,7 +154,7 @@ async fn max_send_value_to_shielded_empties_the_wallet() {
     let sapling_funding = 50_000;
     let mut net = MockNet::launch().await;
     let mut sender = net
-        .client(ekdromos_test_vectors::seeds::HOSPITAL_MUSEUM_SEED)
+        .client(crate::testutils::vectors::seeds::HOSPITAL_MUSEUM_SEED)
         .await;
     let sender_ua = get_base_address(&sender, PoolType::Shielded(ShieldedPool::Orchard)).await;
     let sender_sapling = get_base_address(&sender, PoolType::Shielded(ShieldedPool::Sapling)).await;
@@ -216,7 +216,7 @@ async fn zero_value_receipts() {
 
     let mut net = MockNet::launch().await;
     let mut recipient = net
-        .client(ekdromos_test_vectors::seeds::HOSPITAL_MUSEUM_SEED)
+        .client(crate::testutils::vectors::seeds::HOSPITAL_MUSEUM_SEED)
         .await;
     let recipient_ua =
         get_base_address(&recipient, PoolType::Shielded(ShieldedPool::Orchard)).await;
@@ -273,7 +273,7 @@ async fn zero_value_receipts() {
 async fn wallet_events_check_fees() {
     let mut net = MockNet::launch().await;
     let mut recipient = net
-        .client(ekdromos_test_vectors::seeds::HOSPITAL_MUSEUM_SEED)
+        .client(crate::testutils::vectors::seeds::HOSPITAL_MUSEUM_SEED)
         .await;
     let recipient_ua =
         get_base_address(&recipient, PoolType::Shielded(ShieldedPool::Orchard)).await;
@@ -309,8 +309,8 @@ async fn wallet_events_check_fees() {
 /// Transmitted-to-Confirmed transition of an unmined send.
 #[tokio::test]
 async fn send_to_transparent_and_sapling_maintain_balance() {
+    use crate::testutils::vectors::TEST_TXID;
     use ekdromos_common::status::ConfirmationStatus;
-    use ekdromos_test_vectors::TEST_TXID;
     use zcash_protocol::consensus::BlockHeight;
 
     use crate::testutils::{
@@ -326,7 +326,7 @@ async fn send_to_transparent_and_sapling_maintain_balance() {
     let recipient_initial_funds = 100_000_000;
     let mut net = MockNet::launch().await;
     let mut recipient = net
-        .client(ekdromos_test_vectors::seeds::HOSPITAL_MUSEUM_SEED)
+        .client(crate::testutils::vectors::seeds::HOSPITAL_MUSEUM_SEED)
         .await;
     let recipient_ua = get_base_address(&recipient, PoolType::IRONWOOD).await;
     // The external destinations: the abandon-art wallet's sapling UA and
@@ -334,7 +334,7 @@ async fn send_to_transparent_and_sapling_maintain_balance() {
     let external_sapling = external_address(PoolType::SAPLING);
     let external_taddr = {
         let external_wallet =
-            SyntheticWalletBuilder::new(ekdromos_test_vectors::seeds::ABANDON_ART_SEED).build();
+            SyntheticWalletBuilder::new(crate::testutils::vectors::seeds::ABANDON_ART_SEED).build();
         external_wallet
             .transparent_addresses()
             .values()
@@ -690,7 +690,7 @@ async fn from_t_z_o_tz_to_zo_tzo_to_orchard() {
 
     let mut net = MockNet::launch().await;
     let mut client = net
-        .client(ekdromos_test_vectors::seeds::HOSPITAL_MUSEUM_SEED)
+        .client(crate::testutils::vectors::seeds::HOSPITAL_MUSEUM_SEED)
         .await;
     let pmc_unified = get_base_address(&client, PoolType::Shielded(ShieldedPool::Orchard)).await;
     let pmc_taddr = get_base_address(&client, PoolType::Transparent).await;
@@ -881,7 +881,7 @@ async fn lost_reply_leaves_the_transaction_transmitted_until_sync_confirms_it() 
 
     let mut net = MockNet::launch().await;
     let mut recipient = net
-        .client(ekdromos_test_vectors::seeds::HOSPITAL_MUSEUM_SEED)
+        .client(crate::testutils::vectors::seeds::HOSPITAL_MUSEUM_SEED)
         .await;
     let recipient_ua =
         get_base_address(&recipient, PoolType::Shielded(ShieldedPool::Orchard)).await;
@@ -925,7 +925,7 @@ async fn lost_reply_while_queued_leaves_the_transaction_transmitted_until_sync_c
 
     let mut net = MockNet::launch().await;
     let mut recipient = net
-        .client(ekdromos_test_vectors::seeds::HOSPITAL_MUSEUM_SEED)
+        .client(crate::testutils::vectors::seeds::HOSPITAL_MUSEUM_SEED)
         .await;
     let recipient_ua =
         get_base_address(&recipient, PoolType::Shielded(ShieldedPool::Orchard)).await;
@@ -970,7 +970,7 @@ async fn lost_reply_while_queued_leaves_the_transaction_transmitted_until_sync_c
 async fn dropped_transaction_fails_at_its_expiry_height() {
     let mut net = MockNet::launch().await;
     let mut recipient = net
-        .client(ekdromos_test_vectors::seeds::HOSPITAL_MUSEUM_SEED)
+        .client(crate::testutils::vectors::seeds::HOSPITAL_MUSEUM_SEED)
         .await;
     let recipient_ua =
         get_base_address(&recipient, PoolType::Shielded(ShieldedPool::Orchard)).await;
@@ -1032,7 +1032,7 @@ mod strict_chain {
 
     async fn funded_sender(net: &mut MockNet) -> LightClient {
         let mut sender = net
-            .client(ekdromos_test_vectors::seeds::HOSPITAL_MUSEUM_SEED)
+            .client(crate::testutils::vectors::seeds::HOSPITAL_MUSEUM_SEED)
             .await;
         let sender_ua = get_base_address(&sender, PoolType::Shielded(ShieldedPool::Orchard)).await;
         fund(net, vec![(&sender_ua, FUNDING, None)], 1).await;
@@ -1141,7 +1141,7 @@ mod strict_chain {
     async fn sync_recovers_from_a_truncated_block_stream() {
         let mut net = MockNet::launch().await;
         let mut recipient = net
-            .client(ekdromos_test_vectors::seeds::HOSPITAL_MUSEUM_SEED)
+            .client(crate::testutils::vectors::seeds::HOSPITAL_MUSEUM_SEED)
             .await;
         let recipient_ua =
             get_base_address(&recipient, PoolType::Shielded(ShieldedPool::Orchard)).await;
@@ -1161,7 +1161,7 @@ mod strict_chain {
     async fn sync_fails_while_the_indexer_is_unavailable() {
         let mut net = MockNet::launch().await;
         let mut client = net
-            .client(ekdromos_test_vectors::seeds::HOSPITAL_MUSEUM_SEED)
+            .client(crate::testutils::vectors::seeds::HOSPITAL_MUSEUM_SEED)
             .await;
         net.chain.write().await.mine_empty_blocks(2);
         {
@@ -1180,7 +1180,7 @@ mod strict_chain {
     async fn coinbase_reward_becomes_spendable_after_maturity() {
         let mut net = MockNet::launch().await;
         let mut miner = net
-            .client(ekdromos_test_vectors::seeds::HOSPITAL_MUSEUM_SEED)
+            .client(crate::testutils::vectors::seeds::HOSPITAL_MUSEUM_SEED)
             .await;
         let miner_taddr = get_base_address(&miner, PoolType::Transparent).await;
         let coinbase = {

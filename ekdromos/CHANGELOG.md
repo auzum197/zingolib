@@ -36,7 +36,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - The crate is named `ekdromos`, formerly `zingolib`. Its import path is `ekdromos`.
 - `wallet::zcb_traits::ZingoAccount` is named `EkdromosAccount`.
 - `testutils::scenarios::ClientBuilder::zingo_datadir` is named `wallet_datadir`.
-- `zingo_test_vectors` is named `ekdromos-test-vectors`.
+- The contents of `zingo_test_vectors` are the module `testutils::vectors`, behind the
+  `testutils` feature. The crate is removed.
 - The test utilities take a `config::LocalNetwork` where they took an `ActivationHeights`.
   `config::REGTEST_NETWORK` replaces `ActivationHeights::default()`.
 - `config::Birthday` is the birthday type of every `WalletConfig` variant: `ChainTip`,

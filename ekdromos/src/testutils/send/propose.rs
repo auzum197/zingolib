@@ -327,7 +327,7 @@ impl LightClient {
 
 #[cfg(test)]
 mod tests {
-    use ekdromos_test_vectors::seeds;
+    use crate::testutils::vectors::seeds;
     use zcash_protocol::consensus::Parameters;
 
     use super::super::error::ProposeShieldError;

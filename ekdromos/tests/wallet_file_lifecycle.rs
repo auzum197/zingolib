@@ -44,7 +44,7 @@ use ekdromos_common::price::PriceList;
 use ekdromos_common::serialization::ReadableWriteable;
 use ekdromos_file_format::{WalletFile, WalletFileError, WalletFileRef};
 
-const SEED: &str = ekdromos_test_vectors::seeds::HOSPITAL_MUSEUM_SEED;
+const SEED: &str = ekdromos::testutils::vectors::seeds::HOSPITAL_MUSEUM_SEED;
 /// Ironwood is active from the first block: the Zakura Orchard crate only builds bundles for
 /// the current protocol version, so Orchard-pool coinbase cannot be mined on the mock chain.
 const IRONWOOD_HEIGHT: u32 = 1;
@@ -799,9 +799,10 @@ async fn settings() {
 }
 
 fn external_orchard_address() -> String {
-    let mut external = SyntheticWalletBuilder::new(ekdromos_test_vectors::seeds::ABANDON_ART_SEED)
-        .activation_heights(activation_heights())
-        .build();
+    let mut external =
+        SyntheticWalletBuilder::new(ekdromos::testutils::vectors::seeds::ABANDON_ART_SEED)
+            .activation_heights(activation_heights())
+            .build();
     let (_, address) = external
         .generate_unified_address(ReceiverSelection::orchard_only(), AccountId::ZERO)
         .expect("an orchard address generates");

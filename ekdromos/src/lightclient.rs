@@ -502,6 +502,7 @@ mod mock_chain_tests;
 #[cfg(test)]
 mod tests {
     use crate::config::REGTEST_NETWORK;
+    use crate::testutils::vectors::seeds::CHIMNEY_BETTER_SEED;
     use crate::{
         config::{Birthday, ChainType, DEFAULT_INDEXER_URI, WalletConfig},
         lightclient::{
@@ -512,7 +513,6 @@ mod tests {
         testutils::default_test_wallet_settings,
         wallet::keys::unified::ReceiverSelection,
     };
-    use ekdromos_test_vectors::seeds::CHIMNEY_BETTER_SEED;
     use tempfile::TempDir;
 
     struct WriteOnce(MemoryStore);

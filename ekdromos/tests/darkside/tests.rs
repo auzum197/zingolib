@@ -6,8 +6,8 @@ use ekdromos::lightclient::{LightClient, Unlock};
 use ekdromos::testutils::lightclient::from_inputs;
 use ekdromos::testutils::scenarios::ClientBuilder;
 use ekdromos::testutils::tempfile::TempDir;
+use ekdromos::testutils::vectors::seeds::DARKSIDE_SEED;
 use ekdromos::wallet::balance::AccountBalance;
-use ekdromos_test_vectors::seeds::DARKSIDE_SEED;
 
 use crate::support::{self, build_client, prepare_darksidewalletd};
 
@@ -110,7 +110,7 @@ async fn sent_transaction_reorged_into_mempool() {
     let mut light_client = build_client(&mut client_manager, DARKSIDE_SEED, 1).await;
     let mut recipient = build_client(
         &mut client_manager,
-        ekdromos_test_vectors::seeds::HOSPITAL_MUSEUM_SEED,
+        ekdromos::testutils::vectors::seeds::HOSPITAL_MUSEUM_SEED,
         1,
     )
     .await;

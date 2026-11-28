@@ -46,7 +46,7 @@ async fn watch_only_wallet_sees_a_payment_through_the_backend() {
     // a seeded recipient whose viewing key the watch-only wallet imports
     let mut net = MockNet::launch().await;
     let mut recipient = net
-        .client(ekdromos_test_vectors::seeds::HOSPITAL_MUSEUM_SEED)
+        .client(ekdromos::testutils::vectors::seeds::HOSPITAL_MUSEUM_SEED)
         .await;
     let (ufvk, address) = {
         let ufvk = {

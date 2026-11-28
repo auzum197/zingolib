@@ -7,7 +7,6 @@ members = [
     "ekdromos",
     "watchonly-tui",
     "lightwallet-grpc-client",
-    "ekdromos-test-vectors",
 ]
 resolver = "2"
 
@@ -25,7 +24,6 @@ portpicker = "0.1"
 proptest = "1.6.0"
 tempfile = "3"
 test-log = "0.2"
-ekdromos-test-vectors = { path = "ekdromos-test-vectors" }
 
 ### Documentation
 indoc = "2"

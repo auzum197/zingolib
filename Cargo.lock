@@ -1245,7 +1245,6 @@ dependencies = [
  "ekdromos",
  "ekdromos-common",
  "ekdromos-file-format",
- "ekdromos-test-vectors",
  "futures",
  "hex",
  "http",
@@ -1346,10 +1345,6 @@ dependencies = [
  "zeroize",
  "zip32",
 ]
-
-[[package]]
-name = "ekdromos-test-vectors"
-version = "0.0.1"
 
 [[package]]
 name = "env_filter"
@@ -5138,7 +5133,6 @@ dependencies = [
  "dirs",
  "ekdromos",
  "ekdromos-common",
- "ekdromos-test-vectors",
  "http",
  "pepper-sync",
  "qrcode",

@@ -5,12 +5,12 @@ use zcash_primitives::transaction::fees::zip317::MINIMUM_FEE;
 
 use ekdromos::config::REGTEST_NETWORK;
 use ekdromos::testutils::scenarios::{self, increase_height_and_wait_for_client};
+use ekdromos::testutils::vectors::{BASE_HEIGHT, block_rewards, seeds::HOSPITAL_MUSEUM_SEED};
 use ekdromos::utils::conversion::address_from_str;
 use ekdromos::wallet::balance::AccountBalance;
 use ekdromos::wallet::keys::unified::UnifiedKeyStore;
 use ekdromos::wallet::summary::data::{CoinSummary, NoteSummary};
 use ekdromos::{check_client_balances, get_base_address_macro};
-use ekdromos_test_vectors::{BASE_HEIGHT, block_rewards, seeds::HOSPITAL_MUSEUM_SEED};
 use pepper_sync::wallet::TransparentCoin;
 use zcash_protocol::PoolType;
 use zcash_protocol::value::Zatoshis;
@@ -1053,6 +1053,7 @@ mod slow {
     use ekdromos::testutils::send::error::{
         CalculateTransactionError, ProposeSendError, SendError,
     };
+    use ekdromos::testutils::vectors::TEST_TXID;
     use ekdromos::testutils::{
         assert_transaction_summary_equality, assert_transaction_summary_exists,
         build_fvks_from_unified_keystore, default_test_wallet_settings,
@@ -1067,7 +1068,6 @@ mod slow {
         BasicNoteSummary, OutgoingNoteSummary, SendType, TransactionKind, TransactionSummary,
     };
     use ekdromos_common::status::ConfirmationStatus;
-    use ekdromos_test_vectors::TEST_TXID;
     use pepper_sync::wallet::{
         IronwoodNote, NoteInterface, OrchardNote, OutgoingNoteInterface, OutputInterface,
         SaplingNote, TransparentCoin,
@@ -1341,7 +1341,7 @@ mod slow {
             assert!(matches!(
                 from_inputs::quick_send(
                     &mut watch_client,
-                    vec![(ekdromos_test_vectors::EXT_TADDR, 1000, None)]
+                    vec![(ekdromos::testutils::vectors::EXT_TADDR, 1000, None)]
                 )
                 .await,
                 Err(SendError::CalculateSendError(
@@ -1386,7 +1386,7 @@ mod slow {
         let sent_value = 20_000;
         let sent_transaction_error = from_inputs::quick_send(
             &mut recipient,
-            vec![(ekdromos_test_vectors::EXT_TADDR, sent_value, None)],
+            vec![(ekdromos::testutils::vectors::EXT_TADDR, sent_value, None)],
         )
         .await
         .unwrap_err();
@@ -3208,12 +3208,12 @@ mod send_all {
 }
 
 mod testnet_test {
+    use ekdromos::testutils::vectors::seeds::HOSPITAL_MUSEUM_SEED;
     use ekdromos::{
         config::{Birthday, ChainType, DEFAULT_INDEXER_URI_TESTNET, WalletConfig},
         lightclient::{Encryption, LightClient, Unlock, store::FileStore},
         testutils::{default_test_wallet_settings, tempfile::TempDir},
     };
-    use ekdromos_test_vectors::seeds::HOSPITAL_MUSEUM_SEED;
     use pepper_sync::sync_status;
 
     #[ignore = "testnet cannot be run offline: this test dials the public testnet indexer, \

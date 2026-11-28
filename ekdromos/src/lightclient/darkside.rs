@@ -53,7 +53,7 @@ async fn fund_at_height_three(net: &MockNet, address: &str) -> Vec<u8> {
 async fn reorg_removes_receipt() {
     let mut net = MockNet::launch().await;
     let mut wallet = net
-        .client(ekdromos_test_vectors::seeds::HOSPITAL_MUSEUM_SEED)
+        .client(crate::testutils::vectors::seeds::HOSPITAL_MUSEUM_SEED)
         .await;
     let address = get_base_address(&wallet, PoolType::Shielded(ShieldedPool::Orchard)).await;
     fund_at_height_three(&net, &address).await;
@@ -79,7 +79,7 @@ async fn reorg_removes_receipt() {
 async fn reorg_moves_receipt_to_new_height() {
     let mut net = MockNet::launch().await;
     let mut wallet = net
-        .client(ekdromos_test_vectors::seeds::HOSPITAL_MUSEUM_SEED)
+        .client(crate::testutils::vectors::seeds::HOSPITAL_MUSEUM_SEED)
         .await;
     let address = get_base_address(&wallet, PoolType::Shielded(ShieldedPool::Orchard)).await;
     fund_at_height_three(&net, &address).await;
@@ -127,10 +127,10 @@ async fn reorg_moves_receipt_to_new_height() {
 async fn reorg_expires_outgoing_transaction() {
     let mut net = MockNet::launch().await;
     let mut sender = net
-        .client(ekdromos_test_vectors::seeds::HOSPITAL_MUSEUM_SEED)
+        .client(crate::testutils::vectors::seeds::HOSPITAL_MUSEUM_SEED)
         .await;
     let mut recipient = net
-        .client(ekdromos_test_vectors::seeds::DARKSIDE_SEED)
+        .client(crate::testutils::vectors::seeds::DARKSIDE_SEED)
         .await;
     let sender_address = get_base_address(&sender, PoolType::Shielded(ShieldedPool::Orchard)).await;
     let recipient_address =
