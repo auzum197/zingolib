@@ -25,8 +25,8 @@ use orchard::value::NoteValue;
 use shardtree::store::{Checkpoint, ShardStore as _};
 use zcash_keys::keys::UnifiedSpendingKey;
 
+use crate::config::{LocalNetwork, REGTEST_NETWORK};
 use ekdromos_common::status::ConfirmationStatus;
-use ekdromos_common_components::protocol::ActivationHeights;
 use pepper_sync::sync::{ScanPriority, ScanRange};
 use pepper_sync::wallet::{
     IronwoodNote, OrchardNote, OutputId, SaplingNote, SyncState, TransparentCoin, WalletTransaction,
@@ -50,7 +50,7 @@ use crate::wallet::LightWallet;
 pub struct SyntheticWalletBuilder {
     mnemonic: String,
     tip: u32,
-    activation_heights: ActivationHeights,
+    activation_heights: LocalNetwork,
     ironwood_note_values: Vec<u64>,
     orchard_note_values: Vec<u64>,
     sapling_note_values: Vec<u64>,
@@ -64,7 +64,7 @@ impl SyntheticWalletBuilder {
         Self {
             mnemonic: mnemonic.to_string(),
             tip: 20,
-            activation_heights: ActivationHeights::default(),
+            activation_heights: REGTEST_NETWORK,
             ironwood_note_values: Vec::new(),
             orchard_note_values: Vec::new(),
             sapling_note_values: Vec::new(),
@@ -81,7 +81,7 @@ impl SyntheticWalletBuilder {
 
     /// Overrides the regtest activation-height schedule (default: every
     /// expressible upgrade active at height 1).
-    pub fn activation_heights(mut self, heights: ActivationHeights) -> Self {
+    pub fn activation_heights(mut self, heights: LocalNetwork) -> Self {
         self.activation_heights = heights;
         self
     }

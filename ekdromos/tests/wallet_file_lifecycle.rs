@@ -21,8 +21,8 @@ use zcash_keys::keys::{Era, UnifiedFullViewingKey, UnifiedSpendingKey};
 use zcash_protocol::value::Zatoshis;
 use zip32::AccountId;
 
-use ekdromos::ActivationHeights;
 use ekdromos::config::{Birthday, WalletConfig};
+use ekdromos::config::{LocalNetwork, REGTEST_NETWORK};
 use ekdromos::lightclient::LightClient;
 use ekdromos::lightclient::store::{FileStore, WalletStore as _};
 use ekdromos::lightclient::{Encryption, Unlock};
@@ -60,20 +60,11 @@ const READ_TIMEOUT: Duration = Duration::from_secs(5);
 const EDGE: usize = 256;
 const STRIDE: usize = 61;
 
-fn activation_heights() -> ActivationHeights {
-    ActivationHeights::builder()
-        .set_overwinter(Some(1))
-        .set_sapling(Some(1))
-        .set_blossom(Some(1))
-        .set_heartwood(Some(1))
-        .set_canopy(Some(1))
-        .set_nu5(Some(1))
-        .set_nu6(Some(1))
-        .set_nu6_1(Some(1))
-        .set_nu6_2(Some(1))
-        .set_nu6_3(Some(IRONWOOD_HEIGHT))
-        .set_nu7(None)
-        .build()
+fn activation_heights() -> LocalNetwork {
+    LocalNetwork {
+        nu6_3: Some(IRONWOOD_HEIGHT.into()),
+        ..REGTEST_NETWORK
+    }
 }
 
 async fn launch() -> MockNet {

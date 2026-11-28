@@ -1244,7 +1244,6 @@ dependencies = [
  "dirs",
  "ekdromos",
  "ekdromos-common",
- "ekdromos-common-components",
  "ekdromos-file-format",
  "ekdromos-test-vectors",
  "futures",
@@ -1297,7 +1296,6 @@ dependencies = [
  "bip0039",
  "bip32",
  "byteorder",
- "ekdromos-common-components",
  "hex",
  "incrementalmerkletree",
  "memuse",
@@ -1321,13 +1319,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "ekdromos-common-components"
-version = "0.4.0"
-dependencies = [
- "hex",
-]
-
-[[package]]
 name = "ekdromos-file-format"
 version = "0.1.0"
 dependencies = [
@@ -1336,7 +1327,6 @@ dependencies = [
  "byteorder",
  "chacha20poly1305 0.10.1",
  "ekdromos-common",
- "ekdromos-common-components",
  "hex",
  "incrementalmerkletree",
  "log",
@@ -5149,7 +5139,6 @@ dependencies = [
  "dirs",
  "ekdromos",
  "ekdromos-common",
- "ekdromos-common-components",
  "ekdromos-test-vectors",
  "http",
  "pepper-sync",

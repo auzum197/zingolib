@@ -33,6 +33,7 @@ use zcash_transparent::keys::NonHardenedChildIndex;
 use zip32::{AccountId, Scope};
 
 use ekdromos_common::chain::ChainType;
+use ekdromos_common::chain::REGTEST_NETWORK;
 use ekdromos_common::config::{
     PerformanceLevel, SyncConfig, TransparentAddressDiscovery, TransparentAddressDiscoveryScopes,
 };
@@ -51,7 +52,6 @@ use ekdromos_common::wallet::{
     OutputId, OutputInterface, SaplingNote, ScanTarget, ShardTrees, TransparentCoin, WalletBlock,
     WalletNote, WalletTransaction,
 };
-use ekdromos_common_components::protocol::ActivationHeights;
 use ekdromos_file_format::{WalletFile, WalletSettings};
 use pepper_sync::keys::transparent::encode_address;
 
@@ -95,7 +95,7 @@ fn chain_type_strategy() -> impl Strategy<Value = ChainType> {
     prop_oneof![
         Just(ChainType::Mainnet),
         Just(ChainType::Testnet),
-        Just(ChainType::Regtest(ActivationHeights::default())),
+        Just(ChainType::Regtest(REGTEST_NETWORK)),
     ]
 }
 
@@ -104,7 +104,7 @@ fn chain_type_strategy() -> impl Strategy<Value = ChainType> {
 fn a_different_chain(chain_type: ChainType) -> ChainType {
     match chain_type {
         ChainType::Mainnet => ChainType::Testnet,
-        ChainType::Testnet => ChainType::Regtest(ActivationHeights::default()),
+        ChainType::Testnet => ChainType::Regtest(REGTEST_NETWORK),
         ChainType::Regtest(_) => ChainType::Mainnet,
     }
 }

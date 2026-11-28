@@ -38,5 +38,4 @@ sapling-crypto = { workspace = true }
 shardtree = { workspace = true }
 zcash_keys = { workspace = true }
 zcash_transparent = { workspace = true }
-ekdromos-common-components = { workspace = true }
 ekdromos-common = { workspace = true, features = ["test-features"] }

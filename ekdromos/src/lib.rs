@@ -16,6 +16,5 @@ pub mod mocks;
 pub mod testutils;
 
 pub use chain_router;
-pub use ekdromos_common_components::protocol::ActivationHeights;
 pub use lightwallet_grpc_client::GrpcIndexer;
 pub use pepper_sync::strategy;

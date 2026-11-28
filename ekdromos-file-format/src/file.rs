@@ -445,8 +445,8 @@ impl WalletFileRef<'_> {
 mod tests {
     use std::num::NonZeroU32;
 
+    use ekdromos_common::chain::{LocalNetwork, REGTEST_NETWORK};
     use ekdromos_common::{keys::TransparentScope, status::ConfirmationStatus};
-    use ekdromos_common_components::protocol::ActivationHeights;
     use zcash_keys::keys::UnifiedSpendingKey;
     use zcash_primitives::transaction::{TransactionData, TxVersion};
     use zcash_protocol::consensus::BranchId;
@@ -522,7 +522,7 @@ mod tests {
         [
             ChainType::Mainnet,
             ChainType::Testnet,
-            ChainType::Regtest(ActivationHeights::default()),
+            ChainType::Regtest(REGTEST_NETWORK),
         ]
     }
 
@@ -557,28 +557,22 @@ mod tests {
 
     #[test]
     fn read_any_gives_regtest_default_heights_and_read_keeps_the_callers() {
-        let custom = ChainType::Regtest(
-            ActivationHeights::builder()
-                .set_overwinter(Some(1))
-                .set_sapling(Some(100))
-                .set_blossom(Some(100))
-                .set_heartwood(Some(100))
-                .set_canopy(Some(100))
-                .set_nu5(Some(100))
-                .set_nu6(Some(100))
-                .set_nu6_1(Some(100))
-                .set_nu6_2(Some(100))
-                .set_nu6_3(Some(100))
-                .set_nu7(None)
-                .build(),
-        );
+        let custom = ChainType::Regtest(LocalNetwork {
+            sapling: Some(100.into()),
+            blossom: Some(100.into()),
+            heartwood: Some(100.into()),
+            canopy: Some(100.into()),
+            nu5: Some(100.into()),
+            nu6: Some(100.into()),
+            nu6_1: Some(100.into()),
+            nu6_2: Some(100.into()),
+            nu6_3: Some(100.into()),
+            ..REGTEST_NETWORK
+        });
         let written = bytes(&fresh(custom));
 
         let discovered = WalletFile::read_any(written.as_slice()).unwrap();
-        assert_eq!(
-            discovered.chain_type,
-            ChainType::Regtest(ActivationHeights::default())
-        );
+        assert_eq!(discovered.chain_type, ChainType::Regtest(REGTEST_NETWORK));
 
         let with_chain = WalletFile::read(written.as_slice(), custom).unwrap();
         assert_eq!(with_chain.chain_type, custom);

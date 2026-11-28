@@ -7,7 +7,7 @@ use http::uri::InvalidUri;
 
 use zcash_protocol::consensus::{BlockHeight, NetworkUpgrade, Parameters};
 
-pub use ekdromos_common::chain::{ChainType, InvalidChainType};
+pub use ekdromos_common::chain::{ChainType, InvalidChainType, LocalNetwork, REGTEST_NETWORK};
 
 use crate::wallet::{
     WalletBase, WalletSettings,

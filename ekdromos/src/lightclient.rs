@@ -501,6 +501,7 @@ mod mock_chain_tests;
 
 #[cfg(test)]
 mod tests {
+    use crate::config::REGTEST_NETWORK;
     use crate::{
         config::{Birthday, ChainType, DEFAULT_INDEXER_URI, WalletConfig},
         lightclient::{
@@ -511,7 +512,6 @@ mod tests {
         testutils::default_test_wallet_settings,
         wallet::keys::unified::ReceiverSelection,
     };
-    use ekdromos_common_components::protocol::ActivationHeights;
     use ekdromos_test_vectors::seeds::CHIMNEY_BETTER_SEED;
     use tempfile::TempDir;
 
@@ -538,7 +538,7 @@ mod tests {
     async fn flush_reports_a_failed_save() {
         let mut lc = LightClient::create(
             WriteOnce(MemoryStore::default()),
-            ChainType::Regtest(ActivationHeights::default()),
+            ChainType::Regtest(REGTEST_NETWORK),
             DEFAULT_INDEXER_URI.parse().unwrap(),
             WalletConfig::MnemonicPhrase {
                 mnemonic_phrase: CHIMNEY_BETTER_SEED.to_string(),
@@ -562,7 +562,7 @@ mod tests {
     async fn create_then_open() {
         let temp_dir = TempDir::new().unwrap();
         let store = FileStore::new(temp_dir.path().join("wallet.dat"));
-        let chain_type = ChainType::Regtest(ActivationHeights::default());
+        let chain_type = ChainType::Regtest(REGTEST_NETWORK);
         let indexer_uri: http::Uri = DEFAULT_INDEXER_URI.parse().unwrap();
         let open =
             |unlock| LightClient::open(store.clone(), chain_type, indexer_uri.clone(), unlock);

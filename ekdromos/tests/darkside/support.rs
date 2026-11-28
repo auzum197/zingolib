@@ -9,13 +9,13 @@
 use std::num::NonZeroU32;
 
 use ekdromos::config::{Birthday, ChainType, WalletConfig};
+use ekdromos::config::{LocalNetwork, REGTEST_NETWORK};
 use ekdromos::lightclient::LightClient;
 use ekdromos::lightclient::store::FileStore;
 use ekdromos::testutils::chain_generics::conduct_chain::ConductChain;
 use ekdromos::testutils::default_test_wallet_settings;
 use ekdromos::testutils::mock_indexer::{MockChain, MockNet};
 use ekdromos::testutils::scenarios::ClientBuilder;
-use ekdromos_common_components::protocol::ActivationHeights;
 
 use crate::constants::{
     ABANDON_TO_DARKSIDE_SAP_10_000_000_ZAT, DARKSIDE_SEED, GENESIS_BLOCK,
@@ -28,8 +28,8 @@ pub const DATASET_START: u32 = 202;
 /// The activation schedule of the darkside chains. The recorded transactions predate NU6.3,
 /// but the Zakura Orchard crate only builds bundles for the current protocol version, so
 /// Ironwood is active from the first block and the sends these suites make are V6.
-pub fn activation_heights() -> ActivationHeights {
-    ActivationHeights::default()
+pub fn activation_heights() -> LocalNetwork {
+    REGTEST_NETWORK
 }
 
 /// Launches an empty mock chain on the darkside schedule.

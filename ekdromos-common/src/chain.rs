@@ -1,9 +1,25 @@
 //! The network a wallet belongs to.
 
 use byteorder::{ReadBytesExt, WriteBytesExt};
-use ekdromos_common_components::protocol::ActivationHeights;
 use zcash_protocol::consensus::{
     BlockHeight, MAIN_NETWORK, NetworkType, NetworkUpgrade, Parameters, TEST_NETWORK,
+};
+
+pub use zcash_protocol::local_consensus::LocalNetwork;
+
+/// Regtest activation heights with each upgrade up to NU6.3 active from block 1.
+pub const REGTEST_NETWORK: LocalNetwork = LocalNetwork {
+    overwinter: Some(BlockHeight::from_u32(1)),
+    sapling: Some(BlockHeight::from_u32(1)),
+    blossom: Some(BlockHeight::from_u32(1)),
+    heartwood: Some(BlockHeight::from_u32(1)),
+    canopy: Some(BlockHeight::from_u32(1)),
+    nu5: Some(BlockHeight::from_u32(1)),
+    nu6: Some(BlockHeight::from_u32(1)),
+    nu6_1: Some(BlockHeight::from_u32(1)),
+    nu6_2: Some(BlockHeight::from_u32(1)),
+    nu6_3: Some(BlockHeight::from_u32(1)),
+    nu7: None,
 };
 
 /// The network types a lightclient can connect to.
@@ -14,7 +30,7 @@ pub enum ChainType {
     /// Testnet
     Testnet,
     /// Regtest
-    Regtest(ActivationHeights),
+    Regtest(LocalNetwork),
 }
 
 impl ChainType {
@@ -24,7 +40,7 @@ impl ChainType {
         match reader.read_u8()? {
             0 => Ok(ChainType::Mainnet),
             1 => Ok(ChainType::Testnet),
-            2 => Ok(ChainType::Regtest(ActivationHeights::default())),
+            2 => Ok(ChainType::Regtest(REGTEST_NETWORK)),
             other => Err(std::io::Error::new(
                 std::io::ErrorKind::InvalidData,
                 format!("invalid chain type index stored in wallet file: {other}"),
@@ -60,7 +76,7 @@ impl TryFrom<&str> for ChainType {
         match value {
             "mainnet" => Ok(ChainType::Mainnet),
             "testnet" => Ok(ChainType::Testnet),
-            "regtest" => Ok(ChainType::Regtest(ActivationHeights::default())),
+            "regtest" => Ok(ChainType::Regtest(REGTEST_NETWORK)),
             _ => Err(InvalidChainType(value.to_string())),
         }
     }
@@ -79,23 +95,7 @@ impl Parameters for ChainType {
         match self {
             ChainType::Mainnet => MAIN_NETWORK.activation_height(nu),
             ChainType::Testnet => TEST_NETWORK.activation_height(nu),
-            ChainType::Regtest(activation_heights) => match nu {
-                NetworkUpgrade::Nu6_3 => activation_heights.nu6_3().map(BlockHeight::from_u32),
-                NetworkUpgrade::Overwinter => {
-                    activation_heights.overwinter().map(BlockHeight::from_u32)
-                }
-                NetworkUpgrade::Sapling => activation_heights.sapling().map(BlockHeight::from_u32),
-                NetworkUpgrade::Blossom => activation_heights.blossom().map(BlockHeight::from_u32),
-                NetworkUpgrade::Heartwood => {
-                    activation_heights.heartwood().map(BlockHeight::from_u32)
-                }
-                NetworkUpgrade::Canopy => activation_heights.canopy().map(BlockHeight::from_u32),
-                NetworkUpgrade::Nu5 => activation_heights.nu5().map(BlockHeight::from_u32),
-                NetworkUpgrade::Nu6 => activation_heights.nu6().map(BlockHeight::from_u32),
-                NetworkUpgrade::Nu6_1 => activation_heights.nu6_1().map(BlockHeight::from_u32),
-                NetworkUpgrade::Nu6_2 => activation_heights.nu6_2().map(BlockHeight::from_u32),
-                NetworkUpgrade::Nu7 => None,
-            },
+            ChainType::Regtest(local_network) => local_network.activation_height(nu),
         }
     }
 }
