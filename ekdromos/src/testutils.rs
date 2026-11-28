@@ -31,6 +31,7 @@ pub mod mock_indexer;
 pub mod scenarios;
 pub mod send;
 pub mod synthetic_wallet;
+pub mod vectors;
 
 // Re-export test dependencies for convenience
 pub use portpicker;

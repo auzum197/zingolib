@@ -6,7 +6,7 @@
 //! `print_current_hex` test and bump `WalletFile::VERSION`.
 
 use ekdromos_common::chain::ChainType;
-use ekdromos_common_components::protocol::ActivationHeights;
+use ekdromos_common::chain::REGTEST_NETWORK;
 
 use super::support::{bytes, fresh};
 
@@ -22,10 +22,7 @@ fn chains_with_expected_hex() -> [(ChainType, &'static str); 3] {
     [
         (ChainType::Mainnet, MAINNET_HEX),
         (ChainType::Testnet, TESTNET_HEX),
-        (
-            ChainType::Regtest(ActivationHeights::default()),
-            REGTEST_HEX,
-        ),
+        (ChainType::Regtest(REGTEST_NETWORK), REGTEST_HEX),
     ]
 }
 

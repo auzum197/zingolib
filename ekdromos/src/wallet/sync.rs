@@ -189,12 +189,12 @@ impl SyncShardTrees for LightWallet {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::testutils::vectors::seeds;
     use crate::{
         config::{Birthday, ChainType, WalletConfig},
         testutils::default_test_wallet_settings,
         wallet::LightWallet,
     };
-    use ekdromos_test_vectors::seeds;
     use sapling_crypto::zip32::DiversifiableFullViewingKey;
     use zip32::DiversifierIndex;
 

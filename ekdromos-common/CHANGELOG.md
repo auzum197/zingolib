@@ -36,16 +36,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `serialization::ReadableWriteable`: moved from `ekdromos::wallet::traits`. Versioned
   read/write trait now shared by every persisted type in the workspace.
 - `chain::ChainType` and `chain::InvalidChainType`: moved from `ekdromos::config`.
+- `chain::REGTEST_NETWORK`: the regtest activation heights with each upgrade up to NU6.3 active
+  from block 1. `chain::LocalNetwork` is a re-export of the `zcash_protocol` type.
 - `keys`: `UnifiedKeyStore`, `UnifiedAddressId`, `ReceiverSelection` and `KeyError` moved from
   `ekdromos::wallet`, and `TransparentScope` moved from `pepper_sync::keys::transparent`.
 
 ### Changed
 
+- `chain::ChainType::Regtest` holds a `zcash_protocol::local_consensus::LocalNetwork`. It held
+  an `ActivationHeights` of `ekdromos-common-components`, and that crate is removed.
+
 - The crate is named `ekdromos-common`, formerly `zingolib-common`.
 - `memo::parse_zingolib_memo` is named `memo::parse_ekdromos_memo`.
 - `keys`: `UnifiedAddress`, `Era` and `UnifiedSpendingKey` come from `zcash_keys`.
-- `zcash_client_backend` is used only for the shard codec, with `unstable-serialization`. The
-  workspace dependency no longer enables `lightwalletd-tonic`, so the crate builds without tonic.
+- The `zcash_client_backend` dependency is removed. The crate writes the shards of the wallet
+  file with its own codec, and the bytes do not change.
 
 - `status::ConfirmationStatus`: `read` and `write` are now the `ReadableWriteable` impl.
   Layout 0 is no longer read.

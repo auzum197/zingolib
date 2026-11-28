@@ -21,8 +21,8 @@ use zcash_keys::keys::{Era, UnifiedFullViewingKey, UnifiedSpendingKey};
 use zcash_protocol::value::Zatoshis;
 use zip32::AccountId;
 
-use ekdromos::ActivationHeights;
 use ekdromos::config::{Birthday, WalletConfig};
+use ekdromos::config::{LocalNetwork, REGTEST_NETWORK};
 use ekdromos::lightclient::LightClient;
 use ekdromos::lightclient::store::{FileStore, WalletStore as _};
 use ekdromos::lightclient::{Encryption, Unlock};
@@ -44,7 +44,7 @@ use ekdromos_common::price::PriceList;
 use ekdromos_common::serialization::ReadableWriteable;
 use ekdromos_file_format::{WalletFile, WalletFileError, WalletFileRef};
 
-const SEED: &str = ekdromos_test_vectors::seeds::HOSPITAL_MUSEUM_SEED;
+const SEED: &str = ekdromos::testutils::vectors::seeds::HOSPITAL_MUSEUM_SEED;
 /// Ironwood is active from the first block: the Zakura Orchard crate only builds bundles for
 /// the current protocol version, so Orchard-pool coinbase cannot be mined on the mock chain.
 const IRONWOOD_HEIGHT: u32 = 1;
@@ -60,20 +60,11 @@ const READ_TIMEOUT: Duration = Duration::from_secs(5);
 const EDGE: usize = 256;
 const STRIDE: usize = 61;
 
-fn activation_heights() -> ActivationHeights {
-    ActivationHeights::builder()
-        .set_overwinter(Some(1))
-        .set_sapling(Some(1))
-        .set_blossom(Some(1))
-        .set_heartwood(Some(1))
-        .set_canopy(Some(1))
-        .set_nu5(Some(1))
-        .set_nu6(Some(1))
-        .set_nu6_1(Some(1))
-        .set_nu6_2(Some(1))
-        .set_nu6_3(Some(IRONWOOD_HEIGHT))
-        .set_nu7(None)
-        .build()
+fn activation_heights() -> LocalNetwork {
+    LocalNetwork {
+        nu6_3: Some(IRONWOOD_HEIGHT.into()),
+        ..REGTEST_NETWORK
+    }
 }
 
 async fn launch() -> MockNet {
@@ -808,9 +799,10 @@ async fn settings() {
 }
 
 fn external_orchard_address() -> String {
-    let mut external = SyntheticWalletBuilder::new(ekdromos_test_vectors::seeds::ABANDON_ART_SEED)
-        .activation_heights(activation_heights())
-        .build();
+    let mut external =
+        SyntheticWalletBuilder::new(ekdromos::testutils::vectors::seeds::ABANDON_ART_SEED)
+            .activation_heights(activation_heights())
+            .build();
     let (_, address) = external
         .generate_unified_address(ReceiverSelection::orchard_only(), AccountId::ZERO)
         .expect("an orchard address generates");

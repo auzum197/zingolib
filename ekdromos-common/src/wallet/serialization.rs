@@ -11,10 +11,9 @@ use byteorder::{LittleEndian, ReadBytesExt, WriteBytesExt};
 
 use incrementalmerkletree::{Hashable, Level, Position};
 use shardtree::{
-    LocatedPrunableTree, PrunableTree, RetentionFlags, ShardTree, Tree,
+    LocatedPrunableTree, Node, PrunableTree, RetentionFlags, ShardTree, Tree,
     store::{Checkpoint, ShardStore, TreeState, memory::MemoryShardStore},
 };
-use zcash_client_backend::serialization::shardtree::write_shard;
 use zcash_encoding::{Optional, Vector};
 use zcash_primitives::{
     block::BlockHash,
@@ -949,8 +948,39 @@ const SHARD_NIL_TAG: u8 = 0;
 const SHARD_LEAF_TAG: u8 = 1;
 const SHARD_PARENT_TAG: u8 = 2;
 
-/// Same layout as [`zcash_client_backend::serialization::shardtree::read_shard`], but parent nodes
-/// may nest at most `levels` deep. The tree rooted `levels` above the leaves cannot hold anything
+/// The shard layout of `zcash_client_backend::serialization::shardtree`, kept here so that the
+/// wallet file does not depend on that crate.
+fn write_shard<H: HashSer, W: Write>(
+    writer: &mut W,
+    tree: &PrunableTree<H>,
+) -> std::io::Result<()> {
+    fn write_node<H: HashSer, W: Write>(
+        writer: &mut W,
+        tree: &PrunableTree<H>,
+    ) -> std::io::Result<()> {
+        match &**tree {
+            Node::Parent { ann, left, right } => {
+                writer.write_u8(SHARD_PARENT_TAG)?;
+                Optional::write(&mut *writer, ann.as_ref(), |w, h| {
+                    <H as HashSer>::write(h, w)
+                })?;
+                write_node(writer, left)?;
+                write_node(writer, right)
+            }
+            Node::Leaf { value } => {
+                writer.write_u8(SHARD_LEAF_TAG)?;
+                value.0.write(&mut *writer)?;
+                writer.write_u8(value.1.bits())
+            }
+            Node::Nil => writer.write_u8(SHARD_NIL_TAG),
+        }
+    }
+
+    writer.write_u8(SHARD_SER_V1)?;
+    write_node(writer, tree)
+}
+
+/// Reads the layout of [`write_shard`], but parent nodes may nest at most `levels` deep. The tree rooted `levels` above the leaves cannot hold anything
 /// deeper, and without the bound a run of parent tags in a corrupt file recurses until the stack
 /// overflows.
 fn read_bounded_shard<H: HashSer, R: Read>(

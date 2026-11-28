@@ -9,8 +9,8 @@
 //! for the chosen pool. The `_default` scenarios use the default activation
 //! heights, where NU6.3 is active from height 1.
 
-use ekdromos_common_components::protocol::ActivationHeights;
-use ekdromos_test_vectors::{
+use crate::config::{LocalNetwork, REGTEST_NETWORK};
+use crate::testutils::vectors::{
     REG_O_ADDR_FROM_ABANDONART, REG_T_ADDR_FROM_ABANDONART, REG_Z_ADDR_FROM_ABANDONART, seeds,
 };
 use tempfile::TempDir;
@@ -37,20 +37,11 @@ pub const LAUNCH_BLOCKS: u32 = 3;
 
 /// Every upgrade through NU6.2 active at height 1, NU6.3 never: the chain
 /// zcashd served the node-backed suites.
-pub fn pre_ironwood_activation_heights() -> ActivationHeights {
-    ActivationHeights::builder()
-        .set_overwinter(Some(1))
-        .set_sapling(Some(1))
-        .set_blossom(Some(1))
-        .set_heartwood(Some(1))
-        .set_canopy(Some(1))
-        .set_nu5(Some(1))
-        .set_nu6(Some(1))
-        .set_nu6_1(Some(1))
-        .set_nu6_2(Some(1))
-        .set_nu6_3(None)
-        .set_nu7(None)
-        .build()
+pub fn pre_ironwood_activation_heights() -> LocalNetwork {
+    LocalNetwork {
+        nu6_3: None,
+        ..REGTEST_NETWORK
+    }
 }
 
 /// Builds lightclients dialed at one mock indexer, each in its own
@@ -90,7 +81,7 @@ impl ClientBuilder {
     /// Builds the faucet, the abandon-art wallet the miner address pays.
     pub async fn build_faucet(
         &mut self,
-        configured_activation_heights: ActivationHeights,
+        configured_activation_heights: LocalNetwork,
     ) -> LightClient {
         self.build_client(
             WalletConfig::MnemonicPhrase {
@@ -109,7 +100,7 @@ impl ClientBuilder {
     pub async fn build_client(
         &mut self,
         wallet_config: WalletConfig,
-        configured_activation_heights: ActivationHeights,
+        configured_activation_heights: LocalNetwork,
     ) -> LightClient {
         let mut lightclient = LightClient::create(
             self.store(),
@@ -143,7 +134,7 @@ fn faucet_address(mine_to_pool: PoolType) -> &'static str {
 /// every block, mines the launch block, and returns a client builder for it.
 pub async fn custom_clients(
     mine_to_pool: PoolType,
-    configured_activation_heights: ActivationHeights,
+    configured_activation_heights: LocalNetwork,
 ) -> (MockNet, ClientBuilder) {
     let mut local_net = MockNet::launch_with(MockChain::with_activation_heights(
         configured_activation_heights,
@@ -159,12 +150,12 @@ pub async fn custom_clients(
 /// [`custom_clients`] mining to the faucet's orchard receiver with the default
 /// activation heights.
 pub async fn custom_clients_default() -> (MockNet, ClientBuilder) {
-    custom_clients(PoolType::IRONWOOD, ActivationHeights::default()).await
+    custom_clients(PoolType::IRONWOOD, REGTEST_NETWORK).await
 }
 
 /// A synced hospital-museum client on a chain that pays only the faucet.
 pub async fn unfunded_client(
-    configured_activation_heights: ActivationHeights,
+    configured_activation_heights: LocalNetwork,
 ) -> (MockNet, LightClient) {
     let (local_net, mut client_builder) =
         custom_clients(PoolType::Transparent, configured_activation_heights).await;
@@ -178,13 +169,13 @@ pub async fn unfunded_client(
 
 /// [`unfunded_client`] with the default activation heights.
 pub async fn unfunded_client_default() -> (MockNet, LightClient) {
-    unfunded_client(ActivationHeights::default()).await
+    unfunded_client(REGTEST_NETWORK).await
 }
 
 /// A synced faucet holding the launch block's reward.
 pub async fn faucet(
     mine_to_pool: PoolType,
-    configured_activation_heights: ActivationHeights,
+    configured_activation_heights: LocalNetwork,
 ) -> (MockNet, LightClient) {
     let (local_net, mut client_builder) =
         custom_clients(mine_to_pool, configured_activation_heights).await;
@@ -199,13 +190,13 @@ pub async fn faucet(
 /// [`faucet`] mining to the faucet's orchard receiver with the default
 /// activation heights.
 pub async fn faucet_default() -> (MockNet, LightClient) {
-    faucet(PoolType::IRONWOOD, ActivationHeights::default()).await
+    faucet(PoolType::IRONWOOD, REGTEST_NETWORK).await
 }
 
 /// A synced faucet and a synced, unfunded hospital-museum recipient.
 pub async fn faucet_recipient(
     mine_to_pool: PoolType,
-    configured_activation_heights: ActivationHeights,
+    configured_activation_heights: LocalNetwork,
 ) -> (MockNet, LightClient, LightClient) {
     let (local_net, mut client_builder) =
         custom_clients(mine_to_pool, configured_activation_heights).await;
@@ -224,7 +215,7 @@ pub async fn faucet_recipient(
 /// [`faucet_recipient`] mining to the faucet's orchard receiver with the
 /// default activation heights.
 pub async fn faucet_recipient_default() -> (MockNet, LightClient, LightClient) {
-    faucet_recipient(PoolType::IRONWOOD, ActivationHeights::default()).await
+    faucet_recipient(PoolType::IRONWOOD, REGTEST_NETWORK).await
 }
 
 /// [`faucet_recipient`] with the recipient funded from the faucet in the
@@ -234,7 +225,7 @@ pub async fn faucet_funded_recipient(
     sapling_funds: Option<u64>,
     transparent_funds: Option<u64>,
     mine_to_pool: PoolType,
-    configured_activation_heights: ActivationHeights,
+    configured_activation_heights: LocalNetwork,
 ) -> (
     MockNet,
     LightClient,
@@ -292,7 +283,7 @@ pub async fn faucet_funded_recipient_default(
             None,
             None,
             PoolType::IRONWOOD,
-            ActivationHeights::default(),
+            REGTEST_NETWORK,
         )
         .await;
 

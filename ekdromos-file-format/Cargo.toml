@@ -1,7 +1,7 @@
 [package]
 name = "ekdromos-file-format"
 description = "On-disk layout of the ekdromos wallet file: the versioned container, its legacy readers and the encrypted envelope."
-authors = ["<zingo@zingolabs.org>"]
+authors = ["<dorianvp@auzum197.com>"]
 version = "0.1.0"
 edition = "2024"
 repository = "https://github.com/auzum197/ekdromos"
@@ -38,5 +38,4 @@ sapling-crypto = { workspace = true }
 shardtree = { workspace = true }
 zcash_keys = { workspace = true }
 zcash_transparent = { workspace = true }
-ekdromos-common-components = { workspace = true }
 ekdromos-common = { workspace = true, features = ["test-features"] }

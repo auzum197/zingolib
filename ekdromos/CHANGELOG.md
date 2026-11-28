@@ -36,8 +36,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - The crate is named `ekdromos`, formerly `zingolib`. Its import path is `ekdromos`.
 - `wallet::zcb_traits::ZingoAccount` is named `EkdromosAccount`.
 - `testutils::scenarios::ClientBuilder::zingo_datadir` is named `wallet_datadir`.
-- `zingo_common_components` and `zingo_test_vectors` are named `ekdromos-common-components` and
-  `ekdromos-test-vectors`.
+- The contents of `zingo_test_vectors` are the module `testutils::vectors`, behind the
+  `testutils` feature. The crate is removed.
+- The test utilities take a `config::LocalNetwork` where they took an `ActivationHeights`.
+  `config::REGTEST_NETWORK` replaces `ActivationHeights::default()`.
 - `config::Birthday` is the birthday type of every `WalletConfig` variant: `ChainTip`,
   `Height(u32)` or `SaplingActivation`. `LightClient::create` resolves `ChainTip` to 100 blocks
   below the chain tip of the indexer and fails with `CreateError::ChainTip` if it cannot get
@@ -91,6 +93,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `LightClientError`. `zcash_proofs` and the Sapling parameter download are now test-only.
 
 ### Removed
+- The `ActivationHeights` re-export and the `zingo_common_components` dependency.
+  `ChainType::Regtest` holds a `zcash_protocol::local_consensus::LocalNetwork`, which `config`
+  re-exports with `REGTEST_NETWORK`.
 - Zennies for Zingo: the `ZENNIES_FOR_ZINGO_DONATION_ADDRESS`, `ZENNIES_FOR_ZINGO_TESTNET_ADDRESS`,
   `ZENNIES_FOR_ZINGO_REGTEST_ADDRESS` and `ZENNIES_FOR_ZINGO_AMOUNT` consts,
   `get_zennies_for_zingo_address`, and the `zennies_for_zingo` argument of

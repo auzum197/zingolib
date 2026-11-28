@@ -2,7 +2,7 @@
 name = "ekdromos"
 description = "Ekdromos wallet library."
 version = "5.0.0"
-authors = ["<zingo@zingolabs.org>"]
+authors = ["<dorianvp@auzum197.com>"]
 edition = "2024"
 repository = "https://github.com/auzum197/ekdromos"
 homepage = "https://github.com/auzum197/ekdromos"
@@ -13,7 +13,6 @@ default = []
 ci = []
 testutils = [
     "portpicker",
-    "ekdromos-test-vectors",
     "tempfile",
     "pepper-sync/test-features",
     "dep:rust-embed",
@@ -70,8 +69,6 @@ zcash_transparent = { workspace = true }
 lightwallet-grpc-client = { workspace = true }
 ekdromos-common = { workspace = true }
 ekdromos-file-format = { workspace = true }
-ekdromos-common-components = { workspace = true }
-ekdromos-test-vectors = { workspace = true, optional = true }
 zip32.workspace = true
 zeroize = { workspace = true }
 
@@ -90,7 +87,6 @@ portpicker = { workspace = true }
 tempfile = { workspace = true }
 tokio-stream = { workspace = true }
 tonic = { workspace = true }
-ekdromos-test-vectors = { workspace = true }
 
 [[bench]]
 name = "pepper_sync"

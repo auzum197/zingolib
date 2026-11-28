@@ -15,7 +15,7 @@ use proptest::prelude::*;
 use proptest::test_runner::{Config, RngAlgorithm, TestCaseError, TestRng, TestRunner};
 
 use ekdromos_common::chain::ChainType;
-use ekdromos_common_components::protocol::ActivationHeights;
+use ekdromos_common::chain::REGTEST_NETWORK;
 
 use super::support::{
     COMPACT_SIZE_MAX_ENCODINGS, Coverage, bytes, fast_session, fresh, mutation_sweep, read_survives,
@@ -46,7 +46,7 @@ fn chains() -> [ChainType; 3] {
     [
         ChainType::Mainnet,
         ChainType::Testnet,
-        ChainType::Regtest(ActivationHeights::default()),
+        ChainType::Regtest(REGTEST_NETWORK),
     ]
 }
 

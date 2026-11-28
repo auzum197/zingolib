@@ -7,8 +7,6 @@ members = [
     "ekdromos",
     "watchonly-tui",
     "lightwallet-grpc-client",
-    "ekdromos-common-components",
-    "ekdromos-test-vectors",
 ]
 resolver = "2"
 
@@ -26,7 +24,6 @@ portpicker = "0.1"
 proptest = "1.6.0"
 tempfile = "3"
 test-log = "0.2"
-ekdromos-test-vectors = { path = "ekdromos-test-vectors" }
 
 ### Documentation
 indoc = "2"
@@ -45,7 +42,6 @@ lightwallet-protocol = { version = "0.3.0", features = ["rebuild-proto"] }
 lightwallet-grpc-client = { path = "lightwallet-grpc-client", features = [
     "globally-public-transparent",
 ] }
-ekdromos-common-components = { path = "ekdromos-common-components" }
 tokio-stream = { version = "0.1", features = ["net"] }
 
 ### Zcash

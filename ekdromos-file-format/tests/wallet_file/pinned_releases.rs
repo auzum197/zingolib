@@ -24,7 +24,7 @@ use std::{
 
 use bip0039::Mnemonic;
 use byteorder::{LittleEndian, WriteBytesExt};
-use ekdromos_common_components::protocol::ActivationHeights;
+use ekdromos_common::chain::REGTEST_NETWORK;
 use incrementalmerkletree::{Marking, Position, Retention};
 use orchard::{
     note::{NoteVersion, RandomSeed, Rho},
@@ -113,7 +113,7 @@ fn chain(name: &str) -> ChainType {
     match name {
         "mainnet" => ChainType::Mainnet,
         "testnet" => ChainType::Testnet,
-        "regtest" => ChainType::Regtest(ActivationHeights::default()),
+        "regtest" => ChainType::Regtest(REGTEST_NETWORK),
         _ => unreachable!("vectors only exist for the three chains"),
     }
 }

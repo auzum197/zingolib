@@ -299,8 +299,8 @@ mod pool_tests {
 
 #[cfg(test)]
 mod tests {
+    use crate::testutils::vectors::seeds::HOSPITAL_MUSEUM_SEED;
     use ekdromos_common::status::ConfirmationStatus;
-    use ekdromos_test_vectors::seeds::HOSPITAL_MUSEUM_SEED;
     use pepper_sync::wallet::WalletTransaction;
     use zcash_primitives::transaction::TxId;
 

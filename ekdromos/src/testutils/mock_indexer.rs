@@ -40,7 +40,7 @@ use lightwallet_grpc_client::lightwallet_protocol::{
 };
 use tonic::{Code, Request, Response, Status};
 
-use ekdromos_common_components::protocol::ActivationHeights;
+use crate::config::{LocalNetwork, REGTEST_NETWORK};
 use incrementalmerkletree::frontier::CommitmentTree;
 use orchard::tree::MerkleHashOrchard;
 use zcash_primitives::merkle_tree::{read_commitment_tree, write_commitment_tree};
@@ -90,7 +90,7 @@ const FAUCET_TIP: u32 = 20;
 const FUNDING_SOURCE_ENTROPY: [u8; 32] = [0x5a; 32];
 /// The per-block miner subsidy from Canopy on, on the zcashd regtest
 /// chains the ported tests were written against.
-pub const BLOCK_REWARD: u64 = ekdromos_test_vectors::block_rewards::CANOPY;
+pub const BLOCK_REWARD: u64 = crate::testutils::vectors::block_rewards::CANOPY;
 
 /// The miner subsidy at `height`: [`BLOCK_REWARD`] from Canopy on, the
 /// Blossom-era subsidy before it.
@@ -98,7 +98,7 @@ pub fn block_subsidy(chain_type: &ChainType, height: BlockHeight) -> Zatoshis {
     if chain_type.is_nu_active(NetworkUpgrade::Canopy, height) {
         Zatoshis::const_from_u64(BLOCK_REWARD)
     } else {
-        Zatoshis::const_from_u64(ekdromos_test_vectors::block_rewards::BLOSSOM)
+        Zatoshis::const_from_u64(crate::testutils::vectors::block_rewards::BLOSSOM)
     }
 }
 
@@ -939,11 +939,11 @@ impl MockChain {
     /// [`SyntheticWalletBuilder`]'s default and [`MockNet::client`]'s
     /// config.
     pub fn new() -> Self {
-        Self::with_activation_heights(ActivationHeights::default())
+        Self::with_activation_heights(REGTEST_NETWORK)
     }
 
     /// Creates an empty regtest chain with the given activation schedule.
-    pub fn with_activation_heights(activation_heights: ActivationHeights) -> Self {
+    pub fn with_activation_heights(activation_heights: LocalNetwork) -> Self {
         let sapling_tree = SaplingTree::empty();
         let orchard_tree = OrchardTree::empty();
         let ironwood_tree = OrchardTree::empty();
@@ -981,7 +981,7 @@ impl MockChain {
     }
 
     /// Returns the activation schedule the chain was created with.
-    pub fn activation_heights(&self) -> ActivationHeights {
+    pub fn activation_heights(&self) -> LocalNetwork {
         match self.chain_type {
             ChainType::Regtest(activation_heights) => activation_heights,
             ChainType::Mainnet | ChainType::Testnet => {
@@ -2219,7 +2219,7 @@ impl MockNet {
     }
 
     /// Returns the activation schedule of the served chain.
-    pub fn activation_heights(&self) -> ActivationHeights {
+    pub fn activation_heights(&self) -> LocalNetwork {
         match self.chain_type {
             ChainType::Regtest(activation_heights) => activation_heights,
             ChainType::Mainnet | ChainType::Testnet => {
@@ -2357,7 +2357,7 @@ impl ConductChain for MockNet {
 /// fabricated backing note never exists on the mock chain. Nothing
 /// validates that, and the recipient-facing outputs are real.
 pub async fn faucet_funding_transaction(receivers: Vec<(&str, u64, Option<&str>)>) -> Vec<u8> {
-    faucet_funding_transaction_for(ActivationHeights::default(), receivers).await
+    faucet_funding_transaction_for(REGTEST_NETWORK, receivers).await
 }
 
 /// As [`faucet_funding_transaction`], for a chain with its own activation
@@ -2365,7 +2365,7 @@ pub async fn faucet_funding_transaction(receivers: Vec<(&str, u64, Option<&str>)
 /// target height and an Orchard note where it is not, so the transaction
 /// carries the consensus branch and pools that chain expects.
 pub async fn faucet_funding_transaction_for(
-    activation_heights: ActivationHeights,
+    activation_heights: LocalNetwork,
     receivers: Vec<(&str, u64, Option<&str>)>,
 ) -> Vec<u8> {
     let total: u64 = receivers.iter().map(|(_, value, _)| value).sum();
@@ -2417,7 +2417,8 @@ mod tests {
 
     fn external_orchard_address() -> String {
         let mut wallet =
-            SyntheticWalletBuilder::new(ekdromos_test_vectors::seeds::HOSPITAL_MUSEUM_SEED).build();
+            SyntheticWalletBuilder::new(crate::testutils::vectors::seeds::HOSPITAL_MUSEUM_SEED)
+                .build();
         let (_, unified_address) = wallet
             .generate_unified_address(
                 crate::wallet::keys::unified::ReceiverSelection::orchard_only(),
@@ -2429,7 +2430,8 @@ mod tests {
 
     fn external_transparent_address() -> String {
         let wallet =
-            SyntheticWalletBuilder::new(ekdromos_test_vectors::seeds::HOSPITAL_MUSEUM_SEED).build();
+            SyntheticWalletBuilder::new(crate::testutils::vectors::seeds::HOSPITAL_MUSEUM_SEED)
+                .build();
         wallet
             .transparent_addresses()
             .values()
@@ -2448,19 +2450,11 @@ mod tests {
         chain
     }
 
-    fn pre_ironwood_activation_heights() -> ActivationHeights {
-        ActivationHeights::builder()
-            .set_overwinter(Some(1))
-            .set_sapling(Some(1))
-            .set_blossom(Some(1))
-            .set_heartwood(Some(1))
-            .set_canopy(Some(1))
-            .set_nu5(Some(1))
-            .set_nu6(Some(1))
-            .set_nu6_1(Some(1))
-            .set_nu6_2(Some(1))
-            .set_nu6_3(Some(1_000))
-            .build()
+    fn pre_ironwood_activation_heights() -> LocalNetwork {
+        LocalNetwork {
+            nu6_3: Some(1_000.into()),
+            ..REGTEST_NETWORK
+        }
     }
 
     fn transparent_spend(

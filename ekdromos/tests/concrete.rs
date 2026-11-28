@@ -3,14 +3,14 @@
 use zcash_address::unified::Fvk;
 use zcash_primitives::transaction::fees::zip317::MINIMUM_FEE;
 
+use ekdromos::config::REGTEST_NETWORK;
 use ekdromos::testutils::scenarios::{self, increase_height_and_wait_for_client};
+use ekdromos::testutils::vectors::{BASE_HEIGHT, block_rewards, seeds::HOSPITAL_MUSEUM_SEED};
 use ekdromos::utils::conversion::address_from_str;
 use ekdromos::wallet::balance::AccountBalance;
 use ekdromos::wallet::keys::unified::UnifiedKeyStore;
 use ekdromos::wallet::summary::data::{CoinSummary, NoteSummary};
 use ekdromos::{check_client_balances, get_base_address_macro};
-use ekdromos_common_components::protocol::ActivationHeights;
-use ekdromos_test_vectors::{BASE_HEIGHT, block_rewards, seeds::HOSPITAL_MUSEUM_SEED};
 use pepper_sync::wallet::TransparentCoin;
 use zcash_protocol::PoolType;
 use zcash_protocol::value::Zatoshis;
@@ -127,6 +127,7 @@ mod fast {
     use std::str::FromStr as _;
 
     use bip0039::Mnemonic;
+    use ekdromos::config::{LocalNetwork, REGTEST_NETWORK};
     use ekdromos::testutils::scenarios::increase_height_and_wait_for_client;
     use ekdromos::{
         config::{Birthday, WalletConfig},
@@ -138,7 +139,6 @@ mod fast {
         wallet::keys::unified::{ReceiverSelection, UnifiedAddressId},
     };
     use ekdromos_common::status::ConfirmationStatus;
-    use ekdromos_common_components::protocol::ActivationHeights;
     use pepper_sync::{
         keys::transparent::{self, TransparentAddressId, TransparentScope},
         wallet::{IronwoodNote, OutputInterface, TransparentCoin},
@@ -302,7 +302,7 @@ mod fast {
             Some(100_000),
             None,
             PoolType::Shielded(ShieldedPool::Ironwood),
-            ActivationHeights::default(),
+            REGTEST_NETWORK,
         )
         .await;
 
@@ -920,8 +920,7 @@ tmQuMoTTjU3GFfTjrhPiBYihbTVfYmPk5Gr"
 
     #[tokio::test]
     async fn mine_to_ironwood() {
-        let (local_net, mut faucet) =
-            scenarios::faucet(PoolType::IRONWOOD, ActivationHeights::default()).await;
+        let (local_net, mut faucet) = scenarios::faucet(PoolType::IRONWOOD, REGTEST_NETWORK).await;
         check_client_balances!(faucet, i: 1_875_000_000 o: 0 s: 0 t: 0);
         increase_height_and_wait_for_client(&local_net, &mut faucet, 1)
             .await
@@ -931,8 +930,7 @@ tmQuMoTTjU3GFfTjrhPiBYihbTVfYmPk5Gr"
 
     #[tokio::test]
     async fn mine_to_sapling() {
-        let (local_net, mut faucet) =
-            scenarios::faucet(PoolType::SAPLING, ActivationHeights::default()).await;
+        let (local_net, mut faucet) = scenarios::faucet(PoolType::SAPLING, REGTEST_NETWORK).await;
         check_client_balances!(faucet, o: 0 s: 1_875_000_000 t: 0);
         increase_height_and_wait_for_client(&local_net, &mut faucet, 1)
             .await
@@ -944,7 +942,7 @@ tmQuMoTTjU3GFfTjrhPiBYihbTVfYmPk5Gr"
     #[tokio::test]
     async fn mine_to_transparent() {
         let (local_net, mut faucet, _recipient) =
-            scenarios::faucet_recipient(PoolType::Transparent, ActivationHeights::default()).await;
+            scenarios::faucet_recipient(PoolType::Transparent, REGTEST_NETWORK).await;
 
         let unconfirmed_balance = faucet
             .wallet()
@@ -972,19 +970,15 @@ tmQuMoTTjU3GFfTjrhPiBYihbTVfYmPk5Gr"
 
     #[tokio::test]
     async fn sync_all_epochs_from_heartwood() {
-        let activation_heights = ActivationHeights::builder()
-            .set_overwinter(Some(1))
-            .set_sapling(Some(1))
-            .set_blossom(Some(1))
-            .set_heartwood(Some(1))
-            .set_canopy(Some(3))
-            .set_nu5(Some(5))
-            .set_nu6(Some(7))
-            .set_nu6_1(Some(9))
-            .set_nu6_2(Some(11))
-            .set_nu6_3(Some(13))
-            .set_nu7(None)
-            .build();
+        let activation_heights = LocalNetwork {
+            canopy: Some(3.into()),
+            nu5: Some(5.into()),
+            nu6: Some(7.into()),
+            nu6_1: Some(9.into()),
+            nu6_2: Some(11.into()),
+            nu6_3: Some(13.into()),
+            ..REGTEST_NETWORK
+        };
 
         let (local_net, mut lightclient) = scenarios::unfunded_client(activation_heights).await;
         increase_height_and_wait_for_client(&local_net, &mut lightclient, 14)
@@ -994,7 +988,7 @@ tmQuMoTTjU3GFfTjrhPiBYihbTVfYmPk5Gr"
 
     #[tokio::test]
     async fn mine_to_transparent_and_shield() {
-        let activation_heights = ActivationHeights::default();
+        let activation_heights = REGTEST_NETWORK;
         let (local_net, mut faucet, _recipient) =
             scenarios::faucet_recipient(PoolType::Transparent, activation_heights).await;
         increase_height_and_wait_for_client(&local_net, &mut faucet, 100)
@@ -1019,7 +1013,7 @@ tmQuMoTTjU3GFfTjrhPiBYihbTVfYmPk5Gr"
 
     #[tokio::test]
     async fn mine_to_transparent_and_propose_shielding() {
-        let activation_heights = ActivationHeights::default();
+        let activation_heights = REGTEST_NETWORK;
         let (local_net, mut faucet, _recipient) =
             scenarios::faucet_recipient(PoolType::Transparent, activation_heights).await;
         increase_height_and_wait_for_client(&local_net, &mut faucet, 100)
@@ -1052,12 +1046,14 @@ tmQuMoTTjU3GFfTjrhPiBYihbTVfYmPk5Gr"
 }
 mod slow {
     use ekdromos::config::{Birthday, ChainType, WalletConfig};
+    use ekdromos::config::{LocalNetwork, REGTEST_NETWORK};
     use ekdromos::lightclient::{Encryption, LightClient};
     use ekdromos::testutils::lightclient::{from_inputs, get_fees_paid_by_client};
     use ekdromos::testutils::scenarios::increase_height_and_wait_for_client;
     use ekdromos::testutils::send::error::{
         CalculateTransactionError, ProposeSendError, SendError,
     };
+    use ekdromos::testutils::vectors::TEST_TXID;
     use ekdromos::testutils::{
         assert_transaction_summary_equality, assert_transaction_summary_exists,
         build_fvks_from_unified_keystore, default_test_wallet_settings,
@@ -1072,8 +1068,6 @@ mod slow {
         BasicNoteSummary, OutgoingNoteSummary, SendType, TransactionKind, TransactionSummary,
     };
     use ekdromos_common::status::ConfirmationStatus;
-    use ekdromos_common_components::protocol::ActivationHeights;
-    use ekdromos_test_vectors::TEST_TXID;
     use pepper_sync::wallet::{
         IronwoodNote, NoteInterface, OrchardNote, OutgoingNoteInterface, OutputInterface,
         SaplingNote, TransparentCoin,
@@ -1347,7 +1341,7 @@ mod slow {
             assert!(matches!(
                 from_inputs::quick_send(
                     &mut watch_client,
-                    vec![(ekdromos_test_vectors::EXT_TADDR, 1000, None)]
+                    vec![(ekdromos::testutils::vectors::EXT_TADDR, 1000, None)]
                 )
                 .await,
                 Err(SendError::CalculateSendError(
@@ -1392,7 +1386,7 @@ mod slow {
         let sent_value = 20_000;
         let sent_transaction_error = from_inputs::quick_send(
             &mut recipient,
-            vec![(ekdromos_test_vectors::EXT_TADDR, sent_value, None)],
+            vec![(ekdromos::testutils::vectors::EXT_TADDR, sent_value, None)],
         )
         .await
         .unwrap_err();
@@ -1881,8 +1875,7 @@ TransactionSummary {
 
     #[tokio::test]
     async fn send_mined_sapling_to_orchard() {
-        let (local_net, mut faucet) =
-            scenarios::faucet(PoolType::SAPLING, ActivationHeights::default()).await;
+        let (local_net, mut faucet) = scenarios::faucet(PoolType::SAPLING, REGTEST_NETWORK).await;
 
         let amount_to_send = 10_000;
         let faucet_ua = get_base_address_macro!(faucet, "unified");
@@ -1913,19 +1906,15 @@ TransactionSummary {
 
     #[tokio::test]
     async fn send_heartwood_sapling_funds() {
-        let activation_heights = ActivationHeights::builder()
-            .set_overwinter(Some(1))
-            .set_sapling(Some(1))
-            .set_blossom(Some(1))
-            .set_heartwood(Some(1))
-            .set_canopy(Some(3))
-            .set_nu5(Some(5))
-            .set_nu6(Some(5))
-            .set_nu6_1(Some(5))
-            .set_nu6_2(Some(5))
-            .set_nu6_3(Some(5))
-            .set_nu7(None)
-            .build();
+        let activation_heights = LocalNetwork {
+            canopy: Some(3.into()),
+            nu5: Some(5.into()),
+            nu6: Some(5.into()),
+            nu6_1: Some(5.into()),
+            nu6_2: Some(5.into()),
+            nu6_3: Some(5.into()),
+            ..REGTEST_NETWORK
+        };
 
         let (local_net, mut faucet, mut recipient) = scenarios::faucet_recipient(
             PoolType::Shielded(ShieldedPool::Sapling),
@@ -1960,7 +1949,7 @@ TransactionSummary {
                 Some(100_000),
                 Some(100_000),
                 PoolType::Shielded(ShieldedPool::Ironwood),
-                ActivationHeights::default(),
+                REGTEST_NETWORK,
             )
             .await;
         check_client_balances!(recipient, i: 100_000 o: 0 s: 100_000 t: 100_000);
@@ -1974,7 +1963,7 @@ TransactionSummary {
                 Some(funding_value),
                 None,
                 PoolType::Shielded(ShieldedPool::Ironwood),
-                ActivationHeights::default(),
+                REGTEST_NETWORK,
             )
             .await;
         let network = recipient.chain_type();
@@ -3047,7 +3036,7 @@ mod basic_transactions {
 #[tokio::test]
 async fn mine_to_transparent_coinbase_maturity() {
     let (local_net, mut faucet, _recipient) =
-        scenarios::faucet_recipient(PoolType::Transparent, ActivationHeights::default()).await;
+        scenarios::faucet_recipient(PoolType::Transparent, REGTEST_NETWORK).await;
 
     // After 3 blocks...
     check_client_balances!(faucet, o: 0 s: 0 t: 0);
@@ -3219,12 +3208,12 @@ mod send_all {
 }
 
 mod testnet_test {
+    use ekdromos::testutils::vectors::seeds::HOSPITAL_MUSEUM_SEED;
     use ekdromos::{
         config::{Birthday, ChainType, DEFAULT_INDEXER_URI_TESTNET, WalletConfig},
         lightclient::{Encryption, LightClient, Unlock, store::FileStore},
         testutils::{default_test_wallet_settings, tempfile::TempDir},
     };
-    use ekdromos_test_vectors::seeds::HOSPITAL_MUSEUM_SEED;
     use pepper_sync::sync_status;
 
     #[ignore = "testnet cannot be run offline: this test dials the public testnet indexer, \

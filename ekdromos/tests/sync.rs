@@ -8,12 +8,12 @@ use ekdromos::testutils::default_test_wallet_settings;
 use ekdromos::testutils::lightclient::from_inputs::quick_send;
 use ekdromos::testutils::scenarios::{self, increase_height_and_wait_for_client};
 use ekdromos::testutils::tempfile::TempDir;
+use ekdromos::testutils::vectors::seeds::HOSPITAL_MUSEUM_SEED;
 use ekdromos::{
     config::{DEFAULT_INDEXER_URI, construct_lightwalletd_uri},
     get_base_address_macro,
     lightclient::LightClient,
 };
-use ekdromos_test_vectors::seeds::HOSPITAL_MUSEUM_SEED;
 use incrementalmerkletree::Position;
 use lightwallet_grpc_client::lightwallet_protocol::GetSubtreeRootsArg;
 use lightwallet_grpc_client::{GrpcIndexer, Indexer};

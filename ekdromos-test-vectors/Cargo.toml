@@ -1,9 +1,0 @@
-[package]
-name = "ekdromos-test-vectors"
-description = "Test vectors for the ekdromos workspace."
-version = "0.0.1"
-edition = "2024"
-authors = ["Zingolabs <zingo@zingolabs.org>"]
-repository = "https://github.com/auzum197/ekdromos"
-homepage = "https://github.com/auzum197/ekdromos"
-license = "MIT"

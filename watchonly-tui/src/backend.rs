@@ -4,6 +4,7 @@
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
+use ekdromos::config::REGTEST_NETWORK;
 use ekdromos::config::{Birthday, ChainType, WalletConfig, construct_lightwalletd_uri};
 use ekdromos::data::PollReport;
 use ekdromos::lightclient::error::OpenError;
@@ -18,7 +19,6 @@ use ekdromos::wallet::summary::data::{
     SelfSendWalletEvent, SendType, SentWalletEvent, TransactionKind, TransactionSummary,
     WalletEvent, WalletEventKind,
 };
-use ekdromos_common_components::protocol::ActivationHeights;
 use pepper_sync::{
     events::{SequencedSyncEvent, SyncEvent},
     keys::transparent::TransparentScope,
@@ -97,7 +97,7 @@ pub fn chain_type(network: Network) -> ChainType {
     match network {
         Network::Mainnet => ChainType::Mainnet,
         Network::Testnet => ChainType::Testnet,
-        Network::Regtest => ChainType::Regtest(ActivationHeights::default()),
+        Network::Regtest => ChainType::Regtest(REGTEST_NETWORK),
     }
 }
 
