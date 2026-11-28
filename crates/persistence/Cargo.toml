@@ -1,5 +1,5 @@
 [package]
-name = "ekdromos-file-format"
+name = "ekdromos-persistence"
 description = "On-disk layout of the ekdromos wallet file: the versioned container, its legacy readers and the encrypted envelope."
 authors = ["<dorianvp@auzum197.com>"]
 version = "0.1.0"

@@ -13,7 +13,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `wallet::disk::WalletFile` and `wallet::disk::WalletFileRef`: the decoded contents of a wallet
   file with public fields, and the borrowed view a wallet is written from. `LightWallet::read`
   and `LightWallet::write` go through them, so the file layout no longer touches wallet internals.
-  Both live in `ekdromos_file_format` and are re-exported here.
+  Both live in `ekdromos_persistence` and are re-exported here.
 - `config::ChainType`, `wallet::WalletSettings` and `wallet::keys::unified::UnifiedAddressId`:
   `read` and `write` for their wallet-file encoding.
 - `wallet::LightWallet::transaction_summary` and `lightclient::LightClient::transaction_summary`:
@@ -67,7 +67,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `LightWallet::write` takes `&self`.
 - `LightWallet::read` and `LightWallet::read_encrypted` return `WalletError` in place of
   `io::Error`. A file that cannot be read is the new `WalletError::File`, which holds a
-  `ekdromos_file_format::WalletFileError`.
+  `ekdromos_persistence::WalletFileError`.
 - `LightWallet::new`: address derivation errors now surface as `WalletError::KeyError` in every
   case, and a wallet file naming an account without keys fails with `KeyError::NoAccountKeys`.
 - The wallet history API now uses wallet event terminology. `ValueTransfer`,
@@ -115,7 +115,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `testutils::paths`: wallet files older than layout 41 are no longer readable, so the legacy
   readers, the example wallet files and the tests that loaded them are gone.
 - `config::ChainType`, `wallet::error::KeyError`, `wallet::keys::unified`, `wallet::WalletSettings`
-  and `wallet::encryption` are re-exports of `ekdromos_common` and `ekdromos_file_format` now.
+  and `wallet::encryption` are re-exports of `ekdromos_common` and `ekdromos_persistence` now.
 - `wallet::traits`: `ReadableWriteable` now lives in `ekdromos_common::serialization`
 - `LightClientError::SendError`, `lightclient::error::SendError` and `TransmissionError`,
   `wallet::error::CalculateTransactionError`, `ProposeSendError` and `ProposeShieldError`:

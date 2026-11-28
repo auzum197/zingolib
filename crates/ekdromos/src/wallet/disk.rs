@@ -1,5 +1,5 @@
 //! Reading and writing a [`LightWallet`] through the wallet file layout in
-//! `ekdromos_file_format`.
+//! `ekdromos_persistence`.
 //!
 //! ## Encrypted wallets
 //!
@@ -55,7 +55,7 @@ use ekdromos_common::{
     chain::ChainType,
     keys::{KeyError, ReceiverSelection, UnifiedAddressId},
 };
-pub use ekdromos_file_format::{WalletFile, WalletFileRef};
+pub use ekdromos_persistence::{WalletFile, WalletFileRef};
 
 use super::LightWallet;
 use super::error::WalletError;

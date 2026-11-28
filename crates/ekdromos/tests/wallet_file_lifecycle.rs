@@ -42,7 +42,7 @@ use ekdromos::wallet::{
 };
 use ekdromos_common::price::PriceList;
 use ekdromos_common::serialization::ReadableWriteable;
-use ekdromos_file_format::{WalletFile, WalletFileError, WalletFileRef};
+use ekdromos_persistence::{WalletFile, WalletFileError, WalletFileRef};
 
 const SEED: &str = ekdromos::testutils::vectors::seeds::HOSPITAL_MUSEUM_SEED;
 /// Ironwood is active from the first block: the Zakura Orchard crate only builds bundles for

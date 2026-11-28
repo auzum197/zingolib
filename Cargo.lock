@@ -1244,7 +1244,7 @@ dependencies = [
  "dirs",
  "ekdromos",
  "ekdromos-common",
- "ekdromos-file-format",
+ "ekdromos-persistence",
  "futures",
  "hex",
  "http",
@@ -1317,7 +1317,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "ekdromos-file-format"
+name = "ekdromos-persistence"
 version = "0.1.0"
 dependencies = [
  "argon2",

@@ -209,7 +209,7 @@ impl WalletFile {
     /// default activation heights.
     ///
     /// ```no_run
-    /// use ekdromos_file_format::WalletFile;
+    /// use ekdromos_persistence::WalletFile;
     ///
     /// let file = WalletFile::read_any(std::fs::File::open("zingo-wallet.dat")?)?;
     /// println!("{} wallet, layout version {}", file.chain_type, file.read_version);

@@ -19,7 +19,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
-- The crate is named `ekdromos-file-format`, formerly `zingolib-file-format`.
+- The crate is named `ekdromos-persistence`, formerly `zingolib-file-format`. Its folder is
+  `crates/persistence`.
 - `WalletFile::read`, `read_any`, `read_encrypted` and `read_encrypted_any` return the new
   `WalletFileError` in place of `io::Error`. Its variants are `UnsupportedVersion`, `WrongChain`,
   `Encryption` and `Decode`.

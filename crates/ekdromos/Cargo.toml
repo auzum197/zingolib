@@ -68,7 +68,7 @@ zcash_protocol = { workspace = true }
 zcash_transparent = { workspace = true }
 lightwallet-grpc-client = { workspace = true }
 ekdromos-common = { workspace = true }
-ekdromos-file-format = { workspace = true }
+ekdromos-persistence = { workspace = true }
 zip32.workspace = true
 zeroize = { workspace = true }
 
