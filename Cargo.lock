@@ -669,7 +669,9 @@ name = "chain-router"
 version = "0.1.0"
 dependencies = [
  "futures",
+ "http",
  "incrementalmerkletree",
+ "lightwallet-grpc-client",
  "thiserror 2.0.19",
  "tokio",
  "zakura-note-encryption",
