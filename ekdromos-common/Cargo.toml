@@ -29,7 +29,6 @@ serde = { workspace = true, features = ["derive"] }
 thiserror = { workspace = true }
 tracing = { workspace = true }
 zcash_address = { workspace = true }
-zcash_client_backend = { workspace = true, features = ["unstable-serialization"] }
 zcash_encoding = { workspace = true }
 zcash_keys = { workspace = true, features = ["unstable"] }
 zcash_primitives = { workspace = true }

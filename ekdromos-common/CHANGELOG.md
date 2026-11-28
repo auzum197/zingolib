@@ -49,8 +49,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - The crate is named `ekdromos-common`, formerly `zingolib-common`.
 - `memo::parse_zingolib_memo` is named `memo::parse_ekdromos_memo`.
 - `keys`: `UnifiedAddress`, `Era` and `UnifiedSpendingKey` come from `zcash_keys`.
-- `zcash_client_backend` is used only for the shard codec, with `unstable-serialization`. The
-  workspace dependency no longer enables `lightwalletd-tonic`, so the crate builds without tonic.
+- The `zcash_client_backend` dependency is removed. The crate writes the shards of the wallet
+  file with its own codec, and the bytes do not change.
 
 - `status::ConfirmationStatus`: `read` and `write` are now the `ReadableWriteable` impl.
   Layout 0 is no longer read.
