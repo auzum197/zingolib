@@ -1,22 +1,22 @@
 [workspace]
 members = [
-    "pepper-sync",
-    "chain-router",
-    "ekdromos-common",
-    "ekdromos-file-format",
-    "ekdromos",
+    "crates/pepper-sync",
+    "crates/chain-router",
+    "crates/common",
+    "crates/file-format",
+    "crates/ekdromos",
     "watchonly-tui",
-    "lightwallet-grpc-client",
+    "crates/lightwallet-grpc-client",
 ]
 resolver = "2"
 
 [workspace.dependencies]
 ### Workspace
-pepper-sync = { path = "pepper-sync" }         # NOTE: for development between releases
-chain-router = { path = "chain-router" }
-ekdromos-common = { path = "ekdromos-common" }
-ekdromos-file-format = { path = "ekdromos-file-format" }
-ekdromos = { path = "ekdromos" }
+pepper-sync = { path = "crates/pepper-sync" }         # NOTE: for development between releases
+chain-router = { path = "crates/chain-router" }
+ekdromos-common = { path = "crates/common" }
+ekdromos-file-format = { path = "crates/file-format" }
+ekdromos = { path = "crates/ekdromos" }
 
 ### Tests and Integration Tests
 criterion = "0.5"
@@ -39,7 +39,7 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 # proto files (see [patch.crates-io]), which carry the Ironwood fields the
 # checked-in generated code lacks. Requires `protoc`.
 lightwallet-protocol = { version = "0.3.0", features = ["rebuild-proto"] }
-lightwallet-grpc-client = { path = "lightwallet-grpc-client", features = [
+lightwallet-grpc-client = { path = "crates/lightwallet-grpc-client", features = [
     "globally-public-transparent",
 ] }
 tokio-stream = { version = "0.1", features = ["net"] }
