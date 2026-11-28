@@ -2,7 +2,7 @@
 name = "lightwallet-grpc-client"
 version = "5.0.1"
 description = "network utility crate"
-authors = ["zingo@zingolabs.org"]
+authors = ["dorianvp@auzum197.com"]
 edition = "2024"
 repository = "https://github.com/auzum197/ekdromos"
 homepage = "https://github.com/auzum197/ekdromos"

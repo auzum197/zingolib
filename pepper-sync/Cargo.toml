@@ -1,7 +1,7 @@
 [package]
 name = "pepper-sync"
 description = "Pepper-sync is a crate providing a sync engine for the zcash network."
-authors = ["<zingo@zingolabs.org>"]
+authors = ["<dorianvp@auzum197.com>"]
 version = "0.6.0"
 edition = "2024"
 repository = "https://github.com/auzum197/ekdromos"

@@ -2,7 +2,7 @@
 name = "ekdromos"
 description = "Ekdromos wallet library."
 version = "5.0.0"
-authors = ["<zingo@zingolabs.org>"]
+authors = ["<dorianvp@auzum197.com>"]
 edition = "2024"
 repository = "https://github.com/auzum197/ekdromos"
 homepage = "https://github.com/auzum197/ekdromos"

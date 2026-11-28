@@ -1,7 +1,7 @@
 [package]
 name = "ekdromos-common"
 description = "Types shared across the ekdromos workspace: chain, keys, memo encoding, confirmation status and the serialization trait."
-authors = ["<zingo@zingolabs.org>"]
+authors = ["<dorianvp@auzum197.com>"]
 version = "0.1.0"
 edition = "2024"
 repository = "https://github.com/auzum197/ekdromos"
