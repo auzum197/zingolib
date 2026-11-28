@@ -7,7 +7,7 @@ the in-process mock indexer, measured on the commit before the migration (`68c2e
 Rust 1.97). Both runs use the same bench source, chain shapes and seeds, one after the other on the
 same otherwise idle machine: Apple Silicon (arm64), 16 logical cores, macOS 26.3.1, 2026-10-20.
 
-The harness is `ekdromos/benches/pepper_sync.rs`. Run it with
+The harness is `crates/ekdromos/benches/pepper_sync.rs`. Run it with
 `cargo bench -p ekdromos --bench pepper_sync -- [scenario filter...]`. `PEPPER_BENCH_BLOCKS`,
 `PEPPER_BENCH_RUNS` and `PEPPER_BENCH_OUT` set the chain length, the number of fresh wallets per
 variant and a JSON lines output path. The raw measurements behind this page sit next to it.
