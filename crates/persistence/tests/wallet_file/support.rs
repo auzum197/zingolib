@@ -1,4 +1,4 @@
-//! Shared helpers for the `ekdromos-file-format` integration tests: building a fresh wallet
+//! Shared helpers for the `ekdromos-persistence` integration tests: building a fresh wallet
 //! deterministically, serializing it, and running a corrupted-byte read sweep against it.
 
 use std::collections::{BTreeMap, BTreeSet, HashMap};
@@ -18,8 +18,8 @@ use ekdromos_common::price::PriceList;
 use ekdromos_common::sync::SyncState;
 use ekdromos_common::wallet::{NullifierMap, ShardTrees};
 
-use ekdromos_file_format::encryption::{Argon2Params, EncryptionConfig, EncryptionSession};
-use ekdromos_file_format::{WalletFile, WalletFileRef, WalletSettings};
+use ekdromos_persistence::encryption::{Argon2Params, EncryptionConfig, EncryptionSession};
+use ekdromos_persistence::{WalletFile, WalletFileRef, WalletSettings};
 
 /// How long a single mutated read is allowed to run before it counts as a hang.
 const READ_TIMEOUT: Duration = Duration::from_secs(3);

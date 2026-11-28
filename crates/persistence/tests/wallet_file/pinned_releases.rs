@@ -61,7 +61,7 @@ use ekdromos_common::{
         TransparentCoin, WalletTransaction,
     },
 };
-use ekdromos_file_format::{WalletFile, WalletFileRef, WalletSettings, encryption};
+use ekdromos_persistence::{WalletFile, WalletFileRef, WalletSettings, encryption};
 use pepper_sync::{add_scan_targets, keys::transparent::encode_address};
 
 const PASSPHRASE: &str = "conformance";

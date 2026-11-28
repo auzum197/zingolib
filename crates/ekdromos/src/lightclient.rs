@@ -35,7 +35,7 @@ use crate::{
         },
     },
 };
-use ekdromos_file_format::WalletFileError;
+use ekdromos_persistence::WalletFileError;
 use error::{CreateError, OpenError};
 use save::SaveState;
 use store::WalletStore;

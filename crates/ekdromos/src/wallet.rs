@@ -39,7 +39,7 @@ pub mod sync;
 pub mod transaction;
 mod zcb_traits;
 
-pub use ekdromos_file_format::{WalletSettings, encryption};
+pub use ekdromos_persistence::{WalletSettings, encryption};
 pub use pepper_sync::config::{
     PerformanceLevel, SyncConfig, TransparentAddressDiscovery, TransparentAddressDiscoveryScopes,
 };

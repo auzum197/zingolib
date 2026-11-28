@@ -60,7 +60,7 @@ pub enum WalletError {
     #[error("The birthday is the chain tip, which only a lightclient can get from its indexer.")]
     ChainTipUnknown,
     #[error("Wallet file error. {0}")]
-    File(#[from] ekdromos_file_format::WalletFileError),
+    File(#[from] ekdromos_persistence::WalletFileError),
     /// At-rest encryption setup failed (e.g. key derivation).
     #[error("Wallet encryption error. {0}")]
     Encryption(#[from] crate::wallet::encryption::WalletEncryptionError),

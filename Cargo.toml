@@ -3,7 +3,7 @@ members = [
     "crates/pepper-sync",
     "crates/chain-router",
     "crates/common",
-    "crates/file-format",
+    "crates/persistence",
     "crates/ekdromos",
     "watchonly-tui",
     "crates/lightwallet-grpc-client",
@@ -15,7 +15,7 @@ resolver = "2"
 pepper-sync = { path = "crates/pepper-sync" }         # NOTE: for development between releases
 chain-router = { path = "crates/chain-router" }
 ekdromos-common = { path = "crates/common" }
-ekdromos-file-format = { path = "crates/file-format" }
+ekdromos-persistence = { path = "crates/persistence" }
 ekdromos = { path = "crates/ekdromos" }
 
 ### Tests and Integration Tests

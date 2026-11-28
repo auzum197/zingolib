@@ -52,7 +52,7 @@ use ekdromos_common::wallet::{
     OutputId, OutputInterface, SaplingNote, ScanTarget, ShardTrees, TransparentCoin, WalletBlock,
     WalletNote, WalletTransaction,
 };
-use ekdromos_file_format::{WalletFile, WalletSettings};
+use ekdromos_persistence::{WalletFile, WalletSettings};
 use pepper_sync::keys::transparent::encode_address;
 
 use super::support::{bytes, fast_session, fresh};

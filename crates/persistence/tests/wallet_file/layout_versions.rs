@@ -18,7 +18,7 @@ use ekdromos_common::wallet::{
     OutgoingSaplingNote, SaplingNote, ScanTarget, ShardTrees, TransparentCoin, TreeBounds,
     WalletBlock, WalletTransaction,
 };
-use ekdromos_file_format::WalletFile;
+use ekdromos_persistence::WalletFile;
 
 #[test]
 fn struct_versions_are_pinned() {
